@@ -7,14 +7,16 @@ import os
 import pytz
 import logging
 import traceback
-load_dotenv()
+
+# load .env from root directory
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 draft_DIR = os.path.join(BASE_DIR, "drafts")
 os.makedirs(draft_DIR, exist_ok=True)
 
 iteration_count = 0
-iteration_max = 20
+ITERATION_MAX = 5
 
 def get_timestamp():
     return datetime.now(pytz.timezone('US/Pacific')).strftime("%Y%m%d_%H%M%S")
@@ -228,7 +230,7 @@ def write_book_outline():
     old_draft = ""
     new_draft = ""
 
-    while iteration_count < iteration_max:
+    while iteration_count < ITERATION_MAX:
         try:
             response = client.run(
                 agent=agent,
