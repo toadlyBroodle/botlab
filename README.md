@@ -1,4 +1,4 @@
-# 🤖🧪 botlab.dev: a collection of AI bots, agents, and teams
+# 🤖🧪 botlab: a collection of AI bots, agents, and teams
 
 A laboratory for experimenting with AI agents and automation tools. Built with Python and modern AI frameworks.
 
@@ -14,8 +14,8 @@ A laboratory for experimenting with AI agents and automation tools. Built with P
 
 ```bash
 # Clone and enter directory
-git clone https://github.com/yourusername/botlab.dev.git
-cd botlab.dev
+git clone https://github.com/yourusername/botlab.git
+cd botlab
 
 # Set up environment
 python -m venv .venv
@@ -38,4 +38,4 @@ GNU General Public License v3.0 - See [LICENSE](LICENSE)
 
 ---
 
-❤️ Thank you for using botlab.dev! We hope this project helps you harness the awesome power of AI.
+❤️ Thank you for using botlab! We hope this project helps you harness the awesome power of AI.
