@@ -1,9 +1,1 @@
-.env
-.venv
-env/
-venv/
-
-__pycache__/
-
-logs/
-drafts/
+.vscode/

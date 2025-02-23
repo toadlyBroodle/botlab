@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "swarms"
+version = "0.1.0"
+description = "AI agent swarms for complex tasks"
+authors = ["Your Name <landonmutch@protonmail.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+python-dotenv = "^1.0.0"
+pytz = "^2024.1"
+
+[tool.poetry.group.writer-critic.dependencies]
+swarm = {git = "ssh://git@github.com/openai/swarm.git"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api" 
