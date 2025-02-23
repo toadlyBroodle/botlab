@@ -1,3 +1,1 @@
-python-dotenv
-pytz
 git+ssh://git@github.com/openai/swarm.git

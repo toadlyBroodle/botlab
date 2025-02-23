@@ -17,15 +17,6 @@ A laboratory for experimenting with AI agents and automation tools. Built with P
 git clone https://github.com/yourusername/botlab.git
 cd botlab
 
-# Set up environment
-python -m venv .venv
-source .venv/bin/activate  # Windows: `.venv\Scripts\activate`
-pip install -r requirements.txt
-
-# Add your OpenAI API key to .env
-echo "OPENAI_API_KEY=<your-api-key>" >> .env
-```
-
 ## 🤝 Contributing
 
 1. Fork the repository
