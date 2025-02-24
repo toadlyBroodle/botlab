@@ -1,19 +1,26 @@
-from .main import setup_agents, run_query
+import time
+import scraper.main as scraper_main
+
+# Example usage
+# poetry run python -m scraper.example
 
 def main():
-    # Replace with your Gemini API key
-    GEMINI_API_KEY = "your_gemini_api_key_here"
-    
-    # Setup the agent system
-    manager = setup_agents(GEMINI_API_KEY)
-    
+    # Enable telemetry for tracing
+    run_query = scraper_main.initialize(enable_telemetry=False)
+
     # Example query
-    query = """If LLM training continues to scale up at the current rhythm until 2030, 
-    what would be the electric power in GW required to power the biggest training runs by 2030? 
-    What would that correspond to, compared to some countries?"""
+    query = """How many people live in Canada?"""
+    
+    # Time the query execution
+    start_time = time.time()
     
     # Run the query
-    result = run_query(manager, query)
+    result = run_query(query)
+    
+    # Calculate and print execution time
+    execution_time = time.time() - start_time
+    print(f"\nExecution time: {execution_time:.2f} seconds")
+    print("\nResult:")
     print(result)
 
 if __name__ == "__main__":
