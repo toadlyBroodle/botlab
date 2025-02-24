@@ -23,34 +23,19 @@ def initialize(enable_telemetry: bool = False):
     Returns:
         A function that can process queries
     """
-    print("Initializing system...")
     
     # Start telemetry if enabled
     if enable_telemetry:
-        print("Starting telemetry...")
-        trace_provider = start_telemetry()
-        print("Telemetry started")
+        start_telemetry()
     
-    # Setup environment
-    print("Setting up environment...")
     api_key = setup_environment()
-    print("Environment setup complete")
-    
-    # Initialize the model using LiteLLM
-    print("Initializing LLM model...")
     model = LiteLLMModel(
         model_id="gemini/gemini-2.0-flash"
     )
-    print("LLM model initialized")
     
     # Create agents
-    print("Creating web agent...")
     web_agent = create_web_agent(model)
-    print("Web agent created")
-    
-    print("Creating manager agent...")
     manager_agent = create_manager_agent(model, web_agent)
-    print("Manager agent created")
     
     def run_query(query: str) -> str:
         """Runs a query through the multi-agent system
@@ -61,9 +46,7 @@ def initialize(enable_telemetry: bool = False):
         Returns:
             The response from the manager agent
         """
-        print(f"\nProcessing query: {query}")
         result = manager_agent.run(query)
-        print("Query processing complete")
         return result
         
     return run_query

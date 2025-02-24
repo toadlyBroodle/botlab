@@ -6,10 +6,10 @@ import scraper.main as scraper_main
 
 def main():
     # Enable telemetry for tracing
-    run_query = scraper_main.initialize(enable_telemetry=False)
+    run_query = scraper_main.initialize(enable_telemetry=True)
 
     # Example query
-    query = """How many people live in Canada?"""
+    query = """How many people live in the United States as of 2025?"""
     
     # Time the query execution
     start_time = time.time()

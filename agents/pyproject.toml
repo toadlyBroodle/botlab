@@ -10,13 +10,14 @@ package-mode = false
 python = ">=3.10,<3.14"
 python-dotenv = "^1.0.0"
 pytz = "^2024.1"
-smolagents = "^0.1.0"
+smolagents = "^1.9.2"
 markdownify = "^0.14.1"
 requests = "^2.32.3"
 litellm = "^1.61.15"
 opentelemetry-exporter-otlp = "^1.30.0"
 openinference-instrumentation-smolagents = "^0.1.6"
 opentelemetry-sdk = "^1.30.0"
+arize-phoenix = "^8.2.1"
 
 [build-system]
 requires = ["poetry-core"]
