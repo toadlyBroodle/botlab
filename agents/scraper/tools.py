@@ -3,7 +3,6 @@ import requests
 from markdownify import markdownify
 from requests.exceptions import RequestException
 from smolagents import tool
-from duckduckgo_search import DDGS
 
 @tool
 def visit_webpage(url: str) -> str:
