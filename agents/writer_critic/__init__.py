@@ -1,0 +1,1 @@
+"""Writer-Critic agent system using smolagents for creative writing tasks.""" 
