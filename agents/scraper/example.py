@@ -2,7 +2,7 @@ import time
 import scraper.main as scraper_main
 
 # Example usage
-# poetry run python -m scraper.example
+# From agents directory: python -m scraper.example
 
 def main():
     # Enable telemetry for tracing
