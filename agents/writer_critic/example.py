@@ -6,9 +6,8 @@ import writer_critic.main as writer_critic_main
 # From agents directory: python -m writer_critic.example
 
 def main():
-    # Initialize writer-critic system with 5 steps
-    print("Initializing writer-critic system...")
-    run_writing_task = writer_critic_main.initialize(max_steps=5)
+    # Initialize writer-critic system with 5 steps and telemetry enabled
+    run_writing_task = writer_critic_main.initialize(max_steps=5, enable_telemetry=False)
     
     # Example writing prompt
     prompt = """Write a book outline for a sci-fi story about humans using AGI-powered robots to colonize the Moon. 
@@ -17,8 +16,7 @@ def main():
     summaries of the flow of the story. Assume that AGI has helped humans develop compact fusion generators, 
     supplying intelligent life with unfathomable amounts of energy for terraforming."""
     
-    # Time the execution
-    print("Starting the writing task. This may take a few minutes...")
+
     start_time = time.time()
     
     # Run the writing task

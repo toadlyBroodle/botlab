@@ -2,15 +2,10 @@ import os
 from dotenv import load_dotenv
 from smolagents import LiteLLMModel
 import sys
+from utils.telemetry import start_telemetry
 
-# Add the current directory to the path so we can import the agents and tools modules
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.append(current_dir)
-
-# Import the modules directly
-from agents import create_writer_agent, create_critic_agent
-from tools import DRAFT_DIR, BASE_DIR
+from writer_critic.agents import create_writer_agent, create_critic_agent
+from writer_critic.tools import DRAFT_DIR, BASE_DIR
 
 def setup_environment():
     """Set up environment variables and API keys"""
@@ -28,16 +23,21 @@ def setup_environment():
     
     return api_key
 
-def initialize(max_steps: int = 5, model_name: str = "gpt-4o-mini"):
+def initialize(max_steps: int = 5, model_name: str = "gpt-4o-mini", enable_telemetry: bool = False):
     """Initialize the writer-critic system
     
     Args:
         max_steps: Maximum number of steps for the writer agent
         model_name: LLM model to use
+        enable_telemetry: Whether to enable OpenTelemetry tracing
         
     Returns:
         A function that can process writing tasks
     """
+    
+    # Start telemetry if enabled
+    if enable_telemetry:
+        start_telemetry()
     
     setup_environment()
     
@@ -69,7 +69,7 @@ def initialize(max_steps: int = 5, model_name: str = "gpt-4o-mini"):
 
 def main():
     """Main entry point when run directly"""
-    run_writing_task = initialize()
+    run_writing_task = initialize(enable_telemetry=True)
     return run_writing_task
 
 if __name__ == "__main__":
