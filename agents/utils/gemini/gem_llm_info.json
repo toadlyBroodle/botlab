@@ -1,0 +1,128 @@
+{
+    "gemini-2.0-flash": {
+        "RPM": 15,
+        "TPM": 1000000,
+        "RPD": 1500,
+        "api_info": {
+            "name": "models/gemini-2.0-flash",
+            "base_model_id": "",
+            "version": "2.0",
+            "display_name": "Gemini 2.0 Flash",
+            "description": "Gemini 2.0 Flash",
+            "input_token_limit": 1048576,
+            "output_token_limit": 8192,
+            "supported_generation_methods": [
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 1.0,
+            "max_temperature": 2.0,
+            "top_p": 0.95,
+            "top_k": 40
+        },
+        "model_family": "gemini"
+    },
+    "gemini-2.0-flash-lite": {
+        "RPM": 30,
+        "TPM": 1000000,
+        "RPD": 1500,
+        "api_info": {
+            "name": "models/gemini-2.0-flash-lite",
+            "base_model_id": "",
+            "version": "2.0",
+            "display_name": "Gemini 2.0 Flash-Lite",
+            "description": "Gemini 2.0 Flash-Lite",
+            "input_token_limit": 1048576,
+            "output_token_limit": 8192,
+            "supported_generation_methods": [
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 1.0,
+            "max_temperature": 2.0,
+            "top_p": 0.95,
+            "top_k": 40
+        },
+        "model_family": "gemini"
+    },
+    "gemini-2.0-pro-experimental-02-05": {
+        "RPM": 2,
+        "TPM": 1000000,
+        "RPD": 50
+    },
+    "gemini-2.0-flash-thinking-experimental-01-21": {
+        "RPM": 10,
+        "TPM": 4000000,
+        "RPD": 1500
+    },
+    "gemini-1.5-flash": {
+        "RPM": 15,
+        "TPM": 1000000,
+        "RPD": 1500,
+        "api_info": {
+            "name": "models/gemini-1.5-flash",
+            "base_model_id": "",
+            "version": "001",
+            "display_name": "Gemini 1.5 Flash",
+            "description": "Alias that points to the most recent stable version of Gemini 1.5 Flash, our fast and versatile multimodal model for scaling across diverse tasks.",
+            "input_token_limit": 1000000,
+            "output_token_limit": 8192,
+            "supported_generation_methods": [
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 1.0,
+            "max_temperature": 2.0,
+            "top_p": 0.95,
+            "top_k": 40
+        },
+        "model_family": "gemini"
+    },
+    "gemini-1.5-flash-8b": {
+        "RPM": 15,
+        "TPM": 1000000,
+        "RPD": 1500,
+        "api_info": {
+            "name": "models/gemini-1.5-flash-8b",
+            "base_model_id": "",
+            "version": "001",
+            "display_name": "Gemini 1.5 Flash-8B",
+            "description": "Stable version of Gemini 1.5 Flash-8B, our smallest and most cost effective Flash model, released in October of 2024.",
+            "input_token_limit": 1000000,
+            "output_token_limit": 8192,
+            "supported_generation_methods": [
+                "createCachedContent",
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 1.0,
+            "max_temperature": 2.0,
+            "top_p": 0.95,
+            "top_k": 40
+        },
+        "model_family": "gemini"
+    },
+    "gemini-1.5-pro": {
+        "RPM": 2,
+        "TPM": 32000,
+        "RPD": 50,
+        "api_info": {
+            "name": "models/gemini-1.5-pro",
+            "base_model_id": "",
+            "version": "001",
+            "display_name": "Gemini 1.5 Pro",
+            "description": "Stable version of Gemini 1.5 Pro, our mid-size multimodal model that supports up to 2 million tokens, released in May of 2024.",
+            "input_token_limit": 2000000,
+            "output_token_limit": 8192,
+            "supported_generation_methods": [
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 1.0,
+            "max_temperature": 2.0,
+            "top_p": 0.95,
+            "top_k": 40
+        },
+        "model_family": "gemini"
+    }
+}

@@ -2,7 +2,7 @@
 
 This directory contains agent systems built with smolagents:
 
-- **scraper**: A web search and information gathering agent system
+- **researcher**: A web search and information gathering agent system
 - **writer-critic**: A creative writing system with feedback and iteration
 
 ## Running the Examples
@@ -12,8 +12,8 @@ This directory contains agent systems built with smolagents:
 From the `agents` directory:
 
 ```bash
-# Run the scraper example
-poetry run python run_examples.py scraper
+# Run the researcher example
+poetry run python run_examples.py researcher
 
 # Run the writer-critic example
 poetry run python run_examples.py writer
@@ -27,8 +27,8 @@ poetry run python run_examples.py all
 From the `agents` directory:
 
 ```bash
-# Run the scraper example
-poetry run python -m scraper.example
+# Run the researcher example
+poetry run python -m researcher.example
 
 # Run the writer-critic example
 poetry run python -m writer_critic.example

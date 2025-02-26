@@ -1,0 +1,34 @@
+# smolagent projects guidelines for AI
+
+## basic project info
+
+### main directory tree
+.../agents/
+    |__ .venv/
+    |__ researcher/
+    |__ utils/
+    |   |__ gemini/
+    |__ writer_critic/
+
+### virtual environment
+- *.venv/* is the poetry managed .venv
+- all python scripts MUST be prefixed by `poetry run python `
+    - e.g.  `poetry run python -m researcher.example`
+            `poetry run python researcher/example.py`
+
+### smolagent projects
+- working directory is *agents/*
+    - all python scripts MUST be run from *agents/* working dir:
+        - e.g.  ```py
+                cd agents
+                poetry run python -m researcher.example
+                ```
+- *utils/* contains shared utils for the project
+    - *gemini/* contains google gemini llm api utils
+- *researcher/* and *writer_critic/* are separate smolagent projects
+    - smolagent project have these common files:
+        - `__init__.py`
+        - `agents.py` : project agents
+        - `example.py` : example usages
+        - `main.py` : main setup and entry point
+        - `tools.py` : tools used by the agents
