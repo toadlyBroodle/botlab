@@ -1,37 +1,37 @@
 {
     "gemini-2.0-flash": {
-        "RPM": 15,
-        "TPM": 1000000,
-        "RPD": 1500
+        "rpm_limit": 15,
+        "tpm_limit": 1000000,
+        "rpd_limit": 1500
     },
     "gemini-2.0-flash-lite": {
-        "RPM": 30,
-        "TPM": 1000000,
-        "RPD": 1500
+        "rpm_limit": 30,
+        "tpm_limit": 1000000,
+        "rpd_limit": 1500
     },
     "gemini-2.0-pro-experimental-02-05": {
-        "RPM": 2,
-        "TPM": 1000000,
-        "RPD": 50
+        "rpm_limit": 2,
+        "tpm_limit": 1000000,
+        "rpd_limit": 50
     },
     "gemini-2.0-flash-thinking-experimental-01-21": {
-        "RPM": 10,
-        "TPM": 4000000,
-        "RPD": 1500
+        "rpm_limit": 10,
+        "tpm_limit": 4000000,
+        "rpd_limit": 1500
     },
     "gemini-1.5-flash": {
-        "RPM": 15,
-        "TPM": 1000000,
-        "RPD": 1500
+        "rpm_limit": 15,
+        "tpm_limit": 1000000,
+        "rpd_limit": 1500
     },
     "gemini-1.5-flash-8b": {
-        "RPM": 15,
-        "TPM": 1000000,
-        "RPD": 1500
+        "rpm_limit": 15,
+        "tpm_limit": 1000000,
+        "rpd_limit": 1500
     },
     "gemini-1.5-pro": {
-        "RPM": 2,
-        "TPM": 32000,
-        "RPD": 50
+        "rpm_limit": 2,
+        "tpm_limit": 32000,
+        "rpd_limit": 50
     }
 }
