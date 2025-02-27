@@ -6,7 +6,7 @@ import researcher.main as researcher_main
 # From agents directory: python -m researcher.example "Your search query here"
 # Or run without arguments to use the default query
 
-def main(query=None, telemetry=False, max_steps=8, base_wait_time=3.0, max_retries=5):
+def main(query=None, telemetry=False, max_steps=20, base_wait_time=3.0, max_retries=5):
     # Enable telemetry for tracing
     run_query = researcher_main.initialize(
         enable_telemetry=telemetry, 
@@ -17,7 +17,7 @@ def main(query=None, telemetry=False, max_steps=8, base_wait_time=3.0, max_retri
 
     # Use provided query or fall back to default
     if query is None:
-        query = """How many people live in the Canada as of 2025?"""
+        query = """How many people live in Canada as of 2025?"""
     
     print(f"\nProcessing query: {query}")
     
