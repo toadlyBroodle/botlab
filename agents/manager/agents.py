@@ -1,12 +1,9 @@
 from typing import List, Dict, Any, Optional
-from smolagents import (
-    CodeAgent,
-    LiteLLMModel
-)
+from smolagents import CodeAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
 def create_manager_agent(
-    model: LiteLLMModel, 
+    model: RateLimitedLiteLLMModel, 
     managed_agents: List,
     agent_descriptions: Optional[Dict[str, str]] = None,
     max_steps: int = 8
@@ -14,7 +11,7 @@ def create_manager_agent(
     """Creates a manager agent that can coordinate multiple agents
     
     Args:
-        model: The LiteLLM model to use for the agent
+        model: The RateLimitedLiteLLMModel model to use for the agent
         managed_agents: List of agents that the manager will coordinate
         agent_descriptions: Optional dictionary mapping agent names to descriptions 
                           of how to use them effectively
@@ -23,14 +20,6 @@ def create_manager_agent(
     Returns:
         A configured manager agent
     """
-    # Ensure the model is rate-limited
-    if not isinstance(model, RateLimitedLiteLLMModel):
-        print("Warning: Model is not rate-limited. Wrapping with RateLimitedLiteLLMModel...")
-        if isinstance(model, LiteLLMModel):
-            model_id = model.model_id
-            model = RateLimitedLiteLLMModel(model_id=model_id)
-        else:
-            raise ValueError("Model must be a LiteLLMModel instance")
     
     # Create agent descriptions text if provided
     agent_descriptions_text = ""
@@ -71,21 +60,3 @@ Be persistent and iterative in your approach. If an agent's results aren't satis
 Always maintain a clean, organized format in your responses, including citations and sources where appropriate unless instructed otherwise."""
     
     return agent
-
-def ensure_rate_limited_model(model: LiteLLMModel) -> RateLimitedLiteLLMModel:
-    """Ensures that a model is wrapped with rate limiting.
-    
-    Args:
-        model: The model to ensure is rate-limited
-        
-    Returns:
-        A rate-limited model
-    """
-    if isinstance(model, RateLimitedLiteLLMModel):
-        return model
-    
-    if isinstance(model, LiteLLMModel):
-        print(f"Wrapping model {model.model_id} with rate limiting...")
-        return RateLimitedLiteLLMModel(model_id=model.model_id)
-    
-    raise ValueError("Model must be a LiteLLMModel instance")

@@ -250,7 +250,7 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
     def __init__(
         self,
         model_id: str,
-        model_info_path: str,
+        model_info_path: str = gem_llm_info_path,
         base_wait_time: float = 1.0,
         max_retries: int = 3,
         jitter_factor: float = 0.1,
@@ -260,10 +260,10 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         
         Args:
             model_id: The model identifier to use with LiteLLM
-            model_info_path: Path to the JSON file containing model information
-            base_wait_time: Base wait time in seconds for rate limit backoff
-            max_retries: Maximum number of retries for rate limit errors
-            jitter_factor: Factor to apply random jitter to wait times (0-1)
+            model_info_path: Optional path to the JSON file containing model information
+            base_wait_time: Optional base wait time in seconds for rate limit backoff
+            max_retries: Optional maximum number of retries for rate limit errors
+            jitter_factor: Optional factor to apply random jitter to wait times (0-1)
             **kwargs: Additional arguments to pass to LiteLLMModel
         """
         # Ensure LiteLLM logging is disabled before initializing
