@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from utils.telemetry import start_telemetry
-from researcher.agents import create_web_agent, create_researcher_agent
+from researcher.agents import create_researcher_agent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
 def setup_environment():
@@ -14,7 +14,7 @@ def setup_environment():
     
     return api_key
 
-def initialize(enable_telemetry: bool = False, max_steps: int = 8, 
+def initialize(enable_telemetry: bool = False, max_steps: int = 20, 
                base_wait_time: float = 2.0, max_retries: int = 3,
                model_info_path: str = "utils/gemini/gem_llm_info.json",
                model_id: str = "gemini/gemini-2.0-flash"):
@@ -22,7 +22,7 @@ def initialize(enable_telemetry: bool = False, max_steps: int = 8,
     
     Args:
         enable_telemetry: Whether to enable OpenTelemetry tracing
-        max_steps: Maximum number of steps for the agents
+        max_steps: Maximum number of steps for the agent
         base_wait_time: Base wait time in seconds for rate limiting
         max_retries: Maximum number of retry attempts for rate limiting
         model_info_path: Path to the model info JSON file
@@ -46,12 +46,11 @@ def initialize(enable_telemetry: bool = False, max_steps: int = 8,
         model_info_path=model_info_path
     )
     
-    # Create agents - the ensure_rate_limited_model check is built into these functions now
-    web_agent = create_web_agent(model, max_steps=max_steps)
-    researcher_agent = create_researcher_agent(model, web_agent, max_steps=max_steps)
+    # Create researcher agent
+    researcher_agent = create_researcher_agent(model, max_steps=max_steps)
     
     def run_research(query: str) -> str:
-        """Runs a research query through the multi-agent system
+        """Runs a research query through the researcher agent
         
         Args:
             query: The research query to process
@@ -68,7 +67,7 @@ def main():
     """Main entry point when run directly"""
     run_research = initialize(
         enable_telemetry=True, 
-        max_steps=8, 
+        max_steps=20, 
         base_wait_time=3.0, 
         max_retries=5,
         model_info_path="utils/gemini/gem_llm_info.json",

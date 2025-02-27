@@ -67,7 +67,7 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 2.
     if time_since_last_search < current_wait_time:
         # Wait the remaining time to respect the rate limit
         sleep_time = current_wait_time - time_since_last_search
-        print(f"Waiting {sleep_time} seconds to respect DDGS rate limits")
+        print(f"Waiting {sleep_time:.2f} seconds to respect DDGS rate limits")
         time.sleep(sleep_time)
     
     # Create a DuckDuckGoSearchTool instance
@@ -79,6 +79,24 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 2.
         try:
             result = search_tool.forward(query)
             
+            # Check if the result is empty or contains an error message
+            if not result or "Error" in result:
+                # This might be a rate limit that didn't raise an exception
+                _consecutive_failures += 1
+                retries += 1
+                
+                if retries <= max_retries:
+                    # Calculate backoff time
+                    backoff_time = _base_wait_time * (2 ** _consecutive_failures)
+                    # Add jitter (±20%)
+                    backoff_time = backoff_time * (0.8 + 0.4 * random.random())
+                    
+                    print(f"Empty result or error detected. Retrying in {backoff_time:.2f} seconds...")
+                    time.sleep(backoff_time)
+                    continue
+                else:
+                    return f"Error: DuckDuckGo search failed after {max_retries} retries. Last result: {result}"
+            
             # Success - reset consecutive failures and update last search time
             _consecutive_failures = 0
             _last_search_time = time.time()
@@ -89,18 +107,18 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 2.
             error_message = str(e)
             _last_search_time = time.time()
             
-            # Check if it's a rate limit error
-            if "Ratelimit" in error_message:
+            # Check if it's a rate limit error - look for various indicators
+            if any(term in error_message.lower() for term in ["ratelimit", "rate limit", "429", "too many requests", "202"]):
                 _consecutive_failures += 1
                 retries += 1
                 
                 if retries <= max_retries:
-                    # Calculate backoff time
+                    # Calculate backoff time with increased base wait time
                     backoff_time = _base_wait_time * (2 ** _consecutive_failures)
                     # Add jitter (±20%)
                     backoff_time = backoff_time * (0.8 + 0.4 * random.random())
                     
-                    # Wait before retrying
+                    print(f"Rate limit detected. Retrying in {backoff_time:.2f} seconds...")
                     time.sleep(backoff_time)
                 else:
                     # Max retries exceeded
