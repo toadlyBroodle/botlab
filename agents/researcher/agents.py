@@ -1,28 +1,17 @@
-from smolagents import (
-    ToolCallingAgent,
-    LiteLLMModel
-)
+from smolagents import ToolCallingAgent
 from .tools import web_search, visit_webpage
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
-def create_researcher_agent(model: LiteLLMModel, max_steps: int = 20) -> ToolCallingAgent:
+def create_researcher_agent(model: RateLimitedLiteLLMModel, max_steps: int = 20) -> ToolCallingAgent:
     """Creates a researcher agent that can search and visit webpages
     
     Args:
-        model: The LiteLLM model to use for the agent
+        model: The RateLimitedLiteLLMModel model to use for the agent
         max_steps: Maximum number of steps for the agent
         
     Returns:
         A configured researcher agent
     """
-    # Ensure the model is rate-limited
-    if not isinstance(model, RateLimitedLiteLLMModel):
-        print("Warning: Model is not rate-limited. Wrapping with RateLimitedLiteLLMModel...")
-        if isinstance(model, LiteLLMModel):
-            model_id = model.model_id
-            model = RateLimitedLiteLLMModel(model_id=model_id)
-        else:
-            raise ValueError("Model must be a LiteLLMModel instance")
 
     tools = [
         web_search,
@@ -42,21 +31,3 @@ If there isn't enough relevant information returned from a search, you continue 
 ALWAYS include ALL relevant source URLs for ALL information you use in your response!"""
 
     return agent
-
-def ensure_rate_limited_model(model: LiteLLMModel) -> RateLimitedLiteLLMModel:
-    """Ensures that a model is wrapped with rate limiting.
-    
-    Args:
-        model: The model to ensure is rate-limited
-        
-    Returns:
-        A rate-limited model
-    """
-    if isinstance(model, RateLimitedLiteLLMModel):
-        return model
-    
-    if isinstance(model, LiteLLMModel):
-        print(f"Wrapping model {model.model_id} with rate limiting...")
-        return RateLimitedLiteLLMModel(model_id=model.model_id)
-    
-    raise ValueError("Model must be a LiteLLMModel instance")
