@@ -54,6 +54,7 @@ poetry run python -m manager.example "your query" --no-researcher --writer --age
 
 # Run the writer-critic example
 poetry run python -m writer_critic.example
+
 ```
 
 ## Dependencies
