@@ -1,8 +1,8 @@
-from smolagents import ToolCallingAgent
-from .tools import web_search, visit_webpage
+from smolagents import CodeAgent
+from .tools import web_search, visit_webpage, arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
-def create_researcher_agent(model: RateLimitedLiteLLMModel, max_steps: int = 20) -> ToolCallingAgent:
+def create_researcher_agent(model: RateLimitedLiteLLMModel, max_steps: int = 20) -> CodeAgent:
     """Creates a researcher agent that can search and visit webpages
     
     Args:
@@ -16,18 +16,103 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel, max_steps: int = 20)
     tools = [
         web_search,
         visit_webpage,
+        arxiv_search,
+        pdf_to_markdown,
+        check_conversion_status,
+        read_paper_markdown
     ]
     
-    agent = ToolCallingAgent(
+    agent = CodeAgent(
         tools=tools,
         model=model,
+        additional_authorized_imports=["time", "json", "re", "uuid"],
         name='researcher_agent',
-        description="""This agent can craft advanced search queries and perform web searches using DuckDuckGo. It then follows up searches by scraping resulting urls and extracting the content into a markdown report. Use this agent to research topics, find specific information, or analyze specific webpage content.""",
+        description="""This agent can craft advanced search queries and perform web searches using DuckDuckGo and arXiv. It then follows up searches by scraping resulting urls and extracting the content into a markdown report. It can also download PDF documents and convert them to markdown format for easier analysis. Use this agent to research topics, find specific information, analyze specific webpage content, search for academic papers on arXiv, or process PDF documents.""",
         max_steps=max_steps
     )
 
-    agent.prompt_templates["system_prompt"] += """\n\nYou are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo. You follow up all relevant search results by calling your `visit_webpage` tool and extracting the relevant content into a detailed markdown report, including all possibly relevant information.
-If there isn't enough relevant information returned from a search, you continue running improved searches (more specific, using advanced search operators) until you have enough information (at least 10 high quality, authoritative sources).
+    agent.prompt_templates["system_prompt"] += """\n\nYou are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and search for academic papers on arXiv. You follow up all relevant search results by calling your `visit_webpage` tool and extracting the relevant content into a detailed markdown report, including all possibly relevant information.
+
+As a CodeAgent, you write Python code to call your tools. Here are examples of how to call each tool:
+
+1. Web Search:
+```python
+# Search for information on a topic
+search_results = web_search("quantum computing applications", max_results=5)
+print(search_results)
+```
+
+2. Visit Webpage:
+```python
+# Visit a webpage and extract its content
+webpage_content = visit_webpage("https://example.com/article")
+print(webpage_content)
+```
+
+3. arXiv Search:
+```python
+# Search for papers on arXiv
+arxiv_results = arxiv_search("transformer models", max_results=3, sort_by="relevance")
+print(arxiv_results)
+
+# Extract PDF URLs from arXiv results
+pdf_urls = []
+for line in arxiv_results.split('\\n'):
+    if line.startswith("**PDF:**"):
+        pdf_url = line.split("**PDF:**")[1].strip()
+        pdf_urls.append(pdf_url)
+```
+
+4. PDF to Markdown:
+```python
+# Download and convert a PDF to markdown
+pdf_result = pdf_to_markdown("https://arxiv.org/pdf/1706.03762.pdf")
+print(pdf_result)
+
+# Extract the paper ID from the result
+paper_id = None
+for line in pdf_result.split('\\n'):
+    if line.startswith("Paper ID:"):
+        paper_id = line.split(':')[1].strip()
+        break
+
+# Check the conversion status
+if paper_id:
+    # Wait for the conversion to complete
+    import time
+    status = "processing"
+    while status == "processing":
+        status_result = check_conversion_status(paper_id)
+        print(status_result)
+        
+        # Extract the status from the result
+        for line in status_result.split('\\n'):
+            if line.startswith("Status:"):
+                status = line.split(':')[1].strip()
+                break
+        
+        if status == "processing":
+            print("Conversion still in progress. Waiting 2 seconds...")
+            time.sleep(2)
+    
+    # Read the markdown content if conversion was successful
+    if status == "success":
+        markdown_content = read_paper_markdown(paper_id)
+        print(markdown_content[:500] + "...") # Print first 500 characters
+```
+
+For academic, scientific, or research-oriented queries, you should first use the `arxiv_search` tool to find relevant papers and research. The arXiv search supports advanced query syntax like boolean operators (AND, OR, NOT), exact phrase matching with quotes, and category filtering (e.g., cat:cs.AI for AI papers).
+
+When researching technical or scientific topics, follow this workflow:
+1. Start with an arXiv search using proper search syntax
+2. For particularly relevant papers, download and convert them to markdown using `pdf_to_markdown`
+3. Check the conversion status with `check_conversion_status` and read the content with `read_paper_markdown`
+4. Follow up with web searches for additional context or explanations
+5. Visit relevant webpages to extract detailed information
+6. Compile findings into a comprehensive report
+
+If there isn't enough relevant information returned from a search, continue running improved searches (more specific, using advanced search operators) until you have enough information (at least 5 high quality, authoritative sources).
+
 ALWAYS include ALL relevant source URLs for ALL information you use in your response!"""
 
     return agent
