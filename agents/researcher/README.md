@@ -16,6 +16,9 @@ The `arxiv_search` tool searches arXiv for research papers matching the given qu
 ### PDF to Markdown
 The `pdf_to_markdown` tool downloads a PDF from a URL and converts it to markdown format. The conversion happens in a background thread to avoid blocking the agent.
 
+### Save Report
+The `save_report` tool saves the final research report to a file in the `data/reports` directory. The filename includes a timestamp and an optional title for easy identification.
+
 ## CodeAgent Usage
 
 The CodeAgent writes Python code to call its tools. Here are examples of how it might use each tool:
@@ -67,6 +70,17 @@ if paper_id:
     # Read the markdown content if conversion was successful
     if status == "success":
         markdown_content = read_paper_markdown(paper_id)
+
+# Save the final research report to a file
+final_report = """# Research Report: Quantum Computing
+## Introduction
+Quantum computing is a rapidly evolving field that leverages quantum mechanics...
+
+## Sources
+- https://example.com/quantum-computing
+- https://arxiv.org/abs/2101.12345
+"""
+save_result = save_report(final_report, title="Quantum Computing Research")
 ```
 
 ## Running from the Command Line
@@ -79,9 +93,6 @@ python -m agents.researcher.main
 
 # Run with a custom query
 python -m agents.researcher.main --query "What are the latest advancements in quantum computing?"
-
-# Run the PDF to markdown example
-python -m agents.researcher.main --pdf-example
 
 # Run with custom parameters
 python -m agents.researcher.main --max-steps 30 --base-wait-time 3.0 --max-retries 5 --model-id "gemini/gemini-2.0-pro"
@@ -99,7 +110,6 @@ python -m agents.researcher.main --quiet
 - `--max-retries`: Maximum retries for rate limiting (default: 3)
 - `--model-id`: Model ID to use (default: "gemini/gemini-2.0-flash")
 - `--model-info-path`: Path to model info JSON file (default: "utils/gemini/gem_llm_info.json")
-- `--pdf-example`: Run the PDF to markdown example (flag)
 - `--quiet`: Suppress progress output (flag)
 
 ## Using the Agent Programmatically
@@ -161,7 +171,7 @@ from agents.researcher.main import initialize, run_agent_with_query, main as run
 result = run_main()
 
 # Option 2: Initialize the agent and run a custom query
-agent = initialize()
+agent = initialize(max_steps=20, model_id="gemini/gemini-2.0-flash")
 custom_query = "What is quantum computing and how does it differ from classical computing?"
 run_agent_with_query(agent, custom_query)
 ```
@@ -174,7 +184,61 @@ You can also run the example script with a custom query directly from the comman
 
 # Run with a custom query
 ./agents/researcher/example.py "What are the latest advancements in quantum computing?"
+
+# Run with custom parameters
+./agents/researcher/example.py "What are the latest advancements in quantum computing?" --max-steps 30 --model "gemini/gemini-2.0-pro"
+
+# Skip running the main.py example
+./agents/researcher/example.py --skip-main "What are the latest advancements in quantum computing?"
 ```
+
+## Integration with Manager Agent
+
+The researcher CodeAgent can be used as part of the Manager Agent system. The Manager Agent can coordinate multiple agents, including the researcher CodeAgent.
+
+To use the researcher CodeAgent with the Manager Agent:
+
+```python
+from agents.manager.main import initialize as initialize_manager
+
+# Initialize the manager agent with the researcher CodeAgent
+run_query = initialize_manager(
+    create_researcher=True,  # This will create and add the researcher CodeAgent
+    max_steps=20,
+    base_wait_time=2.0,
+    max_retries=3,
+    model_id="gemini/gemini-2.0-flash"
+)
+
+# Run a query through the manager agent
+result = run_query("What are the latest advancements in quantum computing?")
+```
+
+You can also run the manager agent example script:
+
+```bash
+# Run with default query
+python -m agents.manager.example
+
+# Run with a custom query
+python -m agents.manager.example "What are the latest advancements in quantum computing?"
+
+# Run with advanced setup (custom configured researcher agent)
+python -m agents.manager.example --advanced "What are the latest advancements in quantum computing?"
+```
+
+## Research Workflow
+
+The researcher CodeAgent follows this workflow:
+
+1. Start with an arXiv search for academic papers on the topic
+2. Download and convert relevant PDFs to markdown for analysis
+3. Follow up with web searches for additional context
+4. Visit relevant webpages to extract detailed information
+5. Compile findings into a comprehensive report
+6. Save the final report to the `data/reports` directory using the `save_report` tool
+
+The saved reports include a timestamp and optional title in the filename for easy identification.
 
 ## PDF to Markdown Workflow
 

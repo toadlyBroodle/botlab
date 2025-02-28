@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import argparse
+from typing import Optional
 from dotenv import load_dotenv
 from utils.telemetry import start_telemetry
 from researcher.agents import create_researcher_agent
@@ -21,7 +22,9 @@ def setup_environment():
 def initialize(enable_telemetry: bool = False, max_steps: int = 20, 
                base_wait_time: float = 2.0, max_retries: int = 3,
                model_info_path: str = "utils/gemini/gem_llm_info.json",
-               model_id: str = "gemini/gemini-2.0-flash"):
+               model_id: str = "gemini/gemini-2.0-flash",
+               agent_description: Optional[str] = None,
+               system_prompt: Optional[str] = None):
     """Initialize the system with optional telemetry and return the researcher agent
     
     The researcher agent now supports:
@@ -37,6 +40,8 @@ def initialize(enable_telemetry: bool = False, max_steps: int = 20,
         max_retries: Maximum number of retry attempts for rate limiting
         model_info_path: Path to the model info JSON file
         model_id: The model ID to use (default: gemini/gemini-2.0-flash)
+        agent_description: Optional additional description to append to the base description
+        system_prompt: Optional custom system prompt to use instead of the default
         
     Returns:
         The configured researcher CodeAgent
@@ -57,7 +62,12 @@ def initialize(enable_telemetry: bool = False, max_steps: int = 20,
     )
     
     # Create researcher agent
-    researcher_agent = create_researcher_agent(model, max_steps=max_steps)
+    researcher_agent = create_researcher_agent(
+        model, 
+        max_steps=max_steps, 
+        agent_description=agent_description,
+        system_prompt=system_prompt
+    )
     
     return researcher_agent
 
@@ -107,6 +117,8 @@ def parse_arguments():
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
     parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
+    parser.add_argument("--agent-description", type=str, default=None, help="Custom description for the researcher agent")
+    parser.add_argument("--system-prompt", type=str, default=None, help="Custom system prompt for the researcher agent")
     
     return parser.parse_args()
 
@@ -121,7 +133,9 @@ def main():
         base_wait_time=args.base_wait_time,
         max_retries=args.max_retries,
         model_id=args.model_id,
-        model_info_path=args.model_info_path
+        model_info_path=args.model_info_path,
+        agent_description=args.agent_description,
+        system_prompt=args.system_prompt
     )
     query = args.query
     
