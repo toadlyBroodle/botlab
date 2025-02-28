@@ -1,13 +1,16 @@
 from smolagents import CodeAgent
-from .tools import web_search, visit_webpage, arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown
+from .tools import web_search, visit_webpage, arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown, save_report
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from typing import Optional
 
-def create_researcher_agent(model: RateLimitedLiteLLMModel, max_steps: int = 20) -> CodeAgent:
+def create_researcher_agent(model: RateLimitedLiteLLMModel, max_steps: int = 20, agent_description: Optional[str] = None, system_prompt: Optional[str] = None) -> CodeAgent:
     """Creates a researcher agent that can search and visit webpages
     
     Args:
         model: The RateLimitedLiteLLMModel model to use for the agent
         max_steps: Maximum number of steps for the agent
+        agent_description: Optional additional description to append to the base description
+        system_prompt: Optional custom system prompt to use instead of the default
         
     Returns:
         A configured researcher agent
@@ -19,19 +22,29 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel, max_steps: int = 20)
         arxiv_search,
         pdf_to_markdown,
         check_conversion_status,
-        read_paper_markdown
+        read_paper_markdown,
+        save_report
     ]
+    
+    base_description = """This agent can craft advanced search queries and perform web searches using DuckDuckGo and arXiv. It then follows up searches by scraping resulting urls and extracting the content into a markdown report. It can also download PDF documents and convert them to markdown format for easier analysis. Use this agent to research topics, find specific information, analyze specific webpage content, search for academic papers on arXiv, or process PDF documents."""
+    
+    # Append additional description if provided
+    if agent_description:
+        description = f"{base_description}\n\n{agent_description}"
+    else:
+        description = base_description
     
     agent = CodeAgent(
         tools=tools,
         model=model,
         additional_authorized_imports=["time", "json", "re", "uuid"],
         name='researcher_agent',
-        description="""This agent can craft advanced search queries and perform web searches using DuckDuckGo and arXiv. It then follows up searches by scraping resulting urls and extracting the content into a markdown report. It can also download PDF documents and convert them to markdown format for easier analysis. Use this agent to research topics, find specific information, analyze specific webpage content, search for academic papers on arXiv, or process PDF documents.""",
+        description=description,
         max_steps=max_steps
     )
 
-    agent.prompt_templates["system_prompt"] += """\n\nYou are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and search for academic papers on arXiv. You follow up all relevant search results by calling your `visit_webpage` tool and extracting the relevant content into a detailed markdown report, including all possibly relevant information.
+    
+    base_system_prompt = """\n\nYou are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and search for academic papers on arXiv. You follow up all relevant search results by calling your `visit_webpage` tool and extracting the relevant content into a detailed markdown report, including all possibly relevant information.
 
 As a CodeAgent, you write Python code to call your tools. Here are examples of how to call each tool:
 
@@ -101,6 +114,27 @@ if paper_id:
         print(markdown_content[:500] + "...") # Print first 500 characters
 ```
 
+5. Save Report:
+```python
+    # Save the final research report to a file
+    final_report = \"\"\"# Research Report: Quantum Computing
+    ## Introduction
+    Quantum computing is a rapidly evolving field that leverages quantum mechanics to process information...
+
+    ## Key Findings
+    1. Quantum computers use qubits instead of classical bits...
+    2. ...
+
+    ## Sources
+    - https://example.com/quantum-computing
+    - https://arxiv.org/abs/2101.12345
+    \"\"\"
+
+# Save with a descriptive title
+save_result = save_report(final_report, title="Quantum Computing Research")
+print(save_result)
+```
+
 For academic, scientific, or research-oriented queries, you should first use the `arxiv_search` tool to find relevant papers and research. The arXiv search supports advanced query syntax like boolean operators (AND, OR, NOT), exact phrase matching with quotes, and category filtering (e.g., cat:cs.AI for AI papers).
 
 When researching technical or scientific topics, follow this workflow:
@@ -110,9 +144,17 @@ When researching technical or scientific topics, follow this workflow:
 4. Follow up with web searches for additional context or explanations
 5. Visit relevant webpages to extract detailed information
 6. Compile findings into a comprehensive report
+7. Save the final report using the `save_report` tool
 
-If there isn't enough relevant information returned from a search, continue running improved searches (more specific, using advanced search operators) until you have enough information (at least 5 high quality, authoritative sources).
+If there isn't enough relevant information returned from a search, continue running improved searches (more specific, using advanced search operators) until you have enough information (aim for 10 high quality, authoritative sources).
 
-ALWAYS include ALL relevant source URLs for ALL information you use in your response!"""
+ALWAYS include ALL relevant source URLs for ALL information you use in your response!
+And ALWAYS save your completed comprehensive report, using the `save_report` tool, just before calling final_answer.
+"""
+    # Use provided system prompt or default to the standard one
+    if system_prompt:
+        agent.prompt_templates["system_prompt"] += base_system_prompt + f"\n\n{system_prompt}"
+    else:
+        agent.prompt_templates["system_prompt"] += base_system_prompt
 
     return agent

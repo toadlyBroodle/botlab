@@ -26,6 +26,10 @@ if not logger.handlers:
 PAPERS_DIR = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / "papers"
 PAPERS_DIR.mkdir(exist_ok=True)
 
+# Directory for storing reports
+REPORTS_DIR = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / "reports"
+REPORTS_DIR.mkdir(exist_ok=True)
+
 # Dictionary to track conversion statuses
 conversion_statuses = {}
 
@@ -73,6 +77,48 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
             status.status = "error"
             status.completed_at = datetime.now()
             status.error = str(e)
+
+@tool
+def save_report(content: str, title: str = None) -> str:
+    """Saves the research report to a file in the data/reports directory.
+    
+    This tool saves the provided content as a markdown file in the reports directory.
+    The filename includes a timestamp and an optional title for easy identification.
+    
+    Args:
+        content: The markdown content of the report to save
+        title: Optional title to include in the filename
+        
+    Returns:
+        A message confirming the report was saved and the path to the file
+    """
+    try:
+        # Create a timestamp for the filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create a filename with the timestamp and optional title
+        if title:
+            # Clean the title to make it safe for filenames
+            safe_title = "".join(c if c.isalnum() or c in [' ', '_', '-'] else '_' for c in title)
+            safe_title = safe_title.replace(' ', '_')
+            filename = f"{timestamp}_{safe_title}.md"
+        else:
+            filename = f"{timestamp}_research_report.md"
+        
+        # Create the full path
+        report_path = REPORTS_DIR / filename
+        
+        # Save the content to the file
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        logger.info(f"Report saved to {report_path}")
+        
+        return f"Report successfully saved to {report_path}"
+        
+    except Exception as e:
+        logger.error(f"Error saving report: {str(e)}")
+        return f"Error: Failed to save report: {str(e)}"
 
 @tool
 def pdf_to_markdown(url: str) -> str:
