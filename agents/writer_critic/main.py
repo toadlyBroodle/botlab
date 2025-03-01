@@ -67,13 +67,11 @@ def initialize(
     
     writer_agent = create_writer_agent(
         model, 
-        critic_agent, 
+        critic_agent=critic_agent, 
+        max_steps=max_steps,
         agent_description=writer_description,
         system_prompt=writer_system_prompt
     )
-    
-    # Set max steps
-    writer_agent.max_steps = max_steps
     
     def run_writing_task(prompt: str) -> str:
         """Run a writing task through the writer-critic system
