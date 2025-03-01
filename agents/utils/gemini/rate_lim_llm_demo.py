@@ -9,6 +9,7 @@ import logging
 from dotenv import load_dotenv
 from smolagents import LiteLLMModel, ToolCallingAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from utils.agent_utils import apply_agent_specific_templates
 
 # Configure logging using the static method
 RateLimitedLiteLLMModel.configure_logging(level=logging.WARNING, enable_litellm_logging=False)
@@ -18,7 +19,6 @@ def create_demo_agent(model: LiteLLMModel) -> ToolCallingAgent:
     
     Args:
         model: The LiteLLM model to use for the agent
-        name: Name for the agent
         
     Returns:
         A configured demo agent
@@ -28,10 +28,10 @@ def create_demo_agent(model: LiteLLMModel) -> ToolCallingAgent:
         model=model,
         name="demo_agent",
         description='A simple agent that demonstrates the rate-limited model.',
-        max_steps=1
     )
     
-    agent.prompt_templates["system_prompt"] += """\n\nYou're a mere demo agent, just run the search."""
+    # Apply agent-specific templates
+    apply_agent_specific_templates(agent)
     
     return agent
 
