@@ -1,6 +1,7 @@
 from smolagents import CodeAgent
 from .tools import web_search, visit_webpage, arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown, save_report
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from utils.agents.tools import apply_custom_agent_prompts
 from typing import Optional
 
 def create_researcher_agent(model: RateLimitedLiteLLMModel, 
@@ -46,9 +47,12 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel,
         max_steps=max_steps
     )
 
-    # Apply agent-specific templates and ensure we use the returned agent
+    # First, apply our custom template to initialize all prompt templates with their required variables
+    apply_custom_agent_prompts(agent)
+    
+    # Now, get the base system prompt and append to it if needed
     base_sys_prompt = agent.prompt_templates["system_prompt"]
-
+    
     # Use provided system prompt or default to a generic one
     if system_prompt:
         sys_prompt_appended = base_sys_prompt + f"\n\n{system_prompt}"
@@ -161,7 +165,8 @@ ALWAYS include ALL relevant source URLs for ALL information you use in your resp
 And ALWAYS save your completed comprehensive report, using the `save_report` tool, just before calling final_answer.
 """
 
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended
+    # Append to the system prompt in the agent's prompt templates
+    agent.prompt_templates["system_prompt"] = sys_prompt_appended # no need to reinitialize the system prompt, as no variables are used in the prompt
 
     return agent
 
