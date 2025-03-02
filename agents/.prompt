@@ -3,12 +3,17 @@
 ## basic project info
 
 ### main directory tree
-.../agents/
-    |__ .venv/
-    |__ researcher/
-    |__ utils/
-    |   |__ gemini/
-    |__ writer_critic/
+.../botlab/agents/
+                |__ .venv/
+                |__ researcher/
+                |__ utils/
+                |   |__ gemini/
+                |__ writer_critic/
+
+### smolagent source code
+- smolagent source code is located in *agents/.venv/lib/python3.11/site-packages/smolagents/*
+    - search this dir for information relevant to how smolagents works
+    - NEVER modify smolagent source code
 
 ### virtual environment
 - *.venv/* is the poetry managed .venv
@@ -32,3 +37,7 @@
         - `example.py` : example usages
         - `main.py` : main setup and entry point
         - `tools.py` : tools used by the agents
+
+### general rules
+- NEVER install dependencies without asking first
+- don't write new example files unless asked to
