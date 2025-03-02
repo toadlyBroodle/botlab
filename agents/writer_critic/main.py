@@ -28,7 +28,7 @@ def setup_environment():
 def initialize(
     max_steps: int = 5, 
     model_info_path: str = "utils/gemini/gem_llm_info.json",
-    model_name: str = "gemini/gemini-2.0-flash", 
+    model_id: str = "gemini/gemini-2.0-flash", 
     enable_telemetry: bool = False,
     writer_description: Optional[str] = None,
     critic_description: Optional[str] = None,
@@ -39,7 +39,7 @@ def initialize(
     
     Args:
         max_steps: Maximum number of steps for the writer agent
-        model_name: LLM model to use
+        model_id: LLM model to use
         enable_telemetry: Whether to enable OpenTelemetry tracing
         writer_description: Optional additional description for the writer agent
         critic_description: Optional additional description for the critic agent
@@ -57,7 +57,7 @@ def initialize(
     setup_environment()
     
     model = RateLimitedLiteLLMModel(
-        model_id=model_name,
+        model_id=model_id,
         model_info_path=model_info_path
     )
     
@@ -100,7 +100,7 @@ def main():
                         help="The writing prompt to process")
     parser.add_argument("--enable-telemetry", action="store_true", help="Enable telemetry")
     parser.add_argument("--max-steps", type=int, default=5, help="Maximum number of steps")
-    parser.add_argument("--model-name", type=str, default="gpt-4o-mini", help="LLM model to use")
+    parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="LLM model to use")
     parser.add_argument("--writer-description", type=str, default=None, help="Custom description for the writer agent")
     parser.add_argument("--critic-description", type=str, default=None, help="Custom description for the critic agent")
     parser.add_argument("--writer-prompt", type=str, default=None, help="Custom system prompt for the writer agent")
@@ -111,7 +111,7 @@ def main():
     # Initialize the writer-critic system with parameters from command line
     run_writing_task = initialize(
         max_steps=args.max_steps,
-        model_name=args.model_name,
+        model_id=args.model_id,
         enable_telemetry=args.enable_telemetry,
         writer_description=args.writer_description,
         critic_description=args.critic_description,
