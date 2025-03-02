@@ -1,6 +1,7 @@
 from typing import List, Optional
 from smolagents import CodeAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from utils.agents.tools import apply_custom_agent_prompts
 
 def create_manager_agent(
     model: RateLimitedLiteLLMModel, 
@@ -32,7 +33,10 @@ def create_manager_agent(
         max_steps=max_steps
     )
     
-    # Apply agent-specific templates
+    # Apply custom templates to initialize all prompt templates
+    apply_custom_agent_prompts(agent)
+    
+    # Get the base system prompt and append to it
     base_sys_prompt = agent.prompt_templates["system_prompt"]
     
     # Add additional context about managed agents
@@ -50,5 +54,5 @@ Be persistent and iterative in your approach. If an agent's results aren't satis
 
 Always maintain a clean, organized format in your responses, including citations and sources where appropriate unless instructed otherwise."""
 
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended
+    agent.prompt_templates["system_prompt"] = sys_prompt_appended # no need to reinitialize the system prompt, as no variables are used in the prompt
     return agent

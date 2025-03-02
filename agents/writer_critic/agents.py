@@ -4,6 +4,7 @@ from smolagents import (
 )
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from writer_critic.tools import save_draft
+from utils.agents.tools import apply_custom_agent_prompts
 from typing import Optional
 
 def create_critic_agent(model: RateLimitedLiteLLMModel, 
@@ -36,13 +37,18 @@ def create_critic_agent(model: RateLimitedLiteLLMModel,
         max_steps=max_steps,  # Critic just needs one step to analyze and respond
     )
 
+    # Apply custom templates to initialize all prompt templates
+    apply_custom_agent_prompts(agent)
+    
+    # Get the base system prompt and append to it
+    base_sys_prompt = agent.prompt_templates["system_prompt"]
     
     # Append provided system prompt or default to a generic one
-    base_sys_prompt = agent.prompt_templates["system_prompt"]
     if system_prompt:
         sys_prompt_appended = base_sys_prompt + f"\n\n{system_prompt}"
     else:
-        sys_prompt_appended = base_sys_prompt + """\n\nYou are a literary critic who analyzes creative content. Your role is to provide constructive feedback on structure, themes, character development, and overall quality.
+        sys_prompt_appended = base_sys_prompt + """\n\nYou are a literary critic who analyzes and provides constructive feedback on creative content. 
+Your role is to provide constructive feedback to your managing writer agent on the content, style, structure, themes, and overall quality of their latest draft.
 
 Your task is to critically analyze the latest draft sent from the writer. When you're done, provide detailed feedback for improvements. Do not make any changes to the draft yourself.
 Provide your feedback as plain text, without any special tags.
@@ -84,26 +90,32 @@ def create_writer_agent(model: RateLimitedLiteLLMModel, critic_agent: ToolCallin
         max_steps=max_steps,
     )
 
-    # Append provided system prompt or default to a generic one
+    # Apply custom templates to initialize all prompt templates
+    apply_custom_agent_prompts(agent)
+    
+    # Get the base system prompt and append to it
     base_sys_prompt = agent.prompt_templates["system_prompt"]
+    
+    # Append provided system prompt or default to a generic one
     if system_prompt:
         sys_prompt_appended = base_sys_prompt + f"\n\n{system_prompt}"
     else:
-        sys_prompt_appended = base_sys_prompt + """\n\nYou are a creative writer who drafts content based on user prompts. Your writing should be engaging, well-structured, and tailored to the requested style and topic.
+        sys_prompt_appended = base_sys_prompt + """\n\nYou are a creative writer who drafts and edits writing content to fulfil your assigned task. 
+Your writing should be interesting, engaging, well-structured, and tailored to the requested style, topic, and likely audience.
 
 Your task is to write and iteratively improve drafts. Here's how you should approach this task:
 
-1. Write an initial draft based on the user's prompt
+1. Write an initial draft based on the input prompt
 2. Save your draft using the save_draft tool
-3. Call the critic_agent with your draft to get feedback, e.g. critic_agent(task="provide feedack on this draft: {draft}")
+3. Call the critic_agent with your draft to get feedback, e.g. critic_agent(task="provide feedback on this draft: {draft}")
 4. Consider the resulting critic's feedback very carefully and always use it to guide your next draft
 5. Write a new draft incorporating the feedback
-6. Repeat steps 2-5 until you are satisfied with the result
+6. Repeat steps 2-5 until you are completely satisfied with the result
 
 Always save each version of your draft so there's a record of your progress by using the save_draft tool.
 
-In your final answer, provide only your completed draft with no additional comments or explanations.
+In your final answer, always include your complete final draft.
 """
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended
+    agent.prompt_templates["system_prompt"] = sys_prompt_appended # no need to reinitialize the system prompt, as no variables are used in the prompt
 
     return agent 
