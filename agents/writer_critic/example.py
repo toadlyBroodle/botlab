@@ -41,7 +41,7 @@ Do not ask any questions or reply with anything else, only provide your feedback
 
     # Initialize writer-critic system with custom prompts and descriptions
     run_writing_task = writer_critic_main.initialize(
-        max_steps=5, 
+        max_steps=10, 
         enable_telemetry=False,
         writer_description=writer_description,
         critic_description=critic_description,

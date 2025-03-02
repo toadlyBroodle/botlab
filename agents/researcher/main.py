@@ -6,25 +6,37 @@ import argparse
 from typing import Optional
 from dotenv import load_dotenv
 from utils.telemetry import start_telemetry
-from researcher.agents import create_researcher_agent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+
+from researcher.agents import create_researcher_agent
+from researcher.tools import PAPERS_DIR, REPORTS_DIR
 
 def setup_environment():
     """Set up environment variables and API keys"""
-    load_dotenv()
-    api_key = os.getenv("GEMINI_API_KEY")
+    # Ensure directories exist
+    os.makedirs(PAPERS_DIR, exist_ok=True)
+    os.makedirs(REPORTS_DIR, exist_ok=True)
     
+    # Load .env from root directory
+    load_dotenv()
+    
+    # Check for API key
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
     
     return api_key
 
-def initialize(enable_telemetry: bool = False, max_steps: int = 20, 
-               base_wait_time: float = 2.0, max_retries: int = 3,
-               model_info_path: str = "utils/gemini/gem_llm_info.json",
-               model_id: str = "gemini/gemini-2.0-flash",
-               agent_description: Optional[str] = None,
-               system_prompt: Optional[str] = None):
+def initialize(
+    max_steps: int = 20, 
+    enable_telemetry: bool = False,
+    base_wait_time: float = 2.0, 
+    max_retries: int = 3,
+    model_info_path: str = "utils/gemini/gem_llm_info.json",
+    model_id: str = "gemini/gemini-2.0-flash",
+    researcher_description: Optional[str] = None,
+    researcher_system_prompt: Optional[str] = None
+):
     """Initialize the system with optional telemetry and return the researcher agent
     
     The researcher agent now supports:
@@ -34,72 +46,71 @@ def initialize(enable_telemetry: bool = False, max_steps: int = 20,
     4. PDF to markdown conversion for research papers
     
     Args:
-        enable_telemetry: Whether to enable OpenTelemetry tracing
         max_steps: Maximum number of steps for the agent
+        enable_telemetry: Whether to enable OpenTelemetry tracing
         base_wait_time: Base wait time in seconds for rate limiting
         max_retries: Maximum number of retry attempts for rate limiting
         model_info_path: Path to the model info JSON file
         model_id: The model ID to use (default: gemini/gemini-2.0-flash)
-        agent_description: Optional additional description to append to the base description
-        system_prompt: Optional custom system prompt to use instead of the default
+        researcher_description: Optional additional description for the researcher agent
+        researcher_system_prompt: Optional custom system prompt for the researcher agent
         
     Returns:
-        The configured researcher CodeAgent
+        A function that can process research queries
     """
     
     # Start telemetry if enabled
     if enable_telemetry:
         start_telemetry()
     
-    api_key = setup_environment()
+    setup_environment()
     
     # Create a rate-limited model with model-specific rate limits
     model = RateLimitedLiteLLMModel(
         model_id=model_id,
+        model_info_path=model_info_path,
         base_wait_time=base_wait_time,
         max_retries=max_retries,
-        model_info_path=model_info_path
     )
     
     # Create researcher agent
     researcher_agent = create_researcher_agent(
-        model, 
-        max_steps=max_steps, 
-        agent_description=agent_description,
-        system_prompt=system_prompt
+        model=model, 
+        max_steps=max_steps,
+        agent_description=researcher_description,
+        system_prompt=researcher_system_prompt
     )
     
-    return researcher_agent
-
-def run_agent_with_query(agent, query, verbose=True):
-    """Run the agent with a query and return the result
-    
-    Args:
-        agent: The agent to run
-        query: The query to run
-        verbose: Whether to print progress information
+    def run_research_query(query: str, verbose: bool = True) -> str:
+        """Run the agent with a query and return the result
         
-    Returns:
-        The result from the agent
-    """
-    if verbose:
-        print(f"\nProcessing query: {query}")
+        Args:
+            query: The query to run
+            verbose: Whether to print progress information
+            
+        Returns:
+            The result from the agent
+        """
+        if verbose:
+            print(f"\nProcessing query: {query}")
+            
+        # Time the query execution
+        start_time = time.time()
         
-    # Time the query execution
-    start_time = time.time()
-    
-    # Run the query directly on the agent
-    result = agent.run(query)
-    
-    # Calculate and print execution time
-    execution_time = time.time() - start_time
-    
-    if verbose:
-        print(f"\nExecution time: {execution_time:.2f} seconds")
-        print("\nResult:")
-        print(result)
-    
-    return result
+        # Run the query directly on the agent
+        result = researcher_agent.run(query)
+        
+        # Calculate and print execution time
+        execution_time = time.time() - start_time
+        
+        if verbose:
+            print(f"\nExecution time: {execution_time:.2f} seconds")
+            print("\nResult:")
+            print(result)
+        
+        return result
+        
+    return run_research_query
 
 def parse_arguments():
     """Parse command-line arguments
@@ -108,7 +119,7 @@ def parse_arguments():
         The parsed arguments
     """
     parser = argparse.ArgumentParser(description="Run the researcher CodeAgent with a query.")
-    parser.add_argument("--query", type=str, default="What are the latest advancements in large language models? Include information from recent arXiv papers.", 
+    parser.add_argument("--query", type=str, default="What are the latest advancements in agentic AI systems? Include information from recent arXiv papers.", 
                         help="The query to research")
     parser.add_argument("--enable-telemetry", action="store_true", help="Enable telemetry")
     parser.add_argument("--max-steps", type=int, default=20, help="Maximum number of steps")
@@ -117,8 +128,8 @@ def parse_arguments():
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
     parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
-    parser.add_argument("--agent-description", type=str, default=None, help="Custom description for the researcher agent")
-    parser.add_argument("--system-prompt", type=str, default=None, help="Custom system prompt for the researcher agent")
+    parser.add_argument("--researcher-description", type=str, default=None, help="Custom description for the researcher agent")
+    parser.add_argument("--researcher-prompt", type=str, default=None, help="Custom system prompt for the researcher agent")
     
     return parser.parse_args()
 
@@ -127,20 +138,21 @@ def main():
     args = parse_arguments()
     
     # Initialize the researcher agent with parameters from command line
-    researcher_agent = initialize(
+    run_research_query = initialize(
         enable_telemetry=args.enable_telemetry,
         max_steps=args.max_steps,
         base_wait_time=args.base_wait_time,
         max_retries=args.max_retries,
         model_id=args.model_id,
         model_info_path=args.model_info_path,
-        agent_description=args.agent_description,
-        system_prompt=args.system_prompt
+        researcher_description=args.researcher_description,
+        researcher_system_prompt=args.researcher_prompt
     )
-    query = args.query
     
     # Run the agent with the query
-    return run_agent_with_query(researcher_agent, query, verbose=not args.quiet)
+    result = run_research_query(args.query, verbose=not args.quiet)
+    
+    return result
 
 if __name__ == "__main__":
     main()

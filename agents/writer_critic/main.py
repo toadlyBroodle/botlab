@@ -1,10 +1,10 @@
 import os
 from dotenv import load_dotenv
-from smolagents import LiteLLMModel
 import sys
 from typing import Optional
 from utils.telemetry import start_telemetry
 
+from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from writer_critic.agents import create_writer_agent, create_critic_agent
 from writer_critic.tools import DRAFT_DIR, BASE_DIR
 
@@ -18,15 +18,17 @@ def setup_environment():
     load_dotenv()
     
     # Check for API key
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set")
-    
-    return api_key
+    #api_key = os.getenv("OPENAI_API_KEY")
+    #if not api_key:
+    #    raise ValueError("OPENAI_API_KEY environment variable is not set")
+
+    if not os.getenv("GEMINI_API_KEY"):
+        raise ValueError("GEMINI_API_KEY environment variable is not set")
 
 def initialize(
     max_steps: int = 5, 
-    model_name: str = "gpt-4o-mini", 
+    model_info_path: str = "utils/gemini/gem_llm_info.json",
+    model_name: str = "gemini/gemini-2.0-flash", 
     enable_telemetry: bool = False,
     writer_description: Optional[str] = None,
     critic_description: Optional[str] = None,
@@ -54,19 +56,20 @@ def initialize(
     
     setup_environment()
     
-    model = LiteLLMModel(
-        model_id=model_name
+    model = RateLimitedLiteLLMModel(
+        model_id=model_name,
+        model_info_path=model_info_path
     )
     
     # Create agents in the right order - critic first, then writer that manages critic
     critic_agent = create_critic_agent(
-        model, 
+        model=model,
         agent_description=critic_description,
         system_prompt=critic_system_prompt
     )
     
     writer_agent = create_writer_agent(
-        model, 
+        model=model,
         critic_agent=critic_agent, 
         max_steps=max_steps,
         agent_description=writer_description,
