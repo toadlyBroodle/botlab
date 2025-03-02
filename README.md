@@ -10,17 +10,72 @@ A laboratory for experimenting with AI agents and automation tools. Built with P
 - ✨ **Simplicity**: Minimal dependencies and easy to understand code
 - 📊 **Extensive Logging**: Built-in monitoring and debugging tools
 
-## 🚀 Quick Start
+## 📚 Projects
+
+This repository contains two main projects:
+
+### 1. 🧠 Agents (smolagent framework)
+
+The `agents/` directory contains a collection of AI agents built with the smolagent framework. These agents can perform tasks like research, writing, and coordination.
 
 ```bash
-# Clone and enter directory
-git clone https://github.com/yourusername/botlab.git
-cd botlab
+# Example: Run the researcher agent
+cd agents
+poetry run python -m researcher.main --query "What are the latest advancements in AI?"
+```
+
+**[View the full Agents documentation →](agents/README.md)**
+
+Key components:
+- **Researcher Agent**: Web search and information gathering
+- **Writer-Critic Agent**: Creative writing with feedback
+- **Manager Agent**: Coordinates multiple specialized agents
+
+### 2. 🐝 Swarms (OpenAI's swarm framework)
+
+The `swarms/` directory contains implementations based on OpenAI's swarm framework, allowing for the creation of collaborative agent systems.
+
+```bash
+# Example: Run the writer-critic swarm
+cd swarms
+python -m writer-critic.writer-critic
+```
+
+**[View the full Swarms documentation →](swarms/README.md)**
+
+Key features:
+- **Writer-Critic System**: Collaborative writing with feedback loops
+- **Multi-agent collaboration**: Agents working together on complex tasks
+- **Emergent behavior**: Solutions that arise from agent interactions
+- **Scalable architecture**: Add more agents to tackle larger problems
+
+## 🛠️ Setup
+
+Each project maintains it's own virtual environment and dependencies.
+
+### Agents Project Setup
+
+```bash
+cd agents
+poetry install
+# Set GEMINI_API_KEY in .env
+```
+
+### Swarms Project Setup
+
+```bash
+cd swarms
+poetry install
+# Set OPENAI_API_KEY in .env
+```
+
+For detailed instructions, please refer to the respective README files in each directory.
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
+1. Fork and clone the repository
+    - `git clone https://github.com/yourusername/botlab.git`
+2. Create a new branch
 3. Submit a pull request
 
 ## 📜 License
