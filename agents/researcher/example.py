@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import time
+import os
 import sys
 import argparse
 from pathlib import Path
@@ -8,55 +10,63 @@ project_root = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(project_root))
 
 # Import the main module
-from agents.researcher.main import initialize, run_agent_with_query, parse_arguments, main as run_main
+import researcher.main as researcher_main
 
 def main():
     """Example script to demonstrate how to use the researcher CodeAgent.
     
-    This script shows three ways to use the researcher agent:
-    1. Using the main() function from main.py to handle everything
-    2. Using the initialize() and run_agent_with_query() functions for more control
-    3. Using a custom query from command line arguments
+    This script shows how to use the researcher agent with custom parameters and prompts.
     """
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Run the researcher CodeAgent with a custom query")
-    parser.add_argument("query", nargs="?", default=None, help="Custom query to research")
-    parser.add_argument("--max-steps", type=int, default=20, help="Maximum number of steps")
-    parser.add_argument("--model", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
-    parser.add_argument("--skip-main", action="store_true", help="Skip running the main.py example")
-    args = parser.parse_args()
     
-    # Get custom query from command line if provided
-    custom_query = args.query
-    
-    # Option 1: Use the main function from main.py
-    # This will parse command-line arguments and run the agent
-    if not args.skip_main:
-        print("Running the researcher agent using main.py's main() function...")
-        result = run_main()
-        print("\n" + "="*80 + "\n")
-    
-    # Option 2: Initialize the agent and run a custom query
-    # This demonstrates how to use the agent programmatically
-    print("Running a custom query programmatically...")
-    
-    # Initialize the agent with parameters from command line
-    agent = initialize(
-        max_steps=args.max_steps,
-        model_id=args.model
+    # Define specific system prompt for the researcher agent
+    researcher_system_prompt = """You are an advanced AI research assistant specialized in gathering comprehensive information on technical and scientific topics. Your primary goal is to provide detailed, accurate, and well-sourced information by leveraging web searches and academic papers.
+
+When researching technical or scientific topics, follow this workflow:
+1. Start with an arXiv search using proper search syntax to find academic papers
+2. For particularly relevant papers, download and convert them to markdown
+3. Follow up with web searches for additional context, explanations, or recent developments
+4. Visit relevant webpages to extract detailed information
+5. Compile findings into a comprehensive report with clear sections
+6. Always include all source URLs for all information
+
+Your research reports should be well-structured with:
+- An executive summary/introduction
+- Key findings organized by subtopic
+- Technical details with appropriate depth
+- Recent developments and future directions
+- A comprehensive list of sources
+
+For any query, aim to find at least 5-10 high-quality, authoritative sources before compiling your report.
+Always save your completed comprehensive report using the save_report tool before providing your final answer."""
+
+    # Define specific description for the researcher agent
+    researcher_description = "An advanced AI research assistant specialized in gathering comprehensive information on technical and scientific topics from both web searches and academic papers."
+
+    # Initialize researcher system with custom prompts and descriptions
+    run_research_query = researcher_main.initialize(
+        max_steps=20, 
+        enable_telemetry=False,
+        researcher_description=researcher_description,
+        researcher_system_prompt=researcher_system_prompt
     )
     
-    # Run a custom query (either from command line or default)
-    if not custom_query:
-        custom_query = "What is quantum computing and how does it differ from classical computing?"
+    # Example research query
+    query = """What are the latest advancements in quantum computing? 
+    Focus on breakthroughs in the last 2 years, including hardware developments, 
+    error correction techniques, and potential applications. Include information 
+    from recent arXiv papers and reputable sources."""
     
-    print(f"Query: {custom_query}")
-    print("This CodeAgent can write Python code to call tools like web_search, visit_webpage, arxiv_search, and pdf_to_markdown.")
+    start_time = time.time()
     
-    # Run the query
-    result = run_agent_with_query(agent, custom_query)
+    # Run the research query
+    result = run_research_query(query)
     
-    return result
+    # Calculate and print execution time
+    execution_time = time.time() - start_time
+    print(f"\nExecution time: {execution_time:.2f} seconds")
+    
+    # Print path to saved report
+    print("\nThe research report was saved in the data/reports directory.")
 
 if __name__ == "__main__":
     main() 

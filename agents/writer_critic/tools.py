@@ -20,11 +20,11 @@ def get_word_count(text):
     return len(text.split())
 
 @tool
-def save_draft(draft_content    : str, draft_name: str = None) -> str:
+def save_draft(draft: str, draft_name: str = None) -> str:
     """Save the current draft to a file.
     
     Args:
-        draft: The text content to save
+        draft: The draft content to save (MUST be a markdown STRING, not a dict!)
         draft_name: Optional name for the draft file (default: uses iteration counter)
         
     Returns:
@@ -32,7 +32,7 @@ def save_draft(draft_content    : str, draft_name: str = None) -> str:
     """
     global iteration_count
     
-    if not draft_content:
+    if not draft:
         return "No draft content to save."
     
     if not os.path.exists(DRAFT_DIR):
@@ -46,7 +46,7 @@ def save_draft(draft_content    : str, draft_name: str = None) -> str:
     
     file_path = os.path.join(DRAFT_DIR, file_name)
     with open(file_path, "w") as f:
-        f.write(draft_content)
+        f.write(draft)
     
     # Increment iteration count for next draft
     iteration_count += 1
