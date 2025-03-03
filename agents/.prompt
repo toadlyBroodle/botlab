@@ -6,6 +6,7 @@
 .../botlab/agents/
                 |__ .venv/
                 |__ researcher/
+                |__ editor/
                 |__ utils/
                 |   |__ gemini/
                 |__ writer_critic/
@@ -37,6 +38,10 @@
         - `example.py` : example usages
         - `main.py` : main setup and entry point
         - `tools.py` : tools used by the agents
+- *editor/* is a smolagent project for editing content with fact checking
+    - contains the same common files as other projects
+    - provides editor_agent which internally uses fact_checker_agent as a subagent
+    - fact_checker_agent should not be used directly, only through editor_agent
 
 ### general rules
 - NEVER install dependencies without asking first

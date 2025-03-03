@@ -11,6 +11,7 @@ from utils.telemetry import start_telemetry
 from manager.agents import create_manager_agent
 from researcher.agents import create_researcher_agent
 from writer_critic.agents import create_writer_agent, create_critic_agent
+from editor.agents import create_editor_agent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
 def setup_environment():
@@ -98,7 +99,7 @@ def create_agent_by_type(
     """Create an agent by type
     
     Args:
-        agent_type: The type of agent to create ('researcher' or 'writer')
+        agent_type: The type of agent to create ('researcher', 'writer', or 'editor')
         max_steps: Maximum steps for the agent
         model_id: The model ID to use
         model_info_path: Path to model info JSON file
@@ -106,7 +107,9 @@ def create_agent_by_type(
         agent_configs: Dictionary containing agent configurations with keys like:
                       'researcher_description', 'researcher_prompt',
                       'writer_description', 'writer_prompt',
-                      'critic_description', 'critic_prompt'
+                      'critic_description', 'critic_prompt',
+                      'fact_checker_description', 'fact_checker_prompt',
+                      'editor_description', 'editor_prompt'
         
     Returns:
         The created agent
@@ -145,6 +148,18 @@ def create_agent_by_type(
             system_prompt=agent_configs.get('writer_prompt')
         )
     
+    elif agent_type.lower() == 'editor':
+        # The editor agent will create its own fact checker agent internally
+        return create_editor_agent(
+            model=model,
+            max_steps=max_steps,
+            agent_description=agent_configs.get('editor_description'),
+            system_prompt=agent_configs.get('editor_prompt'),
+            # Pass fact checker configurations to be used internally
+            fact_checker_description=agent_configs.get('fact_checker_description'),
+            fact_checker_prompt=agent_configs.get('fact_checker_prompt')
+        )
+    
     else:
         raise ValueError(f"Unknown agent type: {agent_type}")
 
@@ -165,7 +180,11 @@ def load_agent_configs(config_path=None, config_dict=None):
         "writer_description": "Creative writer with journalistic style",
         "writer_prompt": "Write engaging content with a focus on clarity and accuracy",
         "critic_description": "Detail-oriented editor with high standards",
-        "critic_prompt": "Evaluate writing for clarity, accuracy, and engagement"
+        "critic_prompt": "Evaluate writing for clarity, accuracy, and engagement",
+        "fact_checker_description": "Thorough fact checker with attention to detail",
+        "fact_checker_prompt": "Verify claims against reliable sources with precision",
+        "editor_description": "Skilled editor with focus on accuracy and clarity",
+        "editor_prompt": "Edit content to ensure factual accuracy while maintaining style"
     }
     """
     if config_path and os.path.exists(config_path):
@@ -192,7 +211,7 @@ def parse_arguments():
     # Add command line arguments
     parser.add_argument("--query", nargs="?", default="What is the current state of quantum computing as of 2025?", help="Query to process")
     parser.add_argument("--telemetry", action="store_true", help="Enable telemetry")
-    parser.add_argument("--managed-agents", type=str, default=None, help="Comma-separated list of agent types to create (e.g. researcher,writer)")
+    parser.add_argument("--managed-agents", type=str, default=None, help="Comma-separated list of agent types to create (e.g. researcher,writer,editor)")
     parser.add_argument("--max-steps", type=int, default=8, help="Maximum steps for agents")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
     parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
@@ -202,7 +221,9 @@ def parse_arguments():
                         help="JSON string containing agent configurations. Example: "
                              "'{\"researcher_description\": \"Expert researcher\", "
                              "\"writer_prompt\": \"Write in a journalistic style\", "
-                             "\"critic_description\": \"Detailed critic\"}'")
+                             "\"critic_description\": \"Detailed critic\", "
+                             "\"fact_checker_description\": \"Thorough fact checker\", "
+                             "\"editor_description\": \"Skilled editor\"}'")
     parser.add_argument("--config-file", type=str, default=None,
                         help="Path to a JSON file containing agent configurations")
     

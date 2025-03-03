@@ -4,6 +4,7 @@ This directory contains agent systems built with smolagents:
 
 - **researcher**: A web search and information gathering agent
 - **writer-critic**: A creative writing system with feedback and iteration
+- **editor**: A content editing system with fact checking capabilities
 - **manager**: A flexible coordination agent that can manage multiple specialized agents
 
 ## 📦 Installation
@@ -45,13 +46,28 @@ Key features:
 - Iterative refinement through feedback
 - Customizable writing styles and critique approaches
 
+### 📝 Editor Agent
+
+The editor agent improves content quality while ensuring factual accuracy through fact checking.
+
+```bash
+# Run the editor agent
+poetry run python -m editor.main --content "Content to edit and fact check"
+```
+
+Key features:
+- Content editing and proofreading
+- Fact checking with source verification
+- Clarity and style improvements
+- Maintains original content style and intent
+
 ### 💼 Manager Agent
 
 The manager agent coordinates multiple specialized agents to solve complex tasks.
 
 ```bash
-# Run the manager with researcher and writer agents
-poetry run python -m manager.main --managed-agents "researcher,writer" --query "Write an article about recent advances in quantum computing."
+# Run the manager with researcher, writer, and editor agents
+poetry run python -m manager.main --managed-agents "researcher,writer,editor" --query "Write an article about recent advances in quantum computing."
 ```
 
 Key features:
@@ -67,10 +83,10 @@ You can customize agent behavior using JSON configuration files or command-line 
 
 ```bash
 # Using a config file
-poetry run python -m manager.main --managed-agents researcher,writer --config-file agent_configs.json
+poetry run python -m manager.main --managed-agents researcher,writer,editor --config-file agent_configs.json
 
 # Using a JSON string
-poetry run python -m manager.main --managed-agents researcher,writer --agent-configs '{"researcher_description": "Expert researcher", "writer_prompt": "Write in a journalistic style"}'
+poetry run python -m manager.main --managed-agents researcher,writer,editor --agent-configs '{"researcher_description": "Expert researcher", "writer_prompt": "Write in a journalistic style", "editor_description": "Skilled editor with focus on accuracy and clarity", "editor_prompt": "Edit content to ensure factual accuracy while maintaining style"}'
 ```
 
 Example configuration format:
@@ -81,7 +97,11 @@ Example configuration format:
   "writer_description": "Creative writer with journalistic style",
   "writer_prompt": "Write engaging content with a focus on clarity and accuracy",
   "critic_description": "Detail-oriented editor with high standards",
-  "critic_prompt": "Evaluate writing for clarity, accuracy, and engagement"
+  "critic_prompt": "Evaluate writing for clarity, accuracy, and engagement",
+  "editor_description": "Skilled editor with focus on accuracy and clarity",
+  "editor_prompt": "Edit content to ensure factual accuracy while maintaining style",
+  "fact_checker_description": "Thorough fact checker with attention to detail",
+  "fact_checker_prompt": "Verify claims against reliable sources with precision"
 }
 ```
 
@@ -164,6 +184,7 @@ agents/
     |__ utils/              # Shared utilities
     |   |__ gemini/         # Google Gemini LLM API utilities
     |__ writer_critic/      # Writer-Critic agent project
+    |__ editor/             # Editor agent project
     |__ manager/            # Manager agent project
 ```
 

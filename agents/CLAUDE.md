@@ -5,13 +5,14 @@
 - Run Researcher: `poetry run python run_examples.py researcher "query"`
 - Run Manager (basic): `poetry run python run_examples.py manager "query"`
 - Run Manager (advanced): `poetry run python run_examples.py manager-advanced "query"`
-- Run Manager (custom): `poetry run python run_examples.py manager-custom "query" --agents researcher writer`
+- Run Manager (custom): `poetry run python run_examples.py manager-custom "query" --agents researcher writer editor`
 - Run Writer-Critic: `poetry run python run_examples.py writer`
+- Run Editor: `poetry run python run_examples.py editor "content to edit"`
 - Run w/Telemetry: `poetry run python run_examples.py researcher "query" --telemetry`
 - Run All: `poetry run python run_examples.py all`
 - Run directly: `poetry run python -m researcher.example "query"`
 - Run manager advanced: `poetry run python -m manager.example "query" --advanced`
-- Run manager custom: `poetry run python -m manager.example "query" --agents researcher writer`
+- Run manager custom: `poetry run python -m manager.example "query" --agents researcher writer editor`
 
 ## Code Style Guidelines
 - **Imports**: Standard library first, third-party next, local imports last
@@ -34,6 +35,7 @@
     |__ .venv/
     |__ researcher/
     |__ manager/
+    |__ editor/
     |__ utils/
     |   |__ gemini/
     |__ writer_critic/
@@ -54,7 +56,7 @@
     ```
 - *utils/* contains shared utils for the project
     - *gemini/* contains google gemini llm api utils
-- *researcher/*, *manager/*, and *writer_critic/* are separate smolagent projects
+- *researcher/*, *manager/*, *writer_critic/*, and *editor/* are separate smolagent projects
     - smolagent projects have these common files:
         - `__init__.py`
         - `agents.py` : project agents

@@ -94,22 +94,35 @@ Unverified Claims:
     return agent
 
 def create_editor_agent(model: RateLimitedLiteLLMModel,
-                       fact_checker: CodeAgent,
+                       fact_checker: Optional[CodeAgent] = None,
                        agent_description: Optional[str] = None,
                        system_prompt: Optional[str] = None,
-                       max_steps: int = 50) -> CodeAgent:
+                       max_steps: int = 50,
+                       fact_checker_description: Optional[str] = None,
+                       fact_checker_prompt: Optional[str] = None) -> CodeAgent:
     """Creates an editor agent that edits content and manages fact checking
     
     Args:
         model: The LiteLLM model to use for the agent
-        fact_checker: The fact checker CodeAgent to be managed
+        fact_checker: Optional pre-configured fact checker CodeAgent to be managed
+                     If not provided, one will be created internally
         agent_description: Optional additional description to append to the base description
         system_prompt: Optional custom system prompt to use instead of the default
         max_steps: Maximum number of steps for the agent
+        fact_checker_description: Optional description for the fact checker if created internally
+        fact_checker_prompt: Optional system prompt for the fact checker if created internally
         
     Returns:
         A configured editor agent that manages fact checking
     """
+    
+    # Create a fact checker agent if one wasn't provided
+    if fact_checker is None:
+        fact_checker = create_fact_checker_agent(
+            model=model,
+            agent_description=fact_checker_description,
+            system_prompt=fact_checker_prompt
+        )
     
     base_description = """An editor agent that improves content quality while ensuring factual accuracy through fact checking.
     Specializes in editing, proofreading, and verifying content accuracy."""
