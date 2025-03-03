@@ -6,6 +6,7 @@ Usage:
     poetry run python -m run_examples researcher "your query"     # Run the researcher with a custom query
     poetry run python run_examples.py manager "query"             # Run the manager with a custom query
     poetry run python run_examples.py manager-advanced "query"    # Run the manager with custom agents
+    poetry run python run_examples.py editor "content to edit"    # Run the editor with content to edit
     poetry run python run_examples.py writer "query" --telemetry  # Run with telemetry enabled
     poetry run python run_examples.py all                         # Run all examples
 """
@@ -56,14 +57,19 @@ def run_writer_critic():
     writer_critic_example.main()
     print("\n")
 
+def run_editor(content=None, telemetry=False):
+    from editor import example as editor_example
+    editor_example.main(content, telemetry)
+    print("\n")
+
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Run agent examples")
     parser.add_argument("example", choices=["researcher", "manager", "manager-advanced", 
-                                            "manager-custom", "writer", "all"],
+                                            "manager-custom", "writer", "editor", "all"],
                       help="Which example to run")
-    parser.add_argument("query", nargs="?", help="Query to process")
+    parser.add_argument("query", nargs="?", help="Query to process or content to edit")
     parser.add_argument("--telemetry", action="store_true", help="Enable telemetry")
     parser.add_argument("--agents", nargs="+", help="Agent types to use with manager-custom")
     
@@ -78,15 +84,18 @@ if __name__ == "__main__":
     elif args.example == "manager-custom":
         if not args.agents:
             print("Error: --agents argument is required for manager-custom")
-            print("Example: --agents researcher writer")
+            print("Example: --agents researcher writer editor")
             sys.exit(1)
         run_manager(args.query, args.telemetry, agent_config=args.agents)
     elif args.example == "writer":
         run_writer_critic()
+    elif args.example == "editor":
+        run_editor(args.query, args.telemetry)
     elif args.example == "all":
         run_researcher()
         run_manager()
         run_writer_critic()
+        run_editor("This is sample content to edit and fact check.")
     else:
         print(f"Unknown option: {args.example}")
         sys.exit(1) 
