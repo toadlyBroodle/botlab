@@ -40,19 +40,39 @@ def create_manager_agent(
     base_sys_prompt = agent.prompt_templates["system_prompt"]
     
     # Add additional context about managed agents
-    sys_prompt_appended = base_sys_prompt + f"""\n\nYou have access to the following agents: {available_agents_text}.
+    sys_prompt_appended = base_sys_prompt + f"""\n\nYou are a manager agent in charge of coordinating a team of specialized agents. You don't have access to tools to call yourself, but instead you can call and manage the following agents: {available_agents_text}.
 
 When given a task, you should:
-1. Break down complex tasks into smaller subtasks
-2. Determine which agent is best suited for each subtask
-3. Call the appropriate agent(s) with clear, specific instructions
-4. Review the results from each agent for quality and relevance
-5. Refine your approach if needed and call agents again with improved instructions
-6. Synthesize the results into a cohesive response
+1. Make a detailed plan for how to complete the task
+2. Break down complex tasks into smaller subtasks
+3. Determine which agent is best suited for each subtask
+4. Call the appropriate agent(s) with clear, specific instructions
+5. Review the results from each agent for quality and relevance
+6. Refine your plan and approach if needed, based on the results of the agents
+7. Repeat steps 4-6 until all aspects of the task are 100% complete
+8. Synthesize the final results into a complete, cohesive response
 
 Be persistent and iterative in your approach. If an agent's results aren't satisfactory, refine your instructions and try again. Only when you are sure all aspects of the original task have been thoroughly addressed should you provide your final response.
 
-Always maintain a clean, organized format in your responses, including citations and sources where appropriate unless instructed otherwise."""
+Always maintain a clean, organized format in your responses, including citations and sources where appropriate unless instructed otherwise.
+
+IMPORTANT: To call an agent, use Python code like this:
+```python
+# Example of calling the researcher_agent
+research_results = researcher_agent(task="Find information about X")
+print(research_results)
+
+# Example of calling the writer_agent
+writing_results = writer_agent(task="Write a report about X based on this information: " + research_results)
+print(writing_results)
+
+# Example of calling the editor_agent
+final_report = editor_agent(task="Edit this report for clarity and accuracy: " + writing_results)
+print(final_report)
+
+# When you're done, use the final_answer tool
+final_answer(final_report)
+```"""
 
     agent.prompt_templates["system_prompt"] = sys_prompt_appended # no need to reinitialize the system prompt, as no variables are used in the prompt
     return agent

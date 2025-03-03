@@ -30,7 +30,8 @@ def initialize(
     max_steps: int = 8,
     max_retries: int = 3,
     model_info_path: str = "utils/gemini/gem_llm_info.json",
-    model_id: str = "gemini/gemini-2.0-flash"
+    model_id: str = "gemini/gemini-2.0-flash",
+    agent_configs: Optional[dict] = None
 ) -> Callable[[str], str]:
     """Initialize the manager agent system with optional telemetry
     
@@ -38,10 +39,10 @@ def initialize(
         enable_telemetry: Whether to enable OpenTelemetry tracing
         managed_agents: List of pre-configured agents to manage
         max_steps: Maximum number of steps for the agents
-        base_wait_time: Base wait time in seconds for rate limiting
         max_retries: Maximum number of retry attempts for rate limiting
         model_info_path: Path to the model info JSON file
         model_id: The model ID to use (default: gemini/gemini-2.0-flash)
+        agent_configs: Dictionary containing agent configurations
         
     Returns:
         A function that can process queries through the manager agent
@@ -70,12 +71,11 @@ def initialize(
         max_steps=max_steps
     )
     
-    def run_query(query: str, verbose: bool = True) -> str:
+    def run_query(query: str) -> str:
         """Runs a query through the manager agent
         
         Args:
             query: The query to process
-            verbose: Whether to print progress information
             
         Returns:
             The response from the manager agent
@@ -128,8 +128,8 @@ def create_agent_by_type(
         return create_researcher_agent(
             model=model,
             max_steps=max_steps,
-            agent_description=agent_configs.get('researcher_description'),
-            system_prompt=agent_configs.get('researcher_prompt')
+            researcher_description=agent_configs.get('researcher_description'),
+            researcher_prompt=agent_configs.get('researcher_prompt')
         )
     
     elif agent_type.lower() == 'writer':
@@ -179,7 +179,7 @@ def load_agent_configs(config_path=None, config_dict=None):
         "researcher_prompt": "You are a meticulous researcher who prioritizes academic sources",
         "writer_description": "Creative writer with journalistic style",
         "writer_prompt": "Write engaging content with a focus on clarity and accuracy",
-        "critic_description": "Detail-oriented editor with high standards",
+        "critic_description": "Detail-oriented literary critic with high standards",
         "critic_prompt": "Evaluate writing for clarity, accuracy, and engagement",
         "fact_checker_description": "Thorough fact checker with attention to detail",
         "fact_checker_prompt": "Verify claims against reliable sources with precision",
@@ -209,21 +209,15 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Run the manager agent system")
     
     # Add command line arguments
-    parser.add_argument("--query", nargs="?", default="What is the current state of quantum computing as of 2025?", help="Query to process")
+    parser.add_argument("--query", nargs="?", help="Query to process")
     parser.add_argument("--telemetry", action="store_true", help="Enable telemetry")
     parser.add_argument("--managed-agents", type=str, default=None, help="Comma-separated list of agent types to create (e.g. researcher,writer,editor)")
     parser.add_argument("--max-steps", type=int, default=8, help="Maximum steps for agents")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
     parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     
-    # Add arguments for agent configurations
-    parser.add_argument("--agent-configs", type=str, default=None, 
-                        help="JSON string containing agent configurations. Example: "
-                             "'{\"researcher_description\": \"Expert researcher\", "
-                             "\"writer_prompt\": \"Write in a journalistic style\", "
-                             "\"critic_description\": \"Detailed critic\", "
-                             "\"fact_checker_description\": \"Thorough fact checker\", "
-                             "\"editor_description\": \"Skilled editor\"}'")
+    # Add arguments for agent configurations - simplified to a single toggle
+    parser.add_argument("--use-custom-prompts", action="store_true", help="Use custom agent descriptions and prompts")
     parser.add_argument("--config-file", type=str, default=None,
                         help="Path to a JSON file containing agent configurations")
     
@@ -240,16 +234,7 @@ def main():
     if args.config_file:
         agent_configs = load_agent_configs(config_path=args.config_file)
     
-    # Then try parsing from command line argument if specified (overrides file configs)
-    if args.agent_configs:
-        try:
-            cmd_configs = json.loads(args.agent_configs)
-            # Update with command line configs (they take precedence)
-            agent_configs.update(cmd_configs)
-        except json.JSONDecodeError:
-            print(f"Warning: Could not parse agent configurations: {args.agent_configs}")
-    
-    # Set up custom agents if provided
+    # Create agents based on the managed-agents argument
     agents = []
     if args.managed_agents:
         managed_agents = args.managed_agents.split(",")
@@ -278,7 +263,8 @@ def main():
         managed_agents=agents,
         max_steps=args.max_steps,
         model_id=args.model_id,
-        model_info_path=args.model_info_path
+        model_info_path=args.model_info_path,
+        agent_configs=agent_configs
     )
 
     return run_query(args.query)

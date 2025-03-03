@@ -27,8 +27,8 @@ def initialize(
     enable_telemetry: bool = False,
     editor_description: Optional[str] = None,
     fact_checker_description: Optional[str] = None,
-    editor_system_prompt: Optional[str] = None,
-    fact_checker_system_prompt: Optional[str] = None
+    editor_prompt: Optional[str] = None,
+    fact_checker_prompt: Optional[str] = None
 ):
     """Initialize the editor-fact checker system
     
@@ -38,8 +38,8 @@ def initialize(
         enable_telemetry: Whether to enable OpenTelemetry tracing
         editor_description: Optional additional description for the editor agent
         fact_checker_description: Optional additional description for the fact checker agent
-        editor_system_prompt: Optional custom system prompt for the editor agent
-        fact_checker_system_prompt: Optional custom system prompt for the fact checker agent
+        editor_prompt: Optional custom system prompt for the editor agent
+        fact_checker_prompt: Optional custom system prompt for the fact checker agent
         
     Returns:
         A function that can process editing tasks
@@ -65,7 +65,7 @@ def initialize(
         model=model,
         max_steps=fact_checker_max_steps,
         agent_description=fact_checker_description,
-        system_prompt=fact_checker_system_prompt
+        system_prompt=fact_checker_prompt
     )
     
     editor = create_editor_agent(
@@ -73,7 +73,7 @@ def initialize(
         fact_checker=fact_checker,
         max_steps=editor_max_steps,
         agent_description=editor_description,
-        system_prompt=editor_system_prompt
+        system_prompt=editor_prompt
     )
     
     def run_editing_task(content: str, task: Optional[str] = None) -> str:
@@ -123,8 +123,8 @@ def main():
         enable_telemetry=args.enable_telemetry,
         editor_description=args.editor_description,
         fact_checker_description=args.fact_checker_description,
-        editor_system_prompt=args.editor_prompt,
-        fact_checker_system_prompt=args.fact_checker_prompt
+        editor_prompt=args.editor_prompt,
+        fact_checker_prompt=args.fact_checker_prompt
     )
     
     # Run the editing task

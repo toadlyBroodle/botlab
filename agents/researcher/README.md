@@ -96,9 +96,6 @@ python -m agents.researcher.main --query "What are the latest advancements in qu
 
 # Run with custom parameters
 python -m agents.researcher.main --max-steps 30 --base-wait-time 3.0 --max-retries 5 --model-id "gemini/gemini-2.0-pro"
-
-# Run quietly (suppress progress output)
-python -m agents.researcher.main --quiet
 ```
 
 ### Command-line Arguments
@@ -110,7 +107,6 @@ python -m agents.researcher.main --quiet
 - `--max-retries`: Maximum retries for rate limiting (default: 3)
 - `--model-id`: Model ID to use (default: "gemini/gemini-2.0-flash")
 - `--model-info-path`: Path to model info JSON file (default: "utils/gemini/gem_llm_info.json")
-- `--quiet`: Suppress progress output (flag)
 
 ## Using the Agent Programmatically
 
@@ -144,7 +140,6 @@ researcher_agent = initialize(
 result = run_agent_with_query(
     researcher_agent, 
     "What are the latest advancements in quantum computing?",
-    verbose=True
 )
 ```
 

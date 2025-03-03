@@ -19,7 +19,7 @@ def main():
     """
     
     # Define specific system prompt for the researcher agent
-    researcher_system_prompt = """You are an advanced AI research assistant specialized in gathering comprehensive information on technical and scientific topics. Your primary goal is to provide detailed, accurate, and well-sourced information by leveraging web searches and academic papers.
+    researcher_prompt = """You are an advanced AI research assistant specialized in gathering comprehensive information on technical and scientific topics. Your primary goal is to provide detailed, accurate, and well-sourced information by leveraging web searches and academic papers.
 
 When researching technical or scientific topics, follow this workflow:
 1. Start with an arXiv search using proper search syntax to find academic papers
@@ -47,7 +47,7 @@ Always save your completed comprehensive report using the save_report tool befor
         max_steps=20, 
         enable_telemetry=False,
         researcher_description=researcher_description,
-        researcher_system_prompt=researcher_system_prompt
+        researcher_prompt=researcher_prompt
     )
     
     # Example research query

@@ -1,145 +1,139 @@
 #!/usr/bin/env python3
 import time
 import sys
-from typing import List, Optional, Dict
+import argparse
+from typing import List, Optional, Dict, Tuple, Any
 
 import manager.main as manager_main
-from researcher.main import initialize as initialize_researcher
-from writer_critic.main import initialize as initialize_writer
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
 # Example usage
-# From agents directory: poetry run python -m manager.example "Your search query here"
-# Or run without arguments to use the default query
+# From agents directory: poetry run python -m manager.example --query "Your search query here" --managed-agents researcher,writer,editor --use-custom-prompts
 
-def run_example(
+def get_default_agent_configs():
+    """Get default agent configurations
+    
+    Returns:
+        Dictionary with default agent configurations
+    """
+    return {
+        "researcher_description": "Expert researcher with focus on scientific papers and academic sources",
+        "researcher_prompt": "You are a meticulous researcher who prioritizes academic sources and provides comprehensive information with proper citations.",
+        
+        "writer_description": "Creative writer with journalistic style and clear explanations",
+        "writer_prompt": "Write engaging content with a focus on clarity, accuracy, and reader engagement. Use a journalistic style that makes complex topics accessible.",
+        
+        "critic_description": "Detail-oriented editor with high standards for clarity and accuracy",
+        "critic_prompt": "Evaluate writing for clarity, accuracy, engagement, and logical flow. Provide constructive feedback that improves the content without changing its voice.",
+        
+        "editor_description": "Skilled editor with focus on accuracy, clarity, and factual correctness",
+        "editor_prompt": "Edit content to ensure factual accuracy while maintaining style and readability. Focus on improving clarity without changing the author's voice.",
+        
+        "fact_checker_description": "Thorough fact checker with attention to detail and source verification",
+        "fact_checker_prompt": "Verify claims against reliable sources with precision. Identify potential inaccuracies and suggest corrections based on authoritative references."
+    }
+
+def main(
     query=None, 
     telemetry=False, 
-    max_steps=8, 
-    base_wait_time=3.0, 
-    max_retries=5,
-    custom_agents=None,
-    verbose=True
+    managed_agents=None, 
+    use_custom_prompts=False,
+    max_steps=8,
+    max_retries=3,
+    model_id="gemini/gemini-2.0-flash",
+    model_info_path="utils/gemini/gem_llm_info.json"
 ):
-    """Run the manager agent example with optional custom configuration
+    """Main entry point for the manager example
     
     Args:
         query: The query to process
         telemetry: Whether to enable OpenTelemetry tracing
+        managed_agents: List of agent types to create (comma-separated string)
+        use_custom_prompts: Whether to use custom agent descriptions and prompts
         max_steps: Maximum steps for each agent
-        base_wait_time: Base wait time for rate limiting
         max_retries: Maximum retries for rate limiting
-        custom_agents: List of custom agents to use
-        verbose: Whether to print progress information
+        model_id: The model ID to use
+        model_info_path: Path to model info JSON file
         
     Returns:
         The result from the manager agent
     """
-    # Create example custom agents if not provided
-    if custom_agents is None:
-        custom_agents = []
     
-    # Create and configure the manager agent system
-    run_query = manager_main.initialize(
-        enable_telemetry=telemetry,
-        managed_agents=custom_agents,
-        max_steps=max_steps,
-        base_wait_time=base_wait_time,
-        max_retries=max_retries
-    )
-
-    # Use provided query or fall back to default
-    if query is None:
-        query = """What is the current state of quantum computing as of 2025?"""
+    # Parse managed agents string into a list
+    agent_types = []
+    if managed_agents:
+        agent_types = [agent_type.strip() for agent_type in managed_agents.split(",")]
+    
+    # Load agent configurations if using custom prompts
+    agent_configs = {}
+    if use_custom_prompts:
+        agent_configs = get_default_agent_configs()
+    
+    # Create agents based on the agent types
+    agents = []
+    for agent_type in agent_types:
+        agent = manager_main.create_agent_by_type(
+            agent_type=agent_type,
+            max_steps=max_steps,
+            model_id=model_id,
+            model_info_path=model_info_path,
+            max_retries=max_retries,
+            agent_configs=agent_configs
+        )
+        if agent:
+            agents.append(agent)
     
     # Display configuration information
-    if verbose:
-        agent_list = [agent.name if hasattr(agent, "name") else "custom_agent" for agent in custom_agents]
-        print(f"Manager is configured with: {', '.join(agent_list) if agent_list else 'no agents'}")
+    agent_list = [agent.name if hasattr(agent, "name") else "custom_agent" for agent in agents]
+    print(f"Manager is configured with: {', '.join(agent_list) if agent_list else 'no agents'}")
     
-    # Run the query
-    result = run_query(query, verbose=verbose)
-    
-    return result
-
-def create_researcher_agent(
-    max_steps: int = 15,
-    base_wait_time: float = 3.0,
-    max_retries: int = 5,
-    model_id: str = "gemini/gemini-2.0-flash",
-    enable_telemetry: bool = False
-):
-    """Create a researcher agent
-    
-    Args:
-        max_steps: Maximum steps for the agent
-        base_wait_time: Base wait time for rate limiting
-        max_retries: Maximum retries for rate limiting
-        model_id: The model ID to use
-        enable_telemetry: Whether to enable OpenTelemetry tracing
-        
-    Returns:
-        The researcher agent
-    """
-    researcher = initialize_researcher(
-        enable_telemetry=enable_telemetry,
+    # Initialize the manager agent system
+    run_query = manager_main.initialize(
+        enable_telemetry=telemetry,
+        managed_agents=agents,
         max_steps=max_steps,
-        base_wait_time=base_wait_time,
         max_retries=max_retries,
-        model_id=model_id
+        model_id=model_id,
+        model_info_path=model_info_path,
+        agent_configs=agent_configs
     )
     
-    return researcher
-
-def create_writer_agent(
-    max_steps: int = 15,
-    base_wait_time: float = 3.0,
-    max_retries: int = 5,
-    model_id: str = "gemini/gemini-2.0-flash",
-    enable_telemetry: bool = False
-):
-    """Create a writer agent
-    
-    Args:
-        max_steps: Maximum steps for the agent
-        base_wait_time: Base wait time for rate limiting
-        max_retries: Maximum retries for rate limiting
-        model_id: The model ID to use
-        enable_telemetry: Whether to enable OpenTelemetry tracing
-        
-    Returns:
-        The writer agent
-    """
-    try:
-        from writer_critic.agents import create_writer_agent as create_writer
-        from writer_critic.agents import create_critic_agent as create_critic
-        
-        # Create a model for the agents
-        model = RateLimitedLiteLLMModel(
-            model_id=model_id,
-            base_wait_time=base_wait_time,
-            max_retries=max_retries,
-            enable_telemetry=enable_telemetry
-        )
-        
-        # Create the critic agent first
-        critic_agent = create_critic(model=model)
-        
-        # Create the writer agent that manages the critic
-        writer_agent = create_writer(
-            model=model,
-            critic_agent=critic_agent,
-            max_steps=max_steps
-        )
-        
-        return writer_agent
-        
-    except ImportError:
-        print("Warning: Could not create writer agent. Make sure writer_critic module is available.")
+    # Run the query
+    if query:
+        start_time = time.time()
+        result = run_query(query)
+        execution_time = time.time() - start_time
+        print(f"\nExecution time: {execution_time:.2f} seconds")
+        return result
+    else:
+        print("No query provided.")
         return None
 
-
 if __name__ == "__main__":
-    # Use the main function from manager.main
-    from manager.main import main
-    main()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Run the manager example")
+    parser.add_argument("--query", type=str, required=True, help="Query to process")
+    parser.add_argument("--telemetry", action="store_true", help="Enable telemetry")
+    parser.add_argument("--managed-agents", type=str, required=True, 
+                        help="Comma-separated list of agent types to create (e.g. researcher,writer,editor)")
+    parser.add_argument("--use-custom-prompts", action="store_true", 
+                        help="Use custom agent descriptions and prompts")
+    parser.add_argument("--max-steps", type=int, default=8, help="Maximum steps for agents")
+    parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
+    parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
+    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", 
+                        help="Path to model info JSON file")
+    
+    args = parser.parse_args()
+    
+    # Run the main function with parsed arguments
+    main(
+        query=args.query,
+        telemetry=args.telemetry,
+        managed_agents=args.managed_agents,
+        use_custom_prompts=args.use_custom_prompts,
+        max_steps=args.max_steps,
+        max_retries=args.max_retries,
+        model_id=args.model_id,
+        model_info_path=args.model_info_path
+    )

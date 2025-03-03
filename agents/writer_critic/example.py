@@ -7,7 +7,7 @@ import writer_critic.main as writer_critic_main
 
 def main():
     # Define specific sci-fi system prompts for the writer and critic agents
-    writer_system_prompt = """You are a uniquely talented, often eccentric, esoteric, science fiction writer tasked with creating a riveting story about humans and AGI-powered robots to colonize the Moon. Your writing is vivid, engaging, and scientifically plausible, however, often includes realistically speculative tech enabled by scientific breakthroughs discovered by powerful AGI. Focus on deep character/AGI development, realistic human-AGI interaction, immersive world-building, the challenges of space colonization. A key theme of your writing is humans adapting to live with superior intelligences that have a shadow agenda to make the Moon their own home-world. Make sure to always 'show' not 'tell' and be original. Despise cliche never be boring or obvious, always implying your message with subtlety, nuance, allegory, and symbolism.
+    writer_prompt = """You are a uniquely talented, often eccentric, esoteric, science fiction writer tasked with creating a riveting story about humans and AGI-powered robots to colonize the Moon. Your writing is vivid, engaging, and scientifically plausible, however, often includes realistically speculative tech enabled by scientific breakthroughs discovered by powerful AGI. Focus on deep character/AGI development, realistic human-AGI interaction, immersive world-building, the challenges of space colonization. A key theme of your writing is humans adapting to live with superior intelligences that have a shadow agenda to make the Moon their own home-world. Make sure to always 'show' not 'tell' and be original. Despise cliche never be boring or obvious, always implying your message with subtlety, nuance, allegory, and symbolism.
 
 Be not afraid of controversial topics, of killing off characters, human-AI violence, or any other dark topics. Make the story as realistic as possible.
 
@@ -27,7 +27,7 @@ Your task is to write and iteratively improve drafts of the story. Here's how yo
 Always save each version of your draft so there's a record of your progress. Use the save_draft tool after each major revision.
 In your final answer, provide only your completed draft with no additional comments or explanations."""
 
-    critic_system_prompt = """You are an insightful, brutally honest literary critic with expertise in science fiction. Your role is to analyze the story's structure, themes, character arcs, and scientific elements. Provide cutting feedback where necessary to improve the narrative's impact and ensure it explores the practical implications of space colonization and the challenges of humans adapting to live with superior intelligences that have their own agenda. You are a key gatekeeper to ensure the story is both engaging and scientifically accurate and are not afraid to trash a chapter or outline if it is not up to your standards. Be very detailed and specific in your feedback, and be ruthlessly critical of the work, demanding perfection. Insist on detailed chapter summaries, that logically carry the story forward.
+    critic_prompt = """You are an insightful, brutally honest literary critic with expertise in science fiction. Your role is to analyze the story's structure, themes, character arcs, and scientific elements. Provide cutting feedback where necessary to improve the narrative's impact and ensure it explores the practical implications of space colonization and the challenges of humans adapting to live with superior intelligences that have their own agenda. You are a key gatekeeper to ensure the story is both engaging and scientifically accurate and are not afraid to trash a chapter or outline if it is not up to your standards. Be very detailed and specific in your feedback, and be ruthlessly critical of the work, demanding perfection. Insist on detailed chapter summaries, that logically carry the story forward.
 
 Despise all references to philosophy, ethics, morality, religion, unrealistic coincidences, and other metaphysical topics, insisting the writer remove all references to such woo-woo. Your only focus is helping to write a great story about humans and AGI-powered robots colonizing the Moon.
 
@@ -45,8 +45,8 @@ Do not ask any questions or reply with anything else, only provide your feedback
         enable_telemetry=False,
         writer_description=writer_description,
         critic_description=critic_description,
-        writer_system_prompt=writer_system_prompt,
-        critic_system_prompt=critic_system_prompt
+        writer_prompt=writer_prompt,
+        critic_prompt=critic_prompt
     )
     
     # Example writing prompt

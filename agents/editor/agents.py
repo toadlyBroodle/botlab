@@ -33,7 +33,7 @@ def create_fact_checker_agent(model: RateLimitedLiteLLMModel,
         tools=[web_search, visit_webpage],
         additional_authorized_imports=["json", "re"],
         model=model,
-        name='fact_checker',
+        name='fact_checker_agent',
         description=description,
         max_steps=max_steps
     )
@@ -91,10 +91,11 @@ Unverified Claims:
 """
 
     agent.prompt_templates["system_prompt"] = sys_prompt_appended
+    agent.system_prompt = agent.initialize_system_prompt()
     return agent
 
 def create_editor_agent(model: RateLimitedLiteLLMModel,
-                       fact_checker: Optional[CodeAgent] = None,
+                       fact_checker_agent: Optional[CodeAgent] = None,
                        agent_description: Optional[str] = None,
                        system_prompt: Optional[str] = None,
                        max_steps: int = 50,
@@ -104,7 +105,7 @@ def create_editor_agent(model: RateLimitedLiteLLMModel,
     
     Args:
         model: The LiteLLM model to use for the agent
-        fact_checker: Optional pre-configured fact checker CodeAgent to be managed
+        fact_checker_agent: Optional pre-configured fact checker CodeAgent to be managed
                      If not provided, one will be created internally
         agent_description: Optional additional description to append to the base description
         system_prompt: Optional custom system prompt to use instead of the default
@@ -117,15 +118,15 @@ def create_editor_agent(model: RateLimitedLiteLLMModel,
     """
     
     # Create a fact checker agent if one wasn't provided
-    if fact_checker is None:
-        fact_checker = create_fact_checker_agent(
+    if fact_checker_agent is None:
+        fact_checker_agent = create_fact_checker_agent(
             model=model,
             agent_description=fact_checker_description,
             system_prompt=fact_checker_prompt
         )
     
     base_description = """An editor agent that improves content quality while ensuring factual accuracy through fact checking.
-    Specializes in editing, proofreading, and verifying content accuracy."""
+    Specializes in editing, proofreading, and verifying content accuracy. Has access to web search and scraping tools, and a dedicated fact checker agent."""
     
     if agent_description:
         description = f"{base_description} {agent_description}"
@@ -136,7 +137,7 @@ def create_editor_agent(model: RateLimitedLiteLLMModel,
         tools=[web_search, visit_webpage, save_edit],
         additional_authorized_imports=["json", "re"],
         model=model,
-        managed_agents=[fact_checker],
+        managed_agents=[fact_checker_agent],
         name='editor_agent',
         description=description,
         max_steps=max_steps
@@ -233,14 +234,14 @@ for segment_type in ['dates_and_numbers', 'technical_claims', 'needs_fact_check'
 # Send claims to fact checker
 if all_claims:
     claims_text = "\\n".join(all_claims)
-    verification_report = fact_checker(task=f"Verify these claims and provide specific corrections where needed:\\n{claims_text}")
+    verification_report = fact_checker_agent(task=f"Verify these claims and provide specific corrections where needed:\\n{claims_text}")
     print(verification_report)
 ```
 
 Process Fact Checker Results and Apply ALL Corrections:
 This will have to be done manually, without code, as it will require your editorial judgement to apply the corrections appropriately.
 
-PASS 2: Send all source citations and urls along with their corresponding claims to the fact_checker agent for verification:
+PASS 2: Send all source citations and urls along with their corresponding claims to the fact_checker_agent for verification:
 Example (adapting strategy as needed):
 ```py
 # list of tuples, containing a claim, a source citation, and a url
