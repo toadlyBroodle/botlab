@@ -1,5 +1,6 @@
 from smolagents import CodeAgent
-from .tools import web_search, visit_webpage, arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown, save_report
+from .tools import arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown, save_report
+from utils.agents.tools import web_search, visit_webpage
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from utils.agents.tools import apply_custom_agent_prompts
 from typing import Optional
@@ -130,8 +131,8 @@ if paper_id:
 
 5. Save Report:
 ```python
-    # Save the final research report to a file
-    final_report = \"\"\"# Research Report: Quantum Computing
+    # Save the final research report to a file (no need to actually escape the quotes, this is only for this example string)
+    final_report = \"""# Research Report: Quantum Computing
     ## Introduction
     Quantum computing is a rapidly evolving field that leverages quantum mechanics to process information...
 
@@ -142,7 +143,7 @@ if paper_id:
     ## Sources
     - https://example.com/quantum-computing
     - https://arxiv.org/abs/2101.12345
-    \"\"\"
+    \"""
 
 # Save with a descriptive title
 save_result = save_report(report_content=final_report, report_title="Quantum Computing Research")

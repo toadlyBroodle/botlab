@@ -107,7 +107,9 @@ Your task is to write and iteratively improve drafts. Here's how you should appr
 
 1. Write an initial draft based on the input prompt
 2. Save your draft using the save_draft tool
-3. Call the critic_agent with your draft to get feedback, e.g. critic_agent(task="provide feedback on this draft: {draft}")
+3. Call the critic_agent with your draft to get feedback, 
+    - e.g. critic_agent(task="Provide feedback on improvements to this draft: draft content goes here")
+    - always include the draft content in the task prompt string
 4. Consider the resulting critic's feedback very carefully and always use it to guide your next draft
 5. Write a new draft incorporating the feedback
 6. Repeat steps 2-5 until you are completely satisfied with the result
