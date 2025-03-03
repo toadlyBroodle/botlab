@@ -79,17 +79,19 @@ Key features:
 
 ### Agent Configuration
 
-You can customize agent behavior using JSON configuration files or command-line arguments:
+You can customize agent behavior using JSON configuration files or command-line flags:
 
 ```bash
 # Using a config file
 poetry run python -m manager.main --managed-agents researcher,writer,editor --config-file agent_configs.json
 
-# Using a JSON string
-poetry run python -m manager.main --managed-agents researcher,writer,editor --agent-configs '{"researcher_description": "Expert researcher", "writer_prompt": "Write in a journalistic style", "editor_description": "Skilled editor with focus on accuracy and clarity", "editor_prompt": "Edit content to ensure factual accuracy while maintaining style"}'
+# Using the simplified custom prompts flag
+poetry run python -m manager.main --managed-agents researcher,writer,editor --use-custom-prompts --query "Write an article about recent advances in quantum computing."
 ```
 
-Example configuration format:
+The `--use-custom-prompts` flag enables a set of predefined custom descriptions and prompts for all agents, which are defined in the example.py file. This provides a simpler alternative to specifying each property individually.
+
+Example configuration format for config files:
 ```json
 {
   "researcher_description": "Expert researcher with focus on scientific papers",
@@ -104,6 +106,20 @@ Example configuration format:
   "fact_checker_prompt": "Verify claims against reliable sources with precision"
 }
 ```
+
+### Customization Best Practices
+
+When customizing agent behavior:
+
+1. **Preserve main.py files**: The main.py files should generally be left as is, as they provide the core functionality and interface for each agent system.
+
+2. **Create custom example files**: Instead of modifying the original example.py files, create new versions (e.g., my_custom_example.py) that import from main.py and implement your specific customizations.
+
+3. **Use configuration options**: Leverage the existing configuration options (like --use-custom-prompts or --config-file) rather than modifying the core code.
+
+4. **Share custom configurations**: Custom agent descriptions and prompts should be defined in your custom example files, following the pattern in example.py.
+
+This approach ensures that the core functionality remains stable while allowing for flexible customization.
 
 ### Model Configuration
 
@@ -142,10 +158,13 @@ poetry run python run_examples.py manager "your query"
 poetry run python run_examples.py manager-advanced "your query"
 
 # Run the manager with custom agent selection
-poetry run python run_examples.py manager-custom "your query" --agents researcher writer
+poetry run python run_examples.py manager-custom "your query" --agents researcher writer editor
 
 # Run the writer-critic example
 poetry run python run_examples.py writer
+
+# Run the editor example
+poetry run python run_examples.py editor "content to edit and fact check"
 
 # Run all examples
 poetry run python run_examples.py all
@@ -165,12 +184,14 @@ poetry run python -m researcher.example "your query"
 # Run the writer-critic example
 poetry run python -m writer_critic.example
 
-# Run the manager example
-poetry run python -m manager.example "your query"
+# Run the editor example
+poetry run python -m editor.example "content to edit and fact check"
 
+# Run the manager example with default settings
+poetry run python -m manager.example --query "your query" --managed-agents researcher,writer,editor
 
-# Run the manager with specific agent types
-poetry run python -m manager.example "your query" --managed-agents researcher,writer
+# Run the manager with custom prompts
+poetry run python -m manager.example --query "your query" --managed-agents researcher,writer,editor --use-custom-prompts
 ```
 
 ## Project Structure

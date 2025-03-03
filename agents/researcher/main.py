@@ -35,11 +35,11 @@ def initialize(
     model_info_path: str = "utils/gemini/gem_llm_info.json",
     model_id: str = "gemini/gemini-2.0-flash",
     researcher_description: Optional[str] = None,
-    researcher_system_prompt: Optional[str] = None
+    researcher_prompt: Optional[str] = None
 ):
     """Initialize the system with optional telemetry and return the researcher agent
     
-    The researcher agent now supports:
+    The researcher agent supports the following tools:
     1. Web search via DuckDuckGo (with rate limiting)
     2. Web page scraping and content extraction
     3. arXiv academic paper search with advanced query options
@@ -53,7 +53,7 @@ def initialize(
         model_info_path: Path to the model info JSON file
         model_id: The model ID to use (default: gemini/gemini-2.0-flash)
         researcher_description: Optional additional description for the researcher agent
-        researcher_system_prompt: Optional custom system prompt for the researcher agent
+        researcher_prompt: Optional custom system prompt for the researcher agent
         
     Returns:
         A function that can process research queries
@@ -77,23 +77,19 @@ def initialize(
     researcher_agent = create_researcher_agent(
         model=model, 
         max_steps=max_steps,
-        agent_description=researcher_description,
-        system_prompt=researcher_system_prompt
+        researcher_description=researcher_description,
+        researcher_prompt=researcher_prompt
     )
     
-    def run_research_query(query: str, verbose: bool = True) -> str:
+    def run_research_query(query: str) -> str:
         """Run the agent with a query and return the result
         
         Args:
             query: The query to run
-            verbose: Whether to print progress information
             
         Returns:
             The result from the agent
         """
-        if verbose:
-            print(f"\nProcessing query: {query}")
-            
         # Time the query execution
         start_time = time.time()
         
@@ -103,10 +99,7 @@ def initialize(
         # Calculate and print execution time
         execution_time = time.time() - start_time
         
-        if verbose:
-            print(f"\nExecution time: {execution_time:.2f} seconds")
-            print("\nResult:")
-            print(result)
+        print(f"\nExecution time: {execution_time:.2f} seconds")
         
         return result
         
@@ -127,7 +120,6 @@ def parse_arguments():
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
     parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
-    parser.add_argument("--quiet", action="store_true", help="Suppress progress output")
     parser.add_argument("--researcher-description", type=str, default=None, help="Custom description for the researcher agent")
     parser.add_argument("--researcher-prompt", type=str, default=None, help="Custom system prompt for the researcher agent")
     
@@ -146,11 +138,11 @@ def main():
         model_id=args.model_id,
         model_info_path=args.model_info_path,
         researcher_description=args.researcher_description,
-        researcher_system_prompt=args.researcher_prompt
+        researcher_prompt=args.researcher_prompt
     )
     
     # Run the agent with the query
-    result = run_research_query(args.query, verbose=not args.quiet)
+    result = run_research_query(args.query)
     
     return result
 

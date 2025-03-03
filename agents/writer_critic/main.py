@@ -32,8 +32,8 @@ def initialize(
     enable_telemetry: bool = False,
     writer_description: Optional[str] = None,
     critic_description: Optional[str] = None,
-    writer_system_prompt: Optional[str] = None,
-    critic_system_prompt: Optional[str] = None
+    writer_prompt: Optional[str] = None,
+    critic_prompt: Optional[str] = None
 ):
     """Initialize the writer-critic system
     
@@ -43,8 +43,8 @@ def initialize(
         enable_telemetry: Whether to enable OpenTelemetry tracing
         writer_description: Optional additional description for the writer agent
         critic_description: Optional additional description for the critic agent
-        writer_system_prompt: Optional custom system prompt for the writer agent
-        critic_system_prompt: Optional custom system prompt for the critic agent
+        writer_prompt: Optional custom system prompt for the writer agent
+        critic_prompt: Optional custom system prompt for the critic agent
         
     Returns:
         A function that can process writing tasks
@@ -65,7 +65,7 @@ def initialize(
     critic_agent = create_critic_agent(
         model=model,
         agent_description=critic_description,
-        system_prompt=critic_system_prompt
+        system_prompt=critic_prompt
     )
     
     writer_agent = create_writer_agent(
@@ -73,7 +73,7 @@ def initialize(
         critic_agent=critic_agent, 
         max_steps=max_steps,
         agent_description=writer_description,
-        system_prompt=writer_system_prompt
+        system_prompt=writer_prompt
     )
     
     def run_writing_task(prompt: str) -> str:
@@ -115,8 +115,8 @@ def main():
         enable_telemetry=args.enable_telemetry,
         writer_description=args.writer_description,
         critic_description=args.critic_description,
-        writer_system_prompt=args.writer_prompt,
-        critic_system_prompt=args.critic_prompt
+        writer_prompt=args.writer_prompt,
+        critic_prompt=args.critic_prompt
     )
     
     # Run the writing task with the prompt

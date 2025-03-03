@@ -6,8 +6,8 @@ from utils.agents.tools import apply_custom_agent_prompts
 from typing import Optional
 
 def create_researcher_agent(model: RateLimitedLiteLLMModel, 
-                           agent_description: Optional[str] = None,
-                           system_prompt: Optional[str] = None,
+                           researcher_description: Optional[str] = None,
+                           researcher_prompt: Optional[str] = None,
                            max_steps: int = 20) -> CodeAgent:
     """Creates a researcher agent that can search and visit webpages
     
@@ -24,8 +24,8 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel,
     base_description = """This agent can craft advanced search queries and perform web searches using DuckDuckGo and arXiv. It then follows up searches by scraping resulting urls and extracting the content into a markdown report. It can also download PDF documents and convert them to markdown format for easier analysis. Use this agent to research topics, find specific information, analyze specific webpage content, search for academic papers on arXiv, or process PDF documents."""
     
     # Append additional description if provided
-    if agent_description:
-        description = f"{base_description} {agent_description}"
+    if researcher_description:
+        description = f"{base_description} {researcher_description}"
     else:
         description = base_description
 
@@ -55,8 +55,8 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel,
     base_sys_prompt = agent.prompt_templates["system_prompt"]
     
     # Use provided system prompt or default to a generic one
-    if system_prompt:
-        sys_prompt_appended = base_sys_prompt + f"\n\n{system_prompt}"
+    if researcher_prompt:
+        sys_prompt_appended = base_sys_prompt + f"\n\n{researcher_prompt}"
     else:
         sys_prompt_appended = base_sys_prompt + """\n\nYou are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and search for academic papers on arXiv. 
         You follow up all relevant search results by calling your `visit_webpage` tool and extracting the relevant content into a detailed markdown report, including all possibly relevant information.
