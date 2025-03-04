@@ -53,10 +53,10 @@ def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None, 
 def initialize(
     enable_telemetry: bool = False,
     managed_agents: Optional[List] = None,
-    max_steps: int = 8,
+    max_steps: int = 20,
     max_retries: int = 3,
-    model_info_path: str = "utils/gemini/gem_llm_info.json",
-    model_id: str = "gemini/gemini-2.0-flash",
+    model_info_path: str = None,
+    model_id: str = None,
     agent_configs: Optional[dict] = None
 ) -> Callable[[str], str]:
     """Initialize the manager agent system with optional telemetry
@@ -247,7 +247,7 @@ def parse_arguments():
     parser.add_argument("--query", nargs="?", help="Query to process")
     parser.add_argument("--telemetry", action="store_true", help="Enable telemetry")
     parser.add_argument("--managed-agents", type=str, default=None, help="Comma-separated list of agent types to create (e.g. researcher,writer,editor)")
-    parser.add_argument("--max-steps", type=int, default=8, help="Maximum steps for agents")
+    parser.add_argument("--max-steps", type=int, default=20, help="Maximum steps for agents")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
     parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     

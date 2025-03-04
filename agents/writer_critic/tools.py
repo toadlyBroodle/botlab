@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 import pytz
 from smolagents import tool
+from agents.utils.agents.tools import get_timestamp
 
 # Ensure drafts directory exists
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -10,10 +11,6 @@ os.makedirs(DRAFT_DIR, exist_ok=True)
 
 # Global variable to track iterations
 iteration_count = 0
-
-def get_timestamp():
-    """Get current timestamp in Pacific timezone"""
-    return datetime.now(pytz.timezone('US/Pacific')).strftime("%Y%m%d_%H%M")
 
 def get_word_count(text):
     """Count words in text"""
@@ -38,11 +35,14 @@ def save_draft(draft: str, draft_name: str = None) -> str:
     if not os.path.exists(DRAFT_DIR):
         os.makedirs(DRAFT_DIR, exist_ok=True)
 
+    # Get current timestamp
+    timestamp = get_timestamp()
+    
     # Use provided name or default to iteration number
     if draft_name:
-        file_name = f"{draft_name}.md"
+        file_name = f"{timestamp}_{draft_name}.md"
     else:
-        file_name = f"draft_{iteration_count}.md"
+        file_name = f"{timestamp}_draft_{iteration_count}.md"
     
     file_path = os.path.join(DRAFT_DIR, file_name)
     with open(file_path, "w") as f:
