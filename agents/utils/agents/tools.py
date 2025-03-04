@@ -21,7 +21,9 @@ if not logger.handlers:
 # Global variables to track search state for rate limiting
 _last_search_time = 0
 _consecutive_failures = 0
-_base_wait_time = 2.0
+_base_wait_time = 5.0
+_current_rate_limit = _base_wait_time  # Initialize with base wait time
+_max_backoff_time = 300.0 # 5 minutes
 
 def apply_custom_agent_prompts(agent) -> None:
     """Load and apply custom agent templates based on the agent type.
@@ -72,7 +74,7 @@ def apply_custom_agent_prompts(agent) -> None:
     agent.system_prompt += f"\n\nToday's date and time is {datetime.now().strftime('%Y-%m-%d %H:%M')}."
 
 @tool
-def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 2.0, max_retries: int = 3) -> str:
+def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.0, max_retries: int = 3) -> str:
     """Performs a DuckDuckGo web search with intelligent rate limiting to avoid being blocked.
     
     This tool uses exponential backoff and jitter to handle rate limits gracefully. When rate limits
@@ -92,21 +94,28 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 2.
     Args:
         query: The search query to perform. Can include special operators like site: or filetype:
         max_results: Maximum number of results to return (default: 10)
-        rate_limit_seconds: Minimum seconds to wait between searches (default: 2.0)
-        max_retries: Maximum number of retry attempts when rate limited (default: 3)
+        rate_limit_seconds: Minimum seconds to wait between searches (default: 5.0)
+        max_retries: Maximum number of retry attempts when rate limited (default: 5)
         
     Returns:
         Formatted search results as a markdown string with titles, URLs, and snippets
     """
-    global _last_search_time, _consecutive_failures, _base_wait_time
+    global _last_search_time, _consecutive_failures, _base_wait_time, _max_backoff_time, _current_rate_limit
 
-    if rate_limit_seconds < 2.0:
-        rate_limit_seconds = 2.0
+    if rate_limit_seconds < 5.0:
+        rate_limit_seconds = 5.0
     
-    # Calculate current wait time with exponential backoff
-    current_wait_time = rate_limit_seconds * (2 ** _consecutive_failures)
-    # Add jitter to avoid synchronized requests
-    current_wait_time = current_wait_time * (0.8 + 0.4 * random.random())
+    # Calculate current wait time with aggressive exponential backoff
+    current_wait_time = rate_limit_seconds * (3 ** _consecutive_failures)
+    
+    # Add jitter to avoid synchronized requests (±30%)
+    current_wait_time = current_wait_time * (0.7 + 0.6 * random.random())
+    
+    # Cap the wait time at the maximum backoff time
+    current_wait_time = min(current_wait_time, _max_backoff_time)
+    
+    # Store the current rate limit
+    _current_rate_limit = current_wait_time
     
     # Apply rate limiting
     current_time = time.time()
@@ -115,7 +124,7 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 2.
     if time_since_last_search < current_wait_time:
         # Wait the remaining time to respect the rate limit
         sleep_time = current_wait_time - time_since_last_search
-        logger.info(f"Waiting {sleep_time:.2f} seconds to respect DDGS rate limits")
+        logger.info(f"Waiting {sleep_time:.2f} seconds to respect DDGS rate limits (failure count: {_consecutive_failures})")
         time.sleep(sleep_time)
     
     # Create a DuckDuckGoSearchTool instance
@@ -134,21 +143,27 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 2.
                 retries += 1
                 
                 if retries <= max_retries:
-                    # Calculate backoff time
-                    backoff_time = _base_wait_time * (2 ** _consecutive_failures)
-                    # Add jitter (±20%)
-                    backoff_time = backoff_time * (0.8 + 0.4 * random.random())
+                    # Calculate backoff time with more aggressive multiplier
+                    backoff_time = _base_wait_time * (3 ** _consecutive_failures)
+                    # Add jitter (±30%)
+                    backoff_time = backoff_time * (0.7 + 0.6 * random.random())
+                    # Cap the backoff time
+                    backoff_time = min(backoff_time, _max_backoff_time)
+                    # Update current rate limit
+                    _current_rate_limit = backoff_time
                     
-                    logger.info(f"Empty result or error detected. Retrying in {backoff_time:.2f} seconds...")
+                    logger.info(f"Empty result or error detected: {result}.\n Retrying in {backoff_time:.2f} seconds (failure count: {_consecutive_failures})...")
                     time.sleep(backoff_time)
                     continue
                 else:
                     return f"Error: DuckDuckGo search failed after {max_retries} retries. Last result: {result}"
             
-            # Success - reset consecutive failures and update last search time
+            # Success - reset consecutive failures, rate limit, and update last search time
             _consecutive_failures = 0
+            _current_rate_limit = _base_wait_time  # Reset rate limit back to base
             _last_search_time = time.time()
             
+            logger.info(f"Search successful. Rate limit reset to base value: {_base_wait_time} seconds.")
             return result
             
         except Exception as e:
@@ -156,17 +171,21 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 2.
             _last_search_time = time.time()
             
             # Check if it's a rate limit error - look for various indicators
-            if any(term in error_message.lower() for term in ["ratelimit", "rate limit", "429", "too many requests", "202"]):
+            if any(term in error_message.lower() for term in ["ratelimit", "rate limit", "429", "too many requests", "202", "blocked", "forbidden", "403"]):
                 _consecutive_failures += 1
                 retries += 1
                 
                 if retries <= max_retries:
-                    # Calculate backoff time with increased base wait time
-                    backoff_time = _base_wait_time * (2 ** _consecutive_failures)
-                    # Add jitter (±20%)
-                    backoff_time = backoff_time * (0.8 + 0.4 * random.random())
+                    # Calculate backoff time with increased base wait time and more aggressive multiplier
+                    backoff_time = _base_wait_time * (3 ** _consecutive_failures)
+                    # Add jitter (±30%)
+                    backoff_time = backoff_time * (0.7 + 0.6 * random.random())
+                    # Cap the backoff time
+                    backoff_time = min(backoff_time, _max_backoff_time)
+                    # Update current rate limit
+                    _current_rate_limit = backoff_time
                     
-                    logger.info(f"Rate limit detected. Retrying in {backoff_time:.2f} seconds...")
+                    logger.info(f"Rate limit detected. Retrying in {backoff_time:.2f} seconds (failure count: {_consecutive_failures})...")
                     time.sleep(backoff_time)
                 else:
                     # Max retries exceeded

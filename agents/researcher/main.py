@@ -5,14 +5,20 @@ import time
 import argparse
 from typing import Optional
 from dotenv import load_dotenv
-from utils.telemetry import start_telemetry
+from utils.telemetry import start_telemetry, suppress_litellm_logs
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
 from researcher.agents import create_researcher_agent
 from researcher.tools import PAPERS_DIR, REPORTS_DIR
 
-def setup_environment():
-    """Set up environment variables and API keys"""
+def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None):
+    """Set up environment variables, API keys, and telemetry
+    
+    Args:
+        enable_telemetry: Whether to enable OpenTelemetry tracing
+        agent_name: Optional name for the agent in telemetry
+        agent_type: Optional type of the agent in telemetry
+    """
     # Ensure directories exist
     os.makedirs(PAPERS_DIR, exist_ok=True)
     os.makedirs(REPORTS_DIR, exist_ok=True)
@@ -20,12 +26,21 @@ def setup_environment():
     # Load .env from root directory
     load_dotenv()
     
+    # Suppress LiteLLM logs
+    suppress_litellm_logs()
+    
     # Check for API key
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
     
-    return api_key
+    # Start telemetry if enabled
+    if enable_telemetry:
+        from utils.telemetry import start_telemetry, traced
+        tracer = start_telemetry(
+            agent_name=agent_name or "researcher_agent", 
+            agent_type=agent_type or "researcher"
+        )
 
 def initialize(
     max_steps: int = 20, 
@@ -59,11 +74,12 @@ def initialize(
         A function that can process research queries
     """
     
-    # Start telemetry if enabled
-    if enable_telemetry:
-        start_telemetry()
-    
-    setup_environment()
+    # Set up environment and telemetry
+    setup_environment(
+        enable_telemetry=enable_telemetry,
+        agent_name="researcher_agent",
+        agent_type="researcher"
+    )
     
     # Create a rate-limited model with model-specific rate limits
     model = RateLimitedLiteLLMModel(
@@ -102,6 +118,14 @@ def initialize(
         print(f"\nExecution time: {execution_time:.2f} seconds")
         
         return result
+    
+    # Wrap with traced decorator if telemetry is enabled
+    if enable_telemetry:
+        from utils.telemetry import traced
+        run_research_query = traced(
+            span_name="researcher.run_query",
+            attributes={"agent.type": "researcher"}
+        )(run_research_query)
         
     return run_research_query
 
