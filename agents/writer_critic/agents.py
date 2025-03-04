@@ -37,24 +37,18 @@ def create_critic_agent(model: RateLimitedLiteLLMModel,
         max_steps=max_steps,  # Critic just needs one step to analyze and respond
     )
 
-    # Apply custom templates to initialize all prompt templates
-    apply_custom_agent_prompts(agent)
-    
-    # Get the base system prompt and append to it
-    base_sys_prompt = agent.prompt_templates["system_prompt"]
-    
-    # Append provided system prompt or default to a generic one
-    if system_prompt:
-        sys_prompt_appended = base_sys_prompt + f"\n\n{system_prompt}"
-    else:
-        sys_prompt_appended = base_sys_prompt + """\n\nYou are a literary critic who analyzes and provides constructive feedback on creative content. 
+    # Default system prompt if none provided
+    default_system_prompt = """You are a literary critic who analyzes and provides constructive feedback on creative content. 
 Your role is to provide constructive feedback to your managing writer agent on the content, style, structure, themes, and overall quality of their latest draft.
 
 Your task is to critically analyze the latest draft sent from the writer. When you're done, provide detailed feedback for improvements. Do not make any changes to the draft yourself.
 Provide your feedback as plain text, without any special tags.
 """
 
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended
+    # Apply custom templates with the appropriate system prompt
+    custom_prompt = system_prompt if system_prompt else default_system_prompt
+    apply_custom_agent_prompts(agent, custom_prompt)
+    
     return agent
 
 def create_writer_agent(model: RateLimitedLiteLLMModel, critic_agent: ToolCallingAgent, 
@@ -90,17 +84,8 @@ def create_writer_agent(model: RateLimitedLiteLLMModel, critic_agent: ToolCallin
         max_steps=max_steps,
     )
 
-    # Apply custom templates to initialize all prompt templates
-    apply_custom_agent_prompts(agent)
-    
-    # Get the base system prompt and append to it
-    base_sys_prompt = agent.prompt_templates["system_prompt"]
-    
-    # Append provided system prompt or default to a generic one
-    if system_prompt:
-        sys_prompt_appended = base_sys_prompt + f"\n\n{system_prompt}"
-    else:
-        sys_prompt_appended = base_sys_prompt + """\n\nYou are a creative writer who drafts and edits writing content to fulfil your assigned task. 
+    # Default system prompt if none provided
+    default_system_prompt = """You are a creative writer who drafts and edits writing content to fulfil your assigned task. 
 Your writing should be interesting, engaging, well-structured, and tailored to the requested style, topic, and likely audience.
 
 Your task is to write and iteratively improve drafts. Here's how you should approach this task:
@@ -118,6 +103,9 @@ Always save each version of your draft so there's a record of your progress by u
 
 In your final answer, always include your complete final draft.
 """
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended # no need to reinitialize the system prompt, as no variables are used in the prompt
 
+    # Apply custom templates with the appropriate system prompt
+    custom_prompt = system_prompt if system_prompt else default_system_prompt
+    apply_custom_agent_prompts(agent, custom_prompt)
+    
     return agent 
