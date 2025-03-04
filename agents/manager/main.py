@@ -7,22 +7,48 @@ import json
 from typing import List, Optional, Callable, Any
 
 from dotenv import load_dotenv
-from utils.telemetry import start_telemetry
+from utils.telemetry import start_telemetry, suppress_litellm_logs
 from manager.agents import create_manager_agent
 from researcher.agents import create_researcher_agent
 from writer_critic.agents import create_writer_agent, create_critic_agent
 from editor.agents import create_editor_agent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
-def setup_environment():
-    """Set up environment variables and API keys"""
+def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None, managed_agents=None):
+    """Set up environment variables, API keys, and telemetry
+    
+    Args:
+        enable_telemetry: Whether to enable OpenTelemetry tracing
+        agent_name: Optional name for the agent in telemetry
+        agent_type: Optional type of the agent in telemetry
+        managed_agents: Optional list of managed agents for better labeling
+    """
     load_dotenv()
+    
+    # Suppress LiteLLM logs
+    suppress_litellm_logs()
+    
     api_key = os.getenv("GEMINI_API_KEY")
     
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
     
-    return api_key
+    # Start telemetry if enabled
+    if enable_telemetry:
+        from utils.telemetry import start_telemetry, traced
+        
+        # Get the managed agent types for better labeling
+        agent_types = []
+        if managed_agents:
+            agent_types = [getattr(agent, 'name', 'unknown') for agent in managed_agents]
+        
+        agent_types_str = ",".join(agent_types) if agent_types else "no_agents"
+        agent_type = agent_type or f"manager_with_{agent_types_str}"
+        
+        tracer = start_telemetry(
+            agent_name=agent_name or "manager_agent", 
+            agent_type=agent_type
+        )
 
 def initialize(
     enable_telemetry: bool = False,
@@ -48,11 +74,12 @@ def initialize(
         A function that can process queries through the manager agent
     """
     
-    # Start telemetry if enabled
-    if enable_telemetry:
-        start_telemetry()
-    
-    api_key = setup_environment()
+    # Set up environment and telemetry
+    setup_environment(
+        enable_telemetry=enable_telemetry,
+        agent_name="manager_agent",
+        managed_agents=managed_agents
+    )
     
     # Create a rate-limited model with model-specific rate limits
     model = RateLimitedLiteLLMModel(
@@ -85,6 +112,14 @@ def initialize(
         result = manager_agent.run(query)
 
         return result
+    
+    # Wrap with traced decorator if telemetry is enabled
+    if enable_telemetry:
+        from utils.telemetry import traced
+        run_query = traced(
+            span_name="manager.run_query",
+            attributes={"agent.type": "manager"}
+        )(run_query)
         
     return run_query
 

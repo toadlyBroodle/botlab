@@ -578,6 +578,9 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         litellm.utils.logging_enabled = enable_litellm_logging
         os.environ["LITELLM_LOG_VERBOSE"] = str(enable_litellm_logging).lower()
         
+        # Explicitly set LiteLLM logger level to ERROR to suppress INFO logs
+        logging.getLogger("litellm").setLevel(logging.ERROR)
+        
         logger.info(f"Configured logging: HTTP libraries set to {logging.getLevelName(level)}, "
                    f"LiteLLM logging {'enabled' if enable_litellm_logging else 'disabled'}")
                    

@@ -91,7 +91,6 @@ Unverified Claims:
 """
 
     agent.prompt_templates["system_prompt"] = sys_prompt_appended
-    agent.system_prompt = agent.initialize_system_prompt()
     return agent
 
 def create_editor_agent(model: RateLimitedLiteLLMModel,

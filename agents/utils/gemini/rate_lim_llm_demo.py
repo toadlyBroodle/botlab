@@ -10,6 +10,10 @@ from dotenv import load_dotenv
 from smolagents import LiteLLMModel, ToolCallingAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from utils.agent_utils import apply_agent_specific_templates
+from utils.telemetry import suppress_litellm_logs
+
+# Suppress LiteLLM logs
+suppress_litellm_logs()
 
 # Configure logging using the static method
 RateLimitedLiteLLMModel.configure_logging(level=logging.WARNING, enable_litellm_logging=False)

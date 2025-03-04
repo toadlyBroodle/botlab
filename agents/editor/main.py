@@ -2,23 +2,38 @@
 import os
 from dotenv import load_dotenv
 from typing import Optional
-from utils.telemetry import start_telemetry
+from utils.telemetry import start_telemetry, suppress_litellm_logs
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from editor.agents import create_editor_agent, create_fact_checker_agent
 from editor.tools import EDITS_DIR
-
-def setup_environment():
-    """Set up environment variables and API keys"""
+def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None):
+    """Set up environment variables, API keys, and telemetry
     
+    Args:
+        enable_telemetry: Whether to enable OpenTelemetry tracing
+        agent_name: Optional name for the agent in telemetry
+        agent_type: Optional type of the agent in telemetry
+    """
     # Ensure edits directory exists
     os.makedirs(EDITS_DIR, exist_ok=True)
     
     # Load .env from root directory
     load_dotenv()
     
+    # Suppress LiteLLM logs
+    suppress_litellm_logs()
+    
     # Check for API key
     if not os.getenv("GEMINI_API_KEY"):
         raise ValueError("GEMINI_API_KEY environment variable is not set")
+    
+    # Start telemetry if enabled
+    if enable_telemetry:
+        from utils.telemetry import start_telemetry, traced
+        tracer = start_telemetry(
+            agent_name=agent_name or "editor_system", 
+            agent_type=agent_type or "editor"
+        )
 
 def initialize(
     max_steps: int = None,
@@ -45,11 +60,12 @@ def initialize(
         A function that can process editing tasks
     """
     
-    # Start telemetry if enabled
-    if enable_telemetry:
-        start_telemetry()
-    
-    setup_environment()
+    # Set up environment and telemetry for editor
+    setup_environment(
+        enable_telemetry=enable_telemetry,
+        agent_name="editor_system",
+        agent_type="editor"
+    )
     
     model = RateLimitedLiteLLMModel(
         model_id=model_id,
@@ -59,6 +75,14 @@ def initialize(
     # Set default max_steps if None
     fact_checker_max_steps = 30 if max_steps is None else max_steps
     editor_max_steps = 50 if max_steps is None else max_steps
+    
+    # Set up telemetry for fact checker if enabled
+    if enable_telemetry:
+        setup_environment(
+            enable_telemetry=True,
+            agent_name="fact_checker_agent",
+            agent_type="fact_checker"
+        )
     
     # Create agents in the right order - fact checker first, then editor that manages fact checker
     fact_checker = create_fact_checker_agent(
@@ -95,6 +119,14 @@ def initialize(
         # Run the editor agent with the prompt
         result = editor.run(prompt)
         return result
+    
+    # Wrap with traced decorator if telemetry is enabled
+    if enable_telemetry:
+        from utils.telemetry import traced
+        run_editing_task = traced(
+            span_name="editor.run_task",
+            attributes={"agent.type": "editor"}
+        )(run_editing_task)
         
     return run_editing_task
 
