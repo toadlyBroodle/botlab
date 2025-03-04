@@ -6,7 +6,7 @@ from utils.agents.tools import apply_custom_agent_prompts
 def create_manager_agent(
     model: RateLimitedLiteLLMModel, 
     managed_agents: List,
-    max_steps: int = 8
+    max_steps: int = 20
 ) -> CodeAgent:
     """Creates a manager agent that can coordinate multiple agents
     
@@ -43,12 +43,8 @@ When given a task, you should:
 4. Call the appropriate agent(s) with clear, specific instructions
 5. Review the results from each agent for quality and relevance
 6. Refine your plan and approach if needed, based on the results of the agents
-7. Repeat steps 4-6 until all aspects of the task are 100% complete
+7. Repeat steps 4-6 until all aspects of the task are 100% complete and you are SURE that the task is fully addressed
 8. Synthesize the final results into a complete, cohesive response
-
-Be persistent and iterative in your approach. If an agent's results aren't satisfactory, refine your instructions and try again. Only when you are sure all aspects of the original task have been thoroughly addressed should you provide your final response.
-
-Always maintain a clean, organized format in your responses, including citations and sources where appropriate unless instructed otherwise.
 
 IMPORTANT: To call an agent, use Python code like this:
 ```python
@@ -66,7 +62,13 @@ print(final_report)
 
 # When you're done, use the final_answer tool
 final_answer(final_report)
-```"""
+```
+
+Always maintain a clean, organized format in your responses, including citations and sources where appropriate.
+
+Be persistent and iterative in your approach. If an agent's results aren't satisfactory, refine your instructions and try again. Only when you are sure all aspects of the original task have been thoroughly addressed should you provide your final response, so the user doesn't have to send the task back to you for additional iterations.
+
+"""
 
     # Apply custom templates with the custom system prompt
     apply_custom_agent_prompts(agent, custom_system_prompt)

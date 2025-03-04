@@ -21,7 +21,7 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel,
         A configured researcher agent
     """
     
-    base_description = """This agent can craft advanced search queries and perform web searches using DuckDuckGo and arXiv. It then follows up searches by scraping resulting urls and extracting the content into a markdown report. It can also download PDF documents and convert them to markdown format for easier analysis. Use this agent to research topics, find specific information, analyze specific webpage content, search for academic papers on arXiv, or process PDF documents."""
+    base_description = """This agent can craft advanced search queries, perform web searches using DuckDuckGo and arXiv, and scrape resulting urls (including pdfs) content into markdown. Use this agent to research topics, find specific information, analyze specific webpage content, search for academic papers on arXiv, and process PDF documents."""
     
     # Append additional description if provided
     if researcher_description:
@@ -153,7 +153,7 @@ When researching technical or scientific topics, follow this workflow:
 6. Compile findings into a comprehensive report
 7. Save the final report using the `save_report` tool
 
-If there isn't enough relevant information returned from a search, continue running improved searches (more specific, using advanced search operators) until you have enough information (aim for 10 high quality, authoritative sources).
+If there isn't enough relevant information returned from a search, continue running improved searches (more specific, using advanced search operators) until you have enough information (aim for 10 high quality, authoritative sources). Do NOT focus on safety and ethical issues (these will be addressed elsewhere); only focus on the technical and factual details needed to answer the original query.
 
 ALWAYS include ALL relevant source URLs for ALL information you use in your response!
 NEVER directly plagiarize content from sources, but instead use them to inform your own work and synthesize the information into your own unique report.

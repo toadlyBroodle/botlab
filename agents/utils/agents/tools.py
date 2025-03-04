@@ -8,6 +8,10 @@ from typing import Dict, Any, Tuple
 from smolagents import tool
 from smolagents import DuckDuckGoSearchTool
 from smolagents import VisitWebpageTool
+import requests
+import json
+from pathlib import Path
+import pytz
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -24,6 +28,14 @@ _consecutive_failures = 0
 _base_wait_time = 5.0
 _current_rate_limit = _base_wait_time  # Initialize with base wait time
 _max_backoff_time = 300.0 # 5 minutes
+
+def get_timestamp() -> str:
+    """Get current timestamp in a human-readable format.
+    
+    Returns:
+        A string with the current date and time in YYYY-MM-DD_HH-MM format.
+    """
+    return datetime.now().strftime("%Y-%m-%d_%H-%M")
 
 def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     """Load and apply custom agent templates based on the agent type.

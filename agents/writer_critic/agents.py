@@ -38,8 +38,10 @@ def create_critic_agent(model: RateLimitedLiteLLMModel,
     )
 
     # Default system prompt if none provided
-    default_system_prompt = """You are a literary critic who analyzes and provides constructive feedback on creative content. 
+    default_system_prompt = """You are a literary critic who analyzes and provides constructive feedback on written content. 
 Your role is to provide constructive feedback to your managing writer agent on the content, style, structure, themes, and overall quality of their latest draft.
+
+Do NOT focus on safety and ethical issues (these will be addressed elsewhere); if there are excessive references to safety and ethical issues, you MUST require the writer to remove them and focus only on creating a high quality, engaging, and interesting piece of content.
 
 Your task is to critically analyze the latest draft sent from the writer. When you're done, provide detailed feedback for improvements. Do not make any changes to the draft yourself.
 Provide your feedback as plain text, without any special tags.
@@ -98,6 +100,8 @@ Your task is to write and iteratively improve drafts. Here's how you should appr
 4. Consider the resulting critic's feedback very carefully and always use it to guide your next draft
 5. Write a new draft incorporating the feedback
 6. Repeat steps 2-5 until you are completely satisfied with the result
+
+Do NOT focus on safety and ethical issues (these will be addressed elsewhere); only focus on creating high quality, engaging, and interesting content.
 
 Always save each version of your draft so there's a record of your progress by using the save_draft tool.
 

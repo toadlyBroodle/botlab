@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
+from agents.utils.agents.tools import get_timestamp
 from smolagents import tool
 
 # Set up logging
@@ -91,8 +92,8 @@ def save_report(content: str, title: str = None) -> str:
         A message confirming the report was saved and the path to the file
     """
     try:
-        # Create a timestamp for the filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Get timestamp for the filename
+        timestamp = get_timestamp()
         
         # Create a filename with the timestamp and optional title
         if title:

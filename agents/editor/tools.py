@@ -3,6 +3,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 from smolagents import tool
+from agents.utils.agents.tools import get_timestamp
 
 # Set up paths
 BASE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
@@ -26,7 +27,7 @@ def save_edit(content: str, title: str = None, version: str = None) -> str:
     """
     try:
         # Generate timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = get_timestamp()
         
         # Clean title for filename
         if title:
