@@ -25,11 +25,12 @@ _base_wait_time = 5.0
 _current_rate_limit = _base_wait_time  # Initialize with base wait time
 _max_backoff_time = 300.0 # 5 minutes
 
-def apply_custom_agent_prompts(agent) -> None:
+def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     """Load and apply custom agent templates based on the agent type.
     
     Args:
         agent: The agent instance
+        custom_system_prompt: Optional custom system prompt to append to the base system prompt
         
     Raises:
         ValueError: If the agent type cannot be determined or is invalid
@@ -67,11 +68,15 @@ def apply_custom_agent_prompts(agent) -> None:
     # Apply the template to the agent's prompt_templates
     agent.prompt_templates = template
     
+    # append todays date and time to all system prompts
+    agent.prompt_templates["system_prompt"] += f"\n\nToday's date and time is {datetime.now().strftime('%Y-%m-%d %H:%M')}."
+    
+    # Append custom system prompt if provided
+    if custom_system_prompt:
+        agent.prompt_templates["system_prompt"] += f"\n\n{custom_system_prompt}"
+    
     # Reinitialize the system prompt to apply the new template
     agent.system_prompt = agent.initialize_system_prompt()
-
-    # append todays date and time to the system prompt
-    agent.system_prompt += f"\n\nToday's date and time is {datetime.now().strftime('%Y-%m-%d %H:%M')}."
 
 @tool
 def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.0, max_retries: int = 3) -> str:

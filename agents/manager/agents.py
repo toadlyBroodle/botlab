@@ -33,14 +33,8 @@ def create_manager_agent(
         max_steps=max_steps
     )
     
-    # Apply custom templates to initialize all prompt templates
-    apply_custom_agent_prompts(agent)
-    
-    # Get the base system prompt and append to it
-    base_sys_prompt = agent.prompt_templates["system_prompt"]
-    
-    # Add additional context about managed agents
-    sys_prompt_appended = base_sys_prompt + f"""\n\nYou are a manager agent in charge of coordinating a team of specialized agents. You don't have access to tools to call yourself, but instead you can call and manage the following agents: {available_agents_text}.
+    # Define the custom system prompt
+    custom_system_prompt = f"""You are a manager agent in charge of coordinating a team of specialized agents. You don't have access to tools to call yourself, but instead you can call and manage the following agents: {available_agents_text}.
 
 When given a task, you should:
 1. Make a detailed plan for how to complete the task
@@ -74,5 +68,7 @@ print(final_report)
 final_answer(final_report)
 ```"""
 
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended # no need to reinitialize the system prompt, as no variables are used in the prompt
+    # Apply custom templates with the custom system prompt
+    apply_custom_agent_prompts(agent, custom_system_prompt)
+    
     return agent

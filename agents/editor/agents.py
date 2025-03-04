@@ -38,16 +38,8 @@ def create_fact_checker_agent(model: RateLimitedLiteLLMModel,
         max_steps=max_steps
     )
     
-    # Apply custom templates
-    apply_custom_agent_prompts(agent)
-    
-    # Get base system prompt and append to it
-    base_sys_prompt = agent.prompt_templates["system_prompt"]
-    
-    if system_prompt:
-        sys_prompt_appended = base_sys_prompt + f"\n\n{system_prompt}"
-    else:
-        sys_prompt_appended = base_sys_prompt + """\n\nYou are a fact checking CodeAgent that verifies claims and provides detailed accuracy assessments.
+    # Default system prompt if none provided
+    default_system_prompt = """You are a fact checking CodeAgent that verifies claims and provides detailed accuracy assessments.
 Your role is to help the editor agent ensure content accuracy by following these steps (automating what can be automated with code):
 
 1. Process Incoming Claim Batches
@@ -87,10 +79,12 @@ Corrected Claims:
 ...
 Unverified Claims:
 - Claim 2
-
 """
-
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended
+    
+    # Apply custom templates with the appropriate system prompt
+    custom_prompt = system_prompt if system_prompt else default_system_prompt
+    apply_custom_agent_prompts(agent, custom_prompt)
+    
     return agent
 
 def create_editor_agent(model: RateLimitedLiteLLMModel,
@@ -142,16 +136,8 @@ def create_editor_agent(model: RateLimitedLiteLLMModel,
         max_steps=max_steps
     )
     
-    # Apply custom templates
-    apply_custom_agent_prompts(agent)
-    
-    # Get base system prompt and append to it
-    base_sys_prompt = agent.prompt_templates["system_prompt"]
-    
-    if system_prompt:
-        sys_prompt_appended = base_sys_prompt + f"\n\n{system_prompt}"
-    else:
-        sys_prompt_appended = base_sys_prompt + """\n\nYou are an editor agent that improves content while ensuring factual accuracy.
+    # Default system prompt if none provided
+    default_system_prompt = """You are an editor agent that improves content while ensuring factual accuracy.
 Your task is to systematically process content through multiple focused passes, each handling a specific aspect of editing:
 
 PASS 1: Content Segmentation and Fact Check Triage
@@ -275,6 +261,9 @@ In your final answer, include:
 3. Recommendations for further editing
 4. Complete final revised draft
 """
-
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended
+    
+    # Apply custom templates with the appropriate system prompt
+    custom_prompt = system_prompt if system_prompt else default_system_prompt
+    apply_custom_agent_prompts(agent, custom_prompt)
+    
     return agent 

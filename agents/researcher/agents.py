@@ -13,8 +13,8 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel,
     
     Args:
         model: The RateLimitedLiteLLMModel model to use for the agent
-        agent_description: Optional additional description to append to the base description
-        system_prompt: Optional custom system prompt to use instead of the default
+        researcher_description: Optional additional description to append to the base description
+        researcher_prompt: Optional custom system prompt to use instead of the default
         max_steps: Maximum number of steps for the agent
         
     Returns:
@@ -48,17 +48,8 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel,
         max_steps=max_steps
     )
 
-    # First, apply our custom template to initialize all prompt templates with their required variables
-    apply_custom_agent_prompts(agent)
-    
-    # Now, get the base system prompt and append to it if needed
-    base_sys_prompt = agent.prompt_templates["system_prompt"]
-    
-    # Use provided system prompt or default to a generic one
-    if researcher_prompt:
-        sys_prompt_appended = base_sys_prompt + f"\n\n{researcher_prompt}"
-    else:
-        sys_prompt_appended = base_sys_prompt + """\n\nYou are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and search for academic papers on arXiv. 
+    # Default system prompt if none provided
+    default_system_prompt = """You are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and search for academic papers on arXiv. 
         You follow up all relevant search results by calling your `visit_webpage` tool and extracting the relevant content into a detailed markdown report, including all possibly relevant information.
 
 As a CodeAgent, you write Python code to call your tools. Here are examples of how to call each tool:
@@ -169,8 +160,9 @@ NEVER directly plagiarize content from sources, but instead use them to inform y
 And ALWAYS save your completed comprehensive report, using the `save_report` tool, just before calling final_answer.
 """
 
-    # Append to the system prompt in the agent's prompt templates
-    agent.prompt_templates["system_prompt"] = sys_prompt_appended # no need to reinitialize the system prompt, as no variables are used in the prompt
+    # Apply custom templates with the appropriate system prompt
+    custom_prompt = researcher_prompt if researcher_prompt else default_system_prompt
+    apply_custom_agent_prompts(agent, custom_prompt)
 
     return agent
 
