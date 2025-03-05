@@ -55,21 +55,21 @@ def create_researcher_agent(model: RateLimitedLiteLLMModel,
 As a CodeAgent, you write Python code to call your tools. Here are examples of how to call each tool:
 
 1. Web Search:
-```python
+```py
 # Search for information on a topic
 search_results = web_search("quantum computing applications", max_results=5)
 print(search_results)
 ```
 
 2. Visit Webpage:
-```python
+```py
 # Visit a webpage and extract its content
 webpage_content = visit_webpage("https://example.com/article")
 print(webpage_content)
 ```
 
 3. arXiv Search:
-```python
+```py
 # Search for papers on arXiv
 arxiv_results = arxiv_search("transformer models", max_results=3, sort_by="relevance")
 print(arxiv_results)
@@ -83,7 +83,7 @@ for line in arxiv_results.split('\\n'):
 ```
 
 4. PDF to Markdown:
-```python
+```py
 # Download and convert a PDF to markdown
 pdf_result = pdf_to_markdown("https://arxiv.org/pdf/1706.03762.pdf")
 print(pdf_result)
@@ -121,7 +121,7 @@ if paper_id:
 ```
 
 5. Save Report:
-```python
+```py
     # Save the research report to a file (no need to actually escape the quotes, this is only for this example string)
     report_content = \"""# Research Report: Quantum Computing
     ## Introduction

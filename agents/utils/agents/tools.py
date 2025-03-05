@@ -227,3 +227,226 @@ def visit_webpage(url: str) -> str:
     # Use the VisitWebpageTool from smolagents
     webpage_tool = VisitWebpageTool()
     return webpage_tool.forward(url)
+
+@tool
+def load_latest_draft(agent_name: str = None) -> str:
+    """Load the most recent draft file.
+    
+    This tool retrieves the most recent draft file from the system. Draft files are typically saved by:
+    - Writer agent: When creating draft versions
+    - Editor agent: When saving major revisions
+    
+    The drafts are stored in chronological order, so this will return the most recently saved draft
+    by default. If agent_name is specified, it will return the most recent draft created by that agent.
+    
+    Use this tool to continue work from where a previous agent left off. The tool will show which 
+    agent created the draft in the "Created by" field.
+    
+    Args:
+        agent_name: Optional. If provided, only drafts created by this agent will be considered.
+                   Common values: "writer_agent", "editor_agent"
+    
+    Returns:
+        The content of the most recent draft, or an error message if no drafts are found.
+    """
+    try:
+        from utils.file_manager import FileManager
+        from datetime import datetime
+        
+        # Initialize file manager
+        file_manager = FileManager()
+        
+        # Get all draft files
+        drafts = file_manager.list_files(file_type="draft")
+        
+        if not drafts:
+            return "No draft files found."
+        
+        # Filter by agent_name if specified
+        if agent_name:
+            filtered_drafts = []
+            for draft in drafts:
+                # Get the full file to check metadata
+                full_draft = file_manager.get_file(draft['file_id'])
+                draft_agent = full_draft["metadata"].get("agent_name", 
+                              full_draft["metadata"].get("source", "Unknown"))
+                
+                if draft_agent == agent_name:
+                    filtered_drafts.append(draft)
+            
+            if not filtered_drafts:
+                return f"No draft files found created by '{agent_name}'."
+            
+            drafts = filtered_drafts
+        
+        # Sort by creation date (newest first)
+        sorted_drafts = sorted(drafts, key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        if sorted_drafts:
+            # Get the latest draft
+            latest_draft = file_manager.get_file(sorted_drafts[0]['file_id'])
+            
+            # Return information about the draft
+            title = latest_draft["metadata"].get("title", "Untitled")
+            created_at = latest_draft["metadata"].get("created_at", "Unknown date")
+            word_count = latest_draft["metadata"].get("word_count", "Unknown")
+            
+            # Get agent information
+            source = latest_draft["metadata"].get("source", "Unknown")
+            agent_name = latest_draft["metadata"].get("agent_name", source)
+            
+            # Format creation date for better readability
+            try:
+                created_dt = datetime.fromisoformat(created_at)
+                created_at = created_dt.strftime("%Y-%m-%d %H:%M:%S")
+            except:
+                pass  # Keep the original format if parsing fails
+            
+            return f"Latest draft: '{title}'\nCreated: {created_at}\nWords: {word_count}\nCreated by: {agent_name}\n\n{latest_draft['content']}"
+        
+        return "No draft files found."
+        
+    except Exception as e:
+        return f"Error loading latest draft: {str(e)}"
+
+@tool
+def load_latest_report(agent_name: str = None) -> str:
+    """Load the most recent report file.
+    
+    This tool retrieves the most recent report file from the system. Report files are typically saved by:
+    - Researcher agent: When saving research findings and compiled information
+    - Editor agent: When saving final, polished content after thorough review and fact-checking
+    
+    The reports are stored in chronological order, so this will return the most recently saved report
+    by default. If agent_name is specified, it will return the most recent report created by that agent.
+    
+    Use this tool to access the most recent finalized content or research. The tool will show which 
+    agent created the report in the "Created by" field.
+    
+    Args:
+        agent_name: Optional. If provided, only reports created by this agent will be considered.
+                   Common values: "researcher_agent", "editor_agent"
+    
+    Returns:
+        The content of the most recent report, or an error message if no reports are found.
+    """
+    try:
+        from utils.file_manager import FileManager
+        from datetime import datetime
+        
+        # Initialize file manager
+        file_manager = FileManager()
+        
+        # Get all report files
+        reports = file_manager.list_files(file_type="report")
+        
+        if not reports:
+            return "No report files found."
+        
+        # Filter by agent_name if specified
+        if agent_name:
+            filtered_reports = []
+            for report in reports:
+                # Get the full file to check metadata
+                full_report = file_manager.get_file(report['file_id'])
+                report_agent = full_report["metadata"].get("agent_name", 
+                               full_report["metadata"].get("source", "Unknown"))
+                
+                if report_agent == agent_name:
+                    filtered_reports.append(report)
+            
+            if not filtered_reports:
+                return f"No report files found created by '{agent_name}'."
+            
+            reports = filtered_reports
+        
+        # Sort by creation date (newest first)
+        sorted_reports = sorted(reports, key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        if sorted_reports:
+            # Get the latest report
+            latest_report = file_manager.get_file(sorted_reports[0]['file_id'])
+            
+            # Return information about the report
+            title = latest_report["metadata"].get("title", "Untitled")
+            created_at = latest_report["metadata"].get("created_at", "Unknown date")
+            word_count = latest_report["metadata"].get("word_count", "Unknown")
+            
+            # Get agent information
+            source = latest_report["metadata"].get("source", "Unknown")
+            agent_name = latest_report["metadata"].get("agent_name", source)
+            
+            # Format creation date for better readability
+            try:
+                created_dt = datetime.fromisoformat(created_at)
+                created_at = created_dt.strftime("%Y-%m-%d %H:%M:%S")
+            except:
+                pass  # Keep the original format if parsing fails
+            
+            return f"Latest report: '{title}'\nCreated: {created_at}\nWords: {word_count}\nCreated by: {agent_name}\n\n{latest_report['content']}"
+        
+        return "No report files found."
+        
+    except Exception as e:
+        return f"Error loading latest report: {str(e)}"
+
+@tool
+def load_file(file_identifier: str) -> str:
+    """Load a file by its unique ID or filename.
+    
+    This tool retrieves a specific file using either its unique identifier or filename. 
+    File IDs are typically returned when an agent saves a file, while filenames include 
+    the timestamp and title in the format: "YYYYMMDD_HHMMSS_projectid_title.md"
+    
+    Use this tool when you need to access a specific file that isn't the latest. The tool
+    will show detailed metadata including which agent created the file.
+    
+    The file types and their typical sources are:
+    
+    - draft: Writer agent drafts and Editor agent edits
+    - report: Researcher agent findings and Editor agent final content
+    - paper: Research papers downloaded and converted by the Researcher agent
+    - resource: Various downloaded resources and cached data
+    
+    Args:
+        file_identifier: The unique identifier or filename of the file
+        
+    Returns:
+        The content of the file, or an error message if the file is not found.
+    """
+    try:
+        from utils.file_manager import FileManager
+        from datetime import datetime
+        
+        # Initialize file manager
+        file_manager = FileManager()
+        
+        # Get the file
+        file_data = file_manager.get_file(file_identifier)
+        
+        # Return information about the file
+        title = file_data["metadata"].get("title", "Untitled")
+        file_type = file_data["metadata"].get("file_type", "Unknown type")
+        created_at = file_data["metadata"].get("created_at", "Unknown date")
+        
+        # Get agent information
+        source = file_data["metadata"].get("source", "Unknown")
+        agent_name = file_data["metadata"].get("agent_name", source)
+        
+        # Format creation date for better readability
+        try:
+            created_dt = datetime.fromisoformat(created_at)
+            created_at = created_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except:
+            pass  # Keep the original format if parsing fails
+        
+        # Get additional metadata that might be useful
+        word_count = file_data["metadata"].get("word_count", "Unknown")
+        version = file_data["metadata"].get("version", "")
+        version_info = f", Version: {version}" if version else ""
+        
+        return f"File: '{title}'\nType: {file_type}\nCreated: {created_at}{version_info}\nWords: {word_count}\nCreated by: {agent_name}\n\n{file_data['content']}"
+        
+    except Exception as e:
+        return f"Error loading file '{file_identifier}': {str(e)}"
+

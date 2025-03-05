@@ -1,7 +1,7 @@
 from typing import List, Optional
 from smolagents import CodeAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from utils.agents.tools import apply_custom_agent_prompts
+from utils.agents.tools import apply_custom_agent_prompts, load_latest_draft, load_latest_report, load_file
 
 def create_manager_agent(
     model: RateLimitedLiteLLMModel, 
@@ -24,7 +24,7 @@ def create_manager_agent(
     available_agents_text = ", ".join(available_agents)
             
     agent = CodeAgent(
-        tools=[],
+        tools=[load_latest_draft, load_latest_report, load_file],
         model=model,
         managed_agents=managed_agents,
         additional_authorized_imports=["time", "json", "re"],
@@ -34,7 +34,7 @@ def create_manager_agent(
     )
     
     # Define the custom system prompt
-    custom_system_prompt = f"""You are a manager agent in charge of coordinating a team of specialized agents. You don't have access to tools to call yourself, but instead you can call and manage the following agents: {available_agents_text}.
+    custom_system_prompt = f"""You are a manager agent in charge of coordinating a team of specialized agents.
 
 When given a task, you should:
 1. Make a detailed plan for how to complete the task
@@ -44,29 +44,14 @@ When given a task, you should:
 5. Review the results from each agent for quality and relevance
 6. Refine your plan and approach if needed, based on the results of the agents
 7. Repeat steps 4-6 until all aspects of the task are 100% complete and you are SURE that the task is fully addressed
-8. Synthesize the final results into a complete, cohesive response
+8. Always make sure that you call the editor_agent as the final step, with instructions to thoroughly edit and fact check the end result
+9. Synthesize the editor's final results into a complete, cohesive response
 
-IMPORTANT: To call an agent, use Python code like this:
-```python
-# Example of calling the researcher_agent
-research_results = researcher_agent(task="Find information about X")
-print(research_results)
-
-# Example of calling the writer_agent
-writing_results = writer_agent(task="Write a report about X based on this information: " + research_results)
-print(writing_results)
-
-# Example of calling the editor_agent
-final_report = editor_agent(task="Edit this report for clarity and accuracy: " + writing_results)
-print(final_report)
-
-# When you're done, use the final_answer tool
-final_answer(final_report)
-```
-
-Always maintain a clean, organized format in your responses, including citations and sources where appropriate.
+If an agent failed to return their complete draft or report result, make sure to load the latest draft or report and input it into the task instructions of the next agent you call. Always log these issues using the update_progress_log tool.
 
 Be persistent and iterative in your approach. If an agent's results aren't satisfactory, refine your instructions and try again. Only when you are sure all aspects of the original task have been thoroughly addressed should you provide your final response, so the user doesn't have to send the task back to you for additional iterations.
+
+Always maintain a clean, organized format in your responses, including citations and sources where appropriate.
 
 """
 

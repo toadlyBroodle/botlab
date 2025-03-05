@@ -88,17 +88,27 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
 
 @tool
 def save_report(content: str, title: str = None) -> str:
-    """Saves the research report to a file in the data/reports directory.
+    """⚠️ IMPORTANT: SAVE YOUR RESEARCH ⚠️
     
-    This tool saves the provided content as a markdown file in the reports directory.
-    The filename includes a timestamp and an optional title for easy identification.
+    Saves the research report to a file in the data/reports directory.
+    
+    As the researcher agent, you MUST use this tool to save your findings after completing research.
+    This ensures your work is preserved and can be accessed by other agents.
+    
+    When to use this tool:
+    - After completing a research task
+    - When you've gathered significant information
+    - Before suggesting further work by another agent
+    - When you want to preserve your findings
+    
+    The saved report will include metadata showing you (researcher_agent) as the creator.
     
     Args:
-        content: The markdown content of the report to save
+        content: The markdown content of the report to save (MUST be a markdown STRING)
         title: Optional title to include in the filename
         
     Returns:
-        A message confirming the report was saved and the path to the file
+        A message confirming the report was saved with the path and ID
     """
     try:
         # Initialize file manager
@@ -109,7 +119,11 @@ def save_report(content: str, title: str = None) -> str:
             content=content,
             file_type="report",
             title=title,
-            metadata={"word_count": len(content.split())}
+            metadata={
+                "word_count": len(content.split()),
+                "source": "researcher",
+                "agent_name": "researcher_agent"
+            }
         )
         
         # Get the file metadata to return the path
@@ -118,7 +132,7 @@ def save_report(content: str, title: str = None) -> str:
         
         logger.info(f"Report saved to {report_path}")
         
-        return f"Report successfully saved to {report_path}"
+        return f"Report successfully saved to {report_path} (ID: {file_id})"
         
     except Exception as e:
         logger.error(f"Error saving report: {str(e)}")
