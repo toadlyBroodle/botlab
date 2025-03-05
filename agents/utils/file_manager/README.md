@@ -25,6 +25,8 @@ The FileManager uses the following directory structure:
   /reports/       # Researcher reports and final documents
   /resources/     # Downloaded resources and cached data
   /archive/       # Archived files
+  /research/
+    /papers/      # Research papers (PDFs and converted markdown)
   metadata_index.json  # Metadata for all files
 ```
 
@@ -67,6 +69,7 @@ The FileManager supports the following file types:
 - `report`: Researcher reports and final documents
 - `resource`: Downloaded resources and cached data
 - `archive`: Archived files
+- `paper`: Research papers (PDFs and converted markdown)
 
 ### Metadata
 
