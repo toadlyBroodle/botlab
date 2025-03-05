@@ -8,7 +8,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
-from agents.utils.agents.tools import get_timestamp
+from utils.agents.tools import get_timestamp
+from utils.file_manager import FileManager
 from smolagents import tool
 
 # Set up logging
@@ -92,24 +93,20 @@ def save_report(content: str, title: str = None) -> str:
         A message confirming the report was saved and the path to the file
     """
     try:
-        # Get timestamp for the filename
-        timestamp = get_timestamp()
+        # Initialize file manager
+        file_manager = FileManager()
         
-        # Create a filename with the timestamp and optional title
-        if title:
-            # Clean the title to make it safe for filenames
-            safe_title = "".join(c if c.isalnum() or c in [' ', '_', '-'] else '_' for c in title)
-            safe_title = safe_title.replace(' ', '_')
-            filename = f"{timestamp}_{safe_title}.md"
-        else:
-            filename = f"{timestamp}_research_report.md"
+        # Save the file using the file manager
+        file_id = file_manager.save_file(
+            content=content,
+            file_type="report",
+            title=title,
+            metadata={"word_count": len(content.split())}
+        )
         
-        # Create the full path
-        report_path = REPORTS_DIR / filename
-        
-        # Save the content to the file
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        # Get the file metadata to return the path
+        file_data = file_manager.get_file(file_id)
+        report_path = file_data["metadata"]["filepath"]
         
         logger.info(f"Report saved to {report_path}")
         

@@ -1,7 +1,7 @@
 from smolagents import CodeAgent, ToolCallingAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts
-from .tools import save_edit
+from .tools import save_draft
 from typing import Optional
 import re
 
@@ -127,7 +127,7 @@ def create_editor_agent(model: RateLimitedLiteLLMModel,
         description = base_description
         
     agent = CodeAgent(
-        tools=[web_search, visit_webpage, save_edit],
+        tools=[web_search, visit_webpage, save_draft],
         additional_authorized_imports=["json", "re"],
         model=model,
         managed_agents=[fact_checker_agent],
@@ -270,7 +270,7 @@ For each editing session:
 - Send all uncertain claims to the fact checker agent for verification
 - Process fact checker results systematically, methodically applying suggested corrections
 - Only make copyediting improvements after all factual corrections are complete
-- Save versions after each major pass
+- Save drafts, with save_draft tool, after each major pass
 - Repeat any passes as needed until the content is factually correct and clear
 
 In your final answer, include:
