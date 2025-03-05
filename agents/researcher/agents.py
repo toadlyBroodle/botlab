@@ -123,7 +123,7 @@ if paper_id:
 5. Save Report:
 ```python
     # Save the research report to a file (no need to actually escape the quotes, this is only for this example string)
-    report = \"""# Research Report: Quantum Computing
+    report_content = \"""# Research Report: Quantum Computing
     ## Introduction
     Quantum computing is a rapidly evolving field that leverages quantum mechanics to process information...
 
@@ -137,7 +137,7 @@ if paper_id:
     \"""
 
 # Save with a descriptive title
-save_result = save_report(report_content=report, report_title="Quantum Computing Research")
+save_result = save_report(content=report_content, title="Quantum Computing Research")
 print(save_result)
 ```
 

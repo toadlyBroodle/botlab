@@ -4,12 +4,6 @@ import pytz
 from smolagents import tool
 from utils.agents.tools import get_timestamp
 from utils.file_manager import FileManager
-
-# Ensure drafts directory exists (legacy support)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DRAFT_DIR = os.path.join(BASE_DIR, "drafts")
-os.makedirs(DRAFT_DIR, exist_ok=True)
-
 # Global variable to track iterations
 iteration_count = 0
 

@@ -22,14 +22,6 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-# Directory for storing papers
-PAPERS_DIR = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / "papers"
-PAPERS_DIR.mkdir(exist_ok=True)
-
-# Directory for storing reports
-REPORTS_DIR = Path(os.path.dirname(os.path.abspath(__file__))) / "data" / "reports"
-REPORTS_DIR.mkdir(exist_ok=True)
-
 # Dictionary to track conversion statuses
 conversion_statuses = {}
 
@@ -44,8 +36,15 @@ class ConversionStatus:
         self.error = None
 
 def get_paper_path(paper_id: str, extension: str = ".pdf") -> Path:
-    """Get the path for a paper file."""
-    return PAPERS_DIR / f"{paper_id}{extension}"
+    """Get the path for a paper file using the FileManager."""
+    # Initialize file manager
+    file_manager = FileManager()
+    
+    # Get the directory for paper files
+    from utils.file_manager.file_manager import RESEARCH_PAPERS_DIR
+    
+    # Return the path in the research/papers directory
+    return RESEARCH_PAPERS_DIR / f"{paper_id}{extension}"
 
 def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
     """Convert PDF to Markdown in a separate thread."""
@@ -58,8 +57,17 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
         markdown = pymupdf4llm.to_markdown(pdf_path, show_progress=False)
         md_path = get_paper_path(paper_id, ".md")
         
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(markdown)
+        # Initialize file manager
+        file_manager = FileManager()
+        
+        # Save the markdown content using the file manager
+        file_id = file_manager.save_file(
+            content=markdown,
+            file_type="paper",
+            title=f"Paper_{paper_id}",
+            metadata={"paper_id": paper_id, "source": "pdf_conversion"},
+            extension=".md"
+        )
 
         status = conversion_statuses.get(paper_id)
         if status:
@@ -157,8 +165,13 @@ def pdf_to_markdown(url: str) -> str:
             status.error = f"URL does not point to a PDF file: {content_type}"
             return f"Error: URL does not appear to point to a PDF file. Content-Type: {content_type}"
         
-        # Save the PDF locally
+        # Save the PDF locally using the FileManager
+        file_manager = FileManager()
+        
+        # Get the path where the PDF should be saved
         pdf_path = get_paper_path(paper_id)
+        
+        # Save the PDF content to the file
         with open(pdf_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
@@ -222,15 +235,35 @@ def read_paper_markdown(paper_id: str) -> str:
     Returns:
         The markdown content of the paper, or an error message if not available
     """
-    md_path = get_paper_path(paper_id, ".md")
+    try:
+        # Initialize file manager
+        file_manager = FileManager()
+        
+        # Try to find the file by searching for files with the paper_id in metadata
+        paper_files = file_manager.list_files(
+            file_type="paper", 
+            filter_criteria={"paper_id": paper_id}
+        )
+        
+        if paper_files:
+            # Get the first matching file
+            file_data = file_manager.get_file(paper_files[0]["file_id"])
+            return file_data["content"]
+        
+        # If not found in metadata, try the traditional path approach as fallback
+        md_path = get_paper_path(paper_id, ".md")
+        
+        if not md_path.exists():
+            return f"Error: No markdown file found for paper ID {paper_id}"
+        
+        with open(md_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        return content
     
-    if not md_path.exists():
-        return f"Error: No markdown file found for paper ID {paper_id}"
-    
-    with open(md_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    
-    return content
+    except Exception as e:
+        logger.error(f"Error reading paper markdown: {str(e)}")
+        return f"Error: Failed to read paper markdown: {str(e)}"
 
 @tool
 def arxiv_search(

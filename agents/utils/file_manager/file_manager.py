@@ -17,10 +17,14 @@ DRAFTS_DIR = SHARED_DATA_DIR / "drafts"
 REPORTS_DIR = SHARED_DATA_DIR / "reports"
 RESOURCES_DIR = SHARED_DATA_DIR / "resources"
 ARCHIVE_DIR = SHARED_DATA_DIR / "archive"
+RESEARCH_PAPERS_DIR = SHARED_DATA_DIR / "research" / "papers"
 
 # Create directories if they don't exist
 for directory in [DRAFTS_DIR, REPORTS_DIR, RESOURCES_DIR, ARCHIVE_DIR]:
     directory.mkdir(exist_ok=True)
+
+# Create research/papers directory with parents=True to ensure parent directories are created
+RESEARCH_PAPERS_DIR.mkdir(exist_ok=True, parents=True)
 
 # Path to the metadata index file
 METADATA_INDEX = SHARED_DATA_DIR / "metadata_index.json"
@@ -58,7 +62,7 @@ class FileManager:
         """Get the appropriate directory for a given file type.
         
         Args:
-            file_type: Type of file (draft, report, resource, archive)
+            file_type: Type of file (draft, report, resource, archive, paper)
             
         Returns:
             Path to the directory
@@ -72,6 +76,8 @@ class FileManager:
             return RESOURCES_DIR
         elif file_type == "archive":
             return ARCHIVE_DIR
+        elif file_type == "paper":
+            return RESEARCH_PAPERS_DIR
         else:
             # Default to resources for unknown types
             return RESOURCES_DIR
