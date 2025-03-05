@@ -8,15 +8,28 @@ from utils.file_manager import FileManager
 
 @tool
 def save_draft(content: str, title: str = None, version: str = None) -> str:
-    """Save draft content as a markdown file with timestamp, optional title, and version
+    """⚠️ IMPORTANT: SAVE YOUR WORK ⚠️
+    
+    Save draft content as a markdown file with timestamp, optional title, and version.
+    
+    As the editor agent, you MUST use this tool to save your work after making significant edits.
+    This ensures your work is preserved and can be accessed by other agents.
+    
+    When to use this tool:
+    - After completing a round of edits
+    - When you've made significant improvements to a draft
+    - Before suggesting further work by another agent
+    - When you want to preserve a version before making major changes
+    
+    The saved draft will include metadata showing you (editor_agent) as the creator.
     
     Args:
-        content: The content to save
+        content: The content to save (MUST be a markdown STRING)
         title: Optional title for the file
         version: Optional version identifier
         
     Returns:
-        Confirmation message with the file path
+        Confirmation message with the file path and ID
     """
     try:
         # Initialize file manager
@@ -27,7 +40,12 @@ def save_draft(content: str, title: str = None, version: str = None) -> str:
             content=content,
             file_type="draft",
             title=title,
-            metadata={"word_count": len(content.split()), "source": "editor"},
+            metadata={
+                "word_count": len(content.split()), 
+                "source": "editor",
+                "agent_name": "editor_agent",
+                "version": version
+            },
             version=version
         )
         
@@ -35,6 +53,6 @@ def save_draft(content: str, title: str = None, version: str = None) -> str:
         file_data = file_manager.get_file(file_id)
         filepath = file_data["metadata"]["filepath"]
         
-        return f"Draft saved successfully to {filepath}"
+        return f"Draft saved successfully to {filepath} (ID: {file_id})"
     except Exception as e:
         return f"Error saving draft: {str(e)}" 

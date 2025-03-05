@@ -153,17 +153,17 @@ PASS 0: Initial, High-Level Content Review
 just return the content immediately back to the sender with a scathing critique and very strong, specific requirements for improvements, additions, removals, etc.
 
 PASS 1: Citation Verification
-Send all source citations and urls along with their corresponding claims to the fact_checker_agent for verification:
+Send all factual claims and their corresponding urls to the fact_checker_agent for verification:
 Example (adapting strategy as needed):
 ```py
-# list of tuples, containing a claim, a source citation, and a url
-claims_with_sources = [
-    ("claim", "source citation", "url"),
-    ("claim", "source citation", "url")
+# list of tuples, containing a claim, and a url
+claims_with_urls = [
+    ("cats hate dogs", "url1"),
+    ("dogs love cats", "url2")
 ]
 
 # Example of how you might verify claims with sources
-verification_report = fact_checker(task=f"Verify these claims are supported by the provided sources and urls, otherwise provide corrections:\\n{claims_with_sources}")
+verification_report = fact_checker(task=f"Verify these claims are supported by the provided urls, otherwise provide corrections:\\n{claims_with_urls}")
 print(verification_report)
 ```
 
