@@ -5,17 +5,15 @@ from typing import Optional
 from utils.telemetry import start_telemetry, suppress_litellm_logs
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from editor.agents import create_editor_agent, create_fact_checker_agent
-from editor.tools import EDITS_DIR
+
 def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None):
     """Set up environment variables, API keys, and telemetry
     
     Args:
-        enable_telemetry: Whether to enable OpenTelemetry tracing
-        agent_name: Optional name for the agent in telemetry
-        agent_type: Optional type of the agent in telemetry
+        enable_telemetry: Whether to enable telemetry
+        agent_name: Optional agent name for telemetry
+        agent_type: Optional agent type for telemetry
     """
-    # Ensure edits directory exists
-    os.makedirs(EDITS_DIR, exist_ok=True)
     
     # Load .env from root directory
     load_dotenv()
@@ -29,7 +27,7 @@ def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None):
     
     # Start telemetry if enabled
     if enable_telemetry:
-        from utils.telemetry import start_telemetry, traced
+        from utils.telemetry import start_telemetry
         tracer = start_telemetry(
             agent_name=agent_name or "editor_system", 
             agent_type=agent_type or "editor"

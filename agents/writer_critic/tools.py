@@ -2,9 +2,10 @@ import os
 from datetime import datetime
 import pytz
 from smolagents import tool
-from agents.utils.agents.tools import get_timestamp
+from utils.agents.tools import get_timestamp
+from utils.file_manager import FileManager
 
-# Ensure drafts directory exists
+# Ensure drafts directory exists (legacy support)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DRAFT_DIR = os.path.join(BASE_DIR, "drafts")
 os.makedirs(DRAFT_DIR, exist_ok=True)
@@ -32,21 +33,23 @@ def save_draft(draft: str, draft_name: str = None) -> str:
     if not draft:
         return "No draft content to save."
     
-    if not os.path.exists(DRAFT_DIR):
-        os.makedirs(DRAFT_DIR, exist_ok=True)
-
-    # Get current timestamp
-    timestamp = get_timestamp()
+    # Initialize file manager
+    file_manager = FileManager()
     
     # Use provided name or default to iteration number
-    if draft_name:
-        file_name = f"{timestamp}_{draft_name}.md"
-    else:
-        file_name = f"{timestamp}_draft_{iteration_count}.md"
+    title = draft_name if draft_name else f"draft_{iteration_count}"
     
-    file_path = os.path.join(DRAFT_DIR, file_name)
-    with open(file_path, "w") as f:
-        f.write(draft)
+    # Save the file using the file manager
+    file_id = file_manager.save_file(
+        content=draft,
+        file_type="draft",
+        title=title,
+        metadata={"word_count": get_word_count(draft), "iteration": iteration_count}
+    )
+    
+    # Get the file metadata to return the path
+    file_data = file_manager.get_file(file_id)
+    file_path = file_data["metadata"]["filepath"]
     
     # Increment iteration count for next draft
     iteration_count += 1

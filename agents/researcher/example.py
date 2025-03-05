@@ -66,7 +66,7 @@ Always save your completed comprehensive report using the save_report tool befor
     print(f"\nExecution time: {execution_time:.2f} seconds")
     
     # Print path to saved report
-    print("\nThe research report was saved in the data/reports directory.")
+    print("\nThe research report was saved in the shared_data/reports directory.")
 
 if __name__ == "__main__":
     main() 

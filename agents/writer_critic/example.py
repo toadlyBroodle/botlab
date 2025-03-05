@@ -64,17 +64,7 @@ Do not ask any questions or reply with anything else, only provide your feedback
     # Calculate and print execution time
     execution_time = time.time() - start_time
     print(f"\nExecution time: {execution_time:.2f} seconds")
-    
-    # Save final draft to file in the output directory
-    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    output_path = os.path.join(output_dir, "final_draft.md")
-    with open(output_path, "w") as f:
-        f.write(result)
-    
-    print(f"\nFinal draft saved to {output_path}")
-    print("\nAll draft versions were saved in the drafts directory during the process.")
+
 
 if __name__ == "__main__":
     main() 

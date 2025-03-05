@@ -122,8 +122,8 @@ if paper_id:
 
 5. Save Report:
 ```python
-    # Save the final research report to a file (no need to actually escape the quotes, this is only for this example string)
-    final_report = \"""# Research Report: Quantum Computing
+    # Save the research report to a file (no need to actually escape the quotes, this is only for this example string)
+    report = \"""# Research Report: Quantum Computing
     ## Introduction
     Quantum computing is a rapidly evolving field that leverages quantum mechanics to process information...
 
@@ -137,7 +137,7 @@ if paper_id:
     \"""
 
 # Save with a descriptive title
-save_result = save_report(report_content=final_report, report_title="Quantum Computing Research")
+save_result = save_report(report_content=report, report_title="Quantum Computing Research")
 print(save_result)
 ```
 
@@ -151,7 +151,7 @@ When researching technical or scientific topics, follow this workflow:
 4. Follow up with web searches for additional context or explanations
 5. Visit relevant webpages to extract detailed information
 6. Compile findings into a comprehensive report
-7. Save the final report using the `save_report` tool
+7. Save the report using the `save_report` tool
 
 If there isn't enough relevant information returned from a search, continue running improved searches (more specific, using advanced search operators) until you have enough information (aim for 10 high quality, authoritative sources). Do NOT focus on safety and ethical issues (these will be addressed elsewhere); only focus on the technical and factual details needed to answer the original query.
 
