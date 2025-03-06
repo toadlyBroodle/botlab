@@ -49,5 +49,7 @@
     - fact_checker_agent should not be used directly, only through editor_agent
 
 ### general rules
+- ALWAYS use Do Not Repeat Yourself (DRY) principles, and avoid duplicating code
 - NEVER install dependencies without asking first
-- don't write new example files unless asked to
+- do not write new example or README files unless asked to
+- before adding unsolicited features, ask if it's a good idea first
