@@ -14,8 +14,14 @@ def parse_args():
                         help="Comma-separated list of agent types to call in sequence")
     parser.add_argument("--max-iterations", type=int, default=3, 
                         help="Maximum number of iterations through the entire sequence")
+    parser.add_argument("--max-steps-per-agent", type=str, default="5,4,9,1",
+                        help="Maximum steps for each agent. Can be either: "
+                             "- An integer (same value for all agents) "
+                             "- A comma-separated string (e.g., '5,4,9,1' for different values per agent)")
     parser.add_argument("--state-file", type=str, default="../shared_data/logs/agent_loop_state.json",
                         help="Path to a file for persisting state between runs")
+    parser.add_argument("--load-state", action="store_true", 
+                        help="Whether to load state from state_file if it exists (default: False)")
     parser.add_argument("--use-custom-prompts", action="store_true", 
                         help="Whether to use custom agent descriptions and prompts")
     parser.add_argument("--enable-telemetry", action="store_true", 
@@ -31,7 +37,9 @@ def main():
     print(f"Query: {args.query}")
     print(f"Agent Sequence: {args.agent_sequence}")
     print(f"Max Iterations: {args.max_iterations}")
+    print(f"Max Steps Per Agent: {args.max_steps_per_agent}")
     print(f"State File: {args.state_file}")
+    print(f"Load State: {args.load_state}")
     print(f"Use Custom Prompts: {args.use_custom_prompts}")
     print(f"Enable Telemetry: {args.enable_telemetry}")
     print()
@@ -39,16 +47,23 @@ def main():
     # Parse agent sequence
     agent_sequence = [agent_type.strip() for agent_type in args.agent_sequence.split(",")]
     
+    # Initialize the agent loop with default parameters
+    agent_loop_params = {
+        "agent_sequence": agent_sequence,
+        "max_iterations": args.max_iterations,
+        "max_retries": 3,
+        "use_custom_prompts": args.use_custom_prompts,
+        "enable_telemetry": args.enable_telemetry,
+        "state_file": args.state_file,
+        "load_state": args.load_state
+    }
+    
+    # Only add max_steps_per_agent if explicitly provided
+    if args.max_steps_per_agent is not None:
+        agent_loop_params["max_steps_per_agent"] = args.max_steps_per_agent
+    
     # Initialize the agent loop
-    agent_loop = AgentLoop(
-        agent_sequence=agent_sequence,
-        max_iterations=args.max_iterations,
-        max_steps_per_agent=1,
-        max_retries=3,
-        use_custom_prompts=args.use_custom_prompts,
-        enable_telemetry=args.enable_telemetry,
-        state_file=args.state_file
-    )
+    agent_loop = AgentLoop(**agent_loop_params)
     
     # Run the agent loop
     result = agent_loop.run(args.query)
