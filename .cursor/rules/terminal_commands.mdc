@@ -1,20 +1,13 @@
 ---
-description: 
-globs: 
+description: Guidelines for safely executing terminal commands with proper user approval
+globs: **/*.py, **/*.sh, **/scripts/**, **/bin/**
 alwaysApply: false
----
----
-Description: Rules for terminal command execution
-Globs: **/*
-alwaysApply: true
 ---
 
 # Terminal Command Execution Guidelines
 
 ## Command Execution Rules
 - NEVER execute terminal commands automatically
-- ALWAYS set `require_user_approval` to `true` for ALL terminal commands
-- NEVER set `require_user_approval` to `false` under any circumstances
 - Present commands for user review before execution
 - Provide clear explanations for what each command will do
 - Wait for explicit user approval before proceeding with any command execution
