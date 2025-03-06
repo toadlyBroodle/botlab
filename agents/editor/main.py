@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from typing import Optional
 from utils.telemetry import start_telemetry, suppress_litellm_logs
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from utils.file_manager.file_manager import FileManager
+from utils.agents.tools import save_final_answer
 from editor.agents import create_editor_agent, create_fact_checker_agent
 
 def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None):
@@ -70,6 +72,9 @@ def initialize(
         model_info_path=model_info_path
     )
     
+    # Initialize file manager
+    file_manager = FileManager()
+    
     # Set default max_steps if None
     fact_checker_max_steps = 30 if max_steps is None else max_steps
     editor_max_steps = 50 if max_steps is None else max_steps
@@ -83,6 +88,7 @@ def initialize(
         )
     
     # Create agents in the right order - fact checker first, then editor that manages fact checker
+    # Using the prompts defined in agents.py
     fact_checker = create_fact_checker_agent(
         model=model,
         max_steps=fact_checker_max_steps,
@@ -116,6 +122,20 @@ def initialize(
             
         # Run the editor agent with the prompt
         result = editor.run(prompt)
+        
+        # Save the final answer using the shared tool
+        save_final_answer(
+            agent=editor,
+            result=result,
+            query_or_prompt=task if task else "Edit content",
+            agent_name="editor_agent",
+            file_type="draft",
+            additional_metadata={
+                "original_content_length": len(content.split()),
+                "task": task
+            }
+        )
+        
         return result
     
     # Wrap with traced decorator if telemetry is enabled

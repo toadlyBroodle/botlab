@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 import random
 import logging
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional, Union
 from smolagents import tool
 from smolagents import DuckDuckGoSearchTool
 from smolagents import VisitWebpageTool
@@ -49,6 +49,13 @@ def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
         FileNotFoundError: If the template file is not found
         yaml.YAMLError: If there's an error parsing the YAML file
     """
+    if not hasattr(agent, 'name'):
+        raise ValueError("Agent must have a 'name' attribute to determine its type")
+    
+    # Apply the custom system prompt if provided
+    if custom_system_prompt:
+        agent.system_prompt = custom_system_prompt
+    
     # Determine agent type from the agent's class
     agent_class_name = agent.__class__.__name__
     
@@ -112,12 +119,21 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
         query: The search query to perform. Can include special operators like site: or filetype:
         max_results: Maximum number of results to return (default: 10)
         rate_limit_seconds: Minimum seconds to wait between searches (default: 5.0)
-        max_retries: Maximum number of retry attempts when rate limited (default: 5)
+        max_retries: Maximum number of retry attempts when rate limited (default: 3, max allowed: 5)
         
     Returns:
         Formatted search results as a markdown string with titles, URLs, and snippets
     """
     global _last_search_time, _consecutive_failures, _base_wait_time, _max_backoff_time, _current_rate_limit
+
+    # Limit max_retries to 5 if a larger value is passed
+    if max_retries > 5:
+        max_retries = 5
+
+    # Reset consecutive failures if it's already at or above the max_retries limit
+    # This prevents the function from carrying over too many failures from previous calls
+    if _consecutive_failures >= max_retries:
+        _consecutive_failures = 0
 
     if rate_limit_seconds < 5.0:
         rate_limit_seconds = 5.0
@@ -159,7 +175,7 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
                 _consecutive_failures += 1
                 retries += 1
                 
-                if retries <= max_retries:
+                if retries <= max_retries and _consecutive_failures <= max_retries:
                     # Calculate backoff time with more aggressive multiplier
                     backoff_time = _base_wait_time * (3 ** _consecutive_failures)
                     # Add jitter (±30%)
@@ -173,7 +189,9 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
                     time.sleep(backoff_time)
                     continue
                 else:
-                    return f"Error: DuckDuckGo search failed after {max_retries} retries. Last result: {result}"
+                    # Reset consecutive failures before returning
+                    _consecutive_failures = 0
+                    return f"Error: DuckDuckGo search failed after {retries} retries. Last result: {result}"
             
             # Success - reset consecutive failures, rate limit, and update last search time
             _consecutive_failures = 0
@@ -192,7 +210,7 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
                 _consecutive_failures += 1
                 retries += 1
                 
-                if retries <= max_retries:
+                if retries <= max_retries and _consecutive_failures <= max_retries:
                     # Calculate backoff time with increased base wait time and more aggressive multiplier
                     backoff_time = _base_wait_time * (3 ** _consecutive_failures)
                     # Add jitter (±30%)
@@ -205,13 +223,18 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
                     logger.info(f"Rate limit detected. Retrying in {backoff_time:.2f} seconds (failure count: {_consecutive_failures})...")
                     time.sleep(backoff_time)
                 else:
-                    # Max retries exceeded
-                    return f"Error: DuckDuckGo search rate limit exceeded after {max_retries} retries."
+                    # Max retries exceeded - reset consecutive failures before returning
+                    _consecutive_failures = 0
+                    return f"Error: DuckDuckGo search rate limit exceeded after {retries} retries."
             else:
                 # Not a rate limit error, just return the error
+                # Reset consecutive failures before returning
+                _consecutive_failures = 0
                 return f"Error performing search: {error_message}"
     
     # This should not be reached, but just in case
+    # Reset consecutive failures before returning
+    _consecutive_failures = 0
     return "Error: Unable to complete search after multiple attempts."
 
 @tool
@@ -449,4 +472,102 @@ def load_file(file_identifier: str) -> str:
         
     except Exception as e:
         return f"Error loading file '{file_identifier}': {str(e)}"
+
+def extract_final_answer_from_memory(agent) -> Any:
+    """Extract the final_answer from an agent's memory.
+    
+    Args:
+        agent: The agent instance with memory
+        
+    Returns:
+        The final answer content if found, or None if not found
+    """
+    # Check if the agent has memory and steps
+    if hasattr(agent, 'memory') and hasattr(agent.memory, 'steps'):
+        # Look for tool calls in the agent's memory steps
+        for step in agent.memory.steps:
+            if hasattr(step, 'tool_calls') and step.tool_calls:
+                for tool_call in step.tool_calls:
+                    if tool_call.name == "final_answer":
+                        # Extract the final answer content
+                        return tool_call.result
+    
+    return None
+
+def save_final_answer(agent, result: str, query_or_prompt: str, agent_name: str, file_type: str = "report", 
+                     additional_metadata: Optional[Dict[str, Any]] = None) -> str:
+    """Extract the final answer from agent memory and save it to a file.
+    
+    This function extracts the final_answer from an agent's memory if available,
+    otherwise it uses the provided result. It then saves the content to a file
+    using the FileManager.
+    
+    Args:
+        agent: The agent instance with memory
+        result: The result from the agent.run() call
+        query_or_prompt: The original query or prompt given to the agent
+        agent_name: The name of the agent (e.g., "researcher_agent")
+        file_type: The type of file to save ("report" or "draft")
+        additional_metadata: Optional additional metadata to include
+        
+    Returns:
+        The file ID of the saved file, or an error message
+    """
+    try:
+        from utils.file_manager.file_manager import FileManager
+        
+        # Initialize file manager
+        file_manager = FileManager()
+        
+        # Extract final_answer from agent memory if available
+        final_answer_content = result
+        extracted_answer = extract_final_answer_from_memory(agent)
+        
+        if extracted_answer is not None:
+            final_answer_content = extracted_answer
+            print(f"Found final_answer in {agent_name} memory")
+        
+        # Extract a title from the content or use the query/prompt
+        title = query_or_prompt
+        if isinstance(final_answer_content, str):
+            # Try to extract a title from markdown heading
+            if "# " in final_answer_content:
+                title_lines = [line for line in final_answer_content.split('\n') if line.startswith('# ')]
+                if title_lines:
+                    title = title_lines[0].replace('# ', '').strip()
+        
+        # Truncate long titles
+        if len(title) > 50:
+            title = title[:50] + "..."
+            
+        # Calculate word count
+        word_count = len(final_answer_content.split()) if isinstance(final_answer_content, str) else 0
+        
+        # Prepare metadata
+        metadata = {
+            "agent_name": agent_name,
+            "query_or_prompt": query_or_prompt,
+            "word_count": word_count,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Add additional metadata if provided
+        if additional_metadata:
+            metadata.update(additional_metadata)
+        
+        # Save the file
+        file_id = file_manager.save_file(
+            content=final_answer_content if isinstance(final_answer_content, str) else str(final_answer_content),
+            file_type=file_type,
+            title=title,
+            metadata=metadata
+        )
+        
+        print(f"Saved {agent_name} output to {file_type} file with ID: {file_id}")
+        return file_id
+    
+    except Exception as e:
+        error_msg = f"Error saving {agent_name} output: {str(e)}"
+        print(error_msg)
+        return error_msg
 
