@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description: Structure and organization guidelines for specialized agent projects
+globs: **/researcher/**, **/manager/**, **/editor/**, **/writer_critic/**, **/qaqc/**
 alwaysApply: false
 ---
 
@@ -48,4 +48,4 @@ alwaysApply: false
 - Preserve main.py files as they provide core functionality
 - Create custom example files instead of modifying original example.py files
 - Use configuration options like --use-custom-prompts or --config-file
-- Define custom agent descriptions and prompts in custom example files 
+- Define custom agent descriptions and prompts in custom example files

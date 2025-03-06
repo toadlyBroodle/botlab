@@ -1,6 +1,7 @@
 ---
-Description: Rules for agent_loop functionality
-Globs: **/agent_loop.py, **/agent_loop/**, **/agent_loop_example.py, **/AGENT_LOOP_README.md
+description: Rules and best practices for implementing agent loops and iterative agent workflows
+globs: **/agent_loop/**
+alwaysApply: false
 ---
 
 # Agent Loop Guidelines
@@ -20,4 +21,4 @@ Globs: **/agent_loop.py, **/agent_loop/**, **/agent_loop_example.py, **/AGENT_LO
 - Keep agent loop implementations clean and focused
 - Document any new agent loop patterns or extensions
 - Test agent loops thoroughly before deployment
-- Consider performance implications for long-running agent loops 
+- Consider performance implications for long-running agent loops

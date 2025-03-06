@@ -1,6 +1,7 @@
 ---
-Description: Rules for handling smolagent source code
-Globs: **/.venv/lib/python3.11/site-packages/smolagents/**/*
+description: Guidelines for working with and extending smolagent source code without direct modification
+globs: **/*.py, **/smolagents/**, **/*agent*.py, **/tools.py
+alwaysApply: false
 ---
 
 # Smolagent Source Code Guidelines
@@ -9,4 +10,4 @@ Globs: **/.venv/lib/python3.11/site-packages/smolagents/**/*
 - Search this directory for information relevant to how smolagents works
 - NEVER modify smolagent source code
 - When referencing smolagent functionality, refer to the source code for accurate implementation details
-- If you need to extend smolagent functionality, create wrapper classes or functions in the project's code rather than modifying the source 
+- If you need to extend smolagent functionality, create wrapper classes or functions in the project's code rather than modifying the source

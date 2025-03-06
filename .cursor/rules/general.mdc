@@ -1,6 +1,6 @@
 ---
-description: 
-globs: 
+description: Core guidelines for all Smolagent projects covering structure, environment, dependencies, and code style
+globs: **/*.py, **/pyproject.toml, **/README.md, **/example.py
 alwaysApply: false
 ---
 
@@ -36,4 +36,3 @@ alwaysApply: false
 
 ## General
 - Before adding unsolicited features, ask user before proceeding
-
