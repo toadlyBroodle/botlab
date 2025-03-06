@@ -1,0 +1,12 @@
+---
+Description: Rules for handling smolagent source code
+Globs: **/.venv/lib/python3.11/site-packages/smolagents/**/*
+---
+
+# Smolagent Source Code Guidelines
+
+- smolagent source code is located in *agents/.venv/lib/python3.11/site-packages/smolagents/*
+- Search this directory for information relevant to how smolagents works
+- NEVER modify smolagent source code
+- When referencing smolagent functionality, refer to the source code for accurate implementation details
+- If you need to extend smolagent functionality, create wrapper classes or functions in the project's code rather than modifying the source 

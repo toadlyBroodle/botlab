@@ -1,0 +1,39 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+
+# General Guidelines for Smolagent Projects
+
+## Project Structure
+- Never modify the structure of the project without explicit permission
+- Each agent project (researcher, writer_critic, manager, editor) follows a common structure:
+  - `__init__.py`
+  - `agents.py`: Project agents
+  - `example.py`: Example usages
+  - `main.py`: Main setup and entry point
+  - `tools.py`: Tools used by the agents
+
+## Virtual Environment
+- All Python scripts MUST be prefixed by `poetry run python`
+- Example: `poetry run python -m researcher.example`
+- Working directory for all commands should be the `agents/` directory
+
+## Dependencies
+- Never install new dependencies without asking user first
+- Use the existing dependencies in pyproject.toml
+
+## Code Style
+- Follow PEP 8 guidelines for Python code
+- Use type hints where appropriate
+- Keep functions focused and reasonably sized
+
+## Documentation
+- Write clear docstrings for functions and classes
+  - @tool docstrings are automatically added to agent system_prompts
+- Do not write new example or README files unless asked to
+
+## General
+- Before adding unsolicited features, ask user before proceeding
+

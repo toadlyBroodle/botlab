@@ -1,0 +1,51 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+
+# Agent Projects Guidelines
+
+## Common Structure
+- Each agent project (researcher, manager, editor, writer_critic) should maintain its common file structure:
+  - `__init__.py`
+  - `agents.py`: Project agents
+  - `example.py`: Example usages
+  - `main.py`: Main setup and entry point
+  - `tools.py`: Tools used by the agents
+
+## Project-Specific Guidelines
+
+### Researcher Agent
+- Located in *researcher/* directory
+- Focuses on web search and information gathering
+- Uses DuckDuckGo for web search, arXiv for academic papers
+- Supports PDF to markdown conversion
+
+### Manager Agent
+- Located in *manager/* directory
+- Coordinates multiple specialized agents
+- Supports customizing agent descriptions and prompts via the --use-custom-prompts flag
+- Custom configurations are defined in example.py
+
+### Editor Agent
+- Located in *editor/* directory
+- Focuses on editing content with fact checking
+- Internally uses fact_checker_agent as a subagent
+- fact_checker_agent should not be used directly, only through editor_agent
+
+### Writer-Critic Agent
+- Located in *writer_critic/* directory
+- Consists of writer agent for drafting and critic agent for feedback
+- Supports iterative refinement through feedback
+
+### Utils
+- Located in *utils/* directory
+- Contains shared utilities for all agent projects
+- *gemini/* subdirectory contains Google Gemini LLM API utilities
+
+## Customization Best Practices
+- Preserve main.py files as they provide core functionality
+- Create custom example files instead of modifying original example.py files
+- Use configuration options like --use-custom-prompts or --config-file
+- Define custom agent descriptions and prompts in custom example files 

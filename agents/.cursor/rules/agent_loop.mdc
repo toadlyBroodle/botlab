@@ -1,0 +1,23 @@
+---
+Description: Rules for agent_loop functionality
+Globs: **/agent_loop.py, **/agent_loop/**, **/agent_loop_example.py, **/AGENT_LOOP_README.md
+---
+
+# Agent Loop Guidelines
+
+## Overview
+- agent_loop.py and the agent_loop/ directory contain functionality for creating agent loops
+- AGENT_LOOP_README.md provides documentation for this functionality
+- agent_loop_example.py shows example usage
+
+## Usage Guidelines
+- Follow the patterns shown in agent_loop_example.py when creating new agent loops
+- Refer to AGENT_LOOP_README.md for detailed documentation
+- When extending agent loop functionality, maintain compatibility with existing code
+- Use the agent loop framework for creating iterative agent workflows
+
+## Best Practices
+- Keep agent loop implementations clean and focused
+- Document any new agent loop patterns or extensions
+- Test agent loops thoroughly before deployment
+- Consider performance implications for long-running agent loops 
