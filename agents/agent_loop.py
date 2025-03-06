@@ -4,7 +4,8 @@ import sys
 import time
 import argparse
 import json
-from typing import List, Dict, Any, Optional, Callable, Tuple
+from typing import List, Dict, Any, Optional, Callable, Tuple, Union
+from datetime import datetime
 
 from dotenv import load_dotenv
 from utils.telemetry import start_telemetry, suppress_litellm_logs
@@ -19,30 +20,55 @@ class AgentLoop:
         self,
         agent_sequence: List[str],
         max_iterations: int = 5,
-        max_steps_per_agent: int = 15,
+        max_steps_per_agent: Union[int, str] = 5,
         max_retries: int = 3,
         model_id: str = "gemini/gemini-2.0-flash",
         model_info_path: str = "utils/gemini/gem_llm_info.json",
         use_custom_prompts: bool = False,
         enable_telemetry: bool = False,
-        state_file: Optional[str] = None
+        state_file: Optional[str] = None,
+        load_state: bool = False
     ):
         """Initialize the agent loop.
         
         Args:
             agent_sequence: List of agent types to call in sequence (e.g., ["researcher", "writer", "editor", "qaqc"])
             max_iterations: Maximum number of iterations through the entire sequence
-            max_steps_per_agent: Maximum steps for each agent
+            max_steps_per_agent: Maximum steps for each agent. Can be either:
+                - An integer (same value for all agents)
+                - A comma-separated string (e.g., "3,3,9,1" for different values per agent)
             max_retries: Maximum retries for rate limiting
             model_id: The model ID to use
             model_info_path: Path to model info JSON file
             use_custom_prompts: Whether to use custom agent descriptions and prompts
             enable_telemetry: Whether to enable OpenTelemetry tracing
             state_file: Optional path to a file for persisting state between runs
+            load_state: Whether to load state from state_file if it exists (default: False)
         """
         self.agent_sequence = agent_sequence
         self.max_iterations = max_iterations
-        self.max_steps_per_agent = max_steps_per_agent
+        
+        # Parse max_steps_per_agent
+        if isinstance(max_steps_per_agent, str) and "," in max_steps_per_agent:
+            # Parse comma-separated list of max steps
+            steps_list = [int(steps.strip()) for steps in max_steps_per_agent.split(",")]
+            self.max_steps_per_agent_dict = {}
+            
+            # Map steps to agents
+            for i, agent_type in enumerate(agent_sequence):
+                if i < len(steps_list):
+                    self.max_steps_per_agent_dict[agent_type] = steps_list[i]
+                else:
+                    # Use the last value for any remaining agents
+                    self.max_steps_per_agent_dict[agent_type] = steps_list[-1]
+            
+            # Store the default value for any agents not in the sequence
+            self.max_steps_per_agent = steps_list[-1] if steps_list else 5
+        else:
+            # Use the same value for all agents
+            self.max_steps_per_agent = int(max_steps_per_agent)
+            self.max_steps_per_agent_dict = {agent_type: self.max_steps_per_agent for agent_type in agent_sequence}
+        
         self.max_retries = max_retries
         self.model_id = model_id
         self.model_info_path = model_info_path
@@ -60,8 +86,8 @@ class AgentLoop:
             "last_updated": time.time()
         }
         
-        # Load state from file if provided
-        if state_file and os.path.exists(state_file):
+        # Load state from file if provided and load_state is True
+        if load_state and state_file and os.path.exists(state_file):
             try:
                 with open(state_file, 'r') as f:
                     loaded_state = json.load(f)
@@ -143,7 +169,7 @@ class AgentLoop:
                 try:
                     agent = create_agent_by_type(
                         agent_type=agent_type,
-                        max_steps=self.max_steps_per_agent,
+                        max_steps=self.max_steps_per_agent_dict.get(agent_type, self.max_steps_per_agent),
                         model_id=self.model_id,
                         model_info_path=self.model_info_path,
                         max_retries=self.max_retries,
@@ -238,6 +264,19 @@ class AgentLoop:
         print(f"Starting agent loop with query: {query}")
         print(f"Agent sequence: {' -> '.join(self.agent_sequence)}")
         
+        # Reset status if it was previously completed or if we're loading from state
+        if self.state["status"] in ["completed", "initialized"]:
+            print(f"Previous run status was '{self.state['status']}'. Starting a new iteration.")
+            # Keep the results but reset the agent index to start a new iteration
+            self.state["status"] = "running"
+            self.state["current_agent"] = 0
+            
+            # Always preserve previous results when loading state
+            # This ensures we can build upon previous work
+            
+            # Reset iteration counter to 0 to run full set of iterations
+            self.state["current_iteration"] = 0
+        
         self.state["status"] = "running"
         self.state["query"] = query
         
@@ -245,6 +284,8 @@ class AgentLoop:
             # Continue from where we left off if resuming
             iteration = self.state["current_iteration"]
             agent_index = self.state["current_agent"]
+            
+            print(f"Starting from iteration {iteration + 1}, agent index {agent_index}")
             
             while iteration < self.max_iterations:
                 print(f"\nIteration {iteration + 1}/{self.max_iterations}")
@@ -301,7 +342,7 @@ class AgentLoop:
                             try:
                                 # Initialize the QAQC comparison function
                                 compare_outputs = initialize_qaqc(
-                                    max_steps=self.max_steps_per_agent,
+                                    max_steps=self.max_steps_per_agent_dict.get(previous_agent_type, self.max_steps_per_agent),
                                     max_retries=self.max_retries,
                                     model_id=self.model_id,
                                     model_info_path=self.model_info_path,
@@ -391,10 +432,6 @@ class AgentLoop:
                 
                 # Save state after each iteration
                 self._save_state()
-                
-                # Check if we should continue to the next iteration
-                if iteration >= self.max_iterations:
-                    break
             
             # Loop completed successfully
             self.state["status"] = "completed"
@@ -415,8 +452,22 @@ class AgentLoop:
             return self.state
 
 def main():
-    """Main entry point for the agent loop script."""
+    """Main entry point for the agent loop."""
     args = parse_args()
+    
+    print("=== Agent Loop ===")
+    print(f"Query: {args.query}")
+    print(f"Agent Sequence: {args.agent_sequence}")
+    print(f"Max Iterations: {args.max_iterations}")
+    print(f"Max Steps Per Agent: {args.max_steps_per_agent}")
+    print(f"Max Retries: {args.max_retries}")
+    print(f"Model ID: {args.model_id}")
+    print(f"Model Info Path: {args.model_info_path}")
+    print(f"Use Custom Prompts: {args.use_custom_prompts}")
+    print(f"Enable Telemetry: {args.enable_telemetry}")
+    print(f"State File: {args.state_file}")
+    print(f"Load State: {args.load_state}")
+    print()
     
     # Parse agent sequence
     agent_sequence = [agent_type.strip() for agent_type in args.agent_sequence.split(",")]
@@ -431,7 +482,8 @@ def main():
         model_info_path=args.model_info_path,
         use_custom_prompts=args.use_custom_prompts,
         enable_telemetry=args.enable_telemetry,
-        state_file=args.state_file
+        state_file=args.state_file,
+        load_state=args.load_state
     )
     
     # Run the agent loop
@@ -459,12 +511,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run a loop of agent calls with state management")
     
     parser.add_argument("--query", type=str, required=True, help="The query to process")
-    parser.add_argument("--agent-sequence", type=str, default="researcher,writer,editor", 
+    parser.add_argument("--agent-sequence", type=str, default="researcher,writer,editor,qaqc", 
                         help="Comma-separated list of agent types to call in sequence")
     parser.add_argument("--max-iterations", type=int, default=3, 
                         help="Maximum number of iterations through the entire sequence")
-    parser.add_argument("--max-steps-per-agent", type=int, default=5, 
-                        help="Maximum steps for each agent")
+    parser.add_argument("--max-steps-per-agent", type=str, default="3,3,9,1", 
+                        help="Maximum steps for each agent. Can be either: "
+                             "- An integer (same value for all agents) "
+                             "- A comma-separated string (e.g., '3,3,9,1' for different values per agent)")
     parser.add_argument("--max-retries", type=int, default=3, 
                         help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", 
@@ -477,6 +531,8 @@ def parse_args():
                         help="Whether to enable OpenTelemetry tracing")
     parser.add_argument("--state-file", type=str, default="../shared_data/logs/agent_loop_state.json", 
                         help="Path to a file for persisting state between runs")
+    parser.add_argument("--load-state", action="store_true", 
+                        help="Whether to load state from state_file if it exists (default: False)")
     
     return parser.parse_args()
 

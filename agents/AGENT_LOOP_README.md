@@ -50,7 +50,10 @@ The agent loop script supports the following command line options:
                               [default: researcher,writer,editor]
 --max-iterations INTEGER      Maximum number of iterations through the entire sequence
                               [default: 3]
---max-steps-per-agent INTEGER Maximum steps for each agent [default: 15]
+--max-steps-per-agent TEXT    Maximum steps for each agent. Can be either:
+                              - An integer (same value for all agents)
+                              - A comma-separated string (e.g., "20,15,10" for different values per agent)
+                              [default: 15]
 --max-retries INTEGER         Maximum retries for rate limiting [default: 3]
 --model-id TEXT               The model ID to use [default: gemini/gemini-2.0-flash]
 --model-info-path TEXT        Path to model info JSON file
@@ -87,6 +90,32 @@ Run 5 iterations of the full sequence with QAQC:
 poetry run python agent_loop.py --query "Write a short story about AI" --max-iterations 5 --agent-sequence "researcher,writer,editor,qaqc"
 ```
 
+### Custom Max Steps Per Agent
+
+Set different maximum steps for each agent in the sequence:
+
+```bash
+# Set researcher=20, writer=15, editor=10, qaqc=5
+poetry run python agent_loop.py --query "Explain blockchain technology" --agent-sequence "researcher,writer,editor,qaqc" --max-steps-per-agent "20,15,10,5"
+
+# Set the same max steps (25) for all agents
+poetry run python agent_loop.py --query "Explain blockchain technology" --max-steps-per-agent 25
+```
+
+The `--max-steps-per-agent` parameter can be used in two ways:
+
+1. **Single value**: Applies the same maximum steps to all agents
+   ```bash
+   --max-steps-per-agent 15
+   ```
+
+2. **Comma-separated list**: Applies different maximum steps to each agent in the sequence
+   ```bash
+   --max-steps-per-agent "20,15,10,5"
+   ```
+
+If you provide fewer values than agents in the sequence, the last value will be used for the remaining agents. For example, with `--agent-sequence "researcher,writer,editor,qaqc" --max-steps-per-agent "20,15"`, the researcher will get 20 steps, the writer will get 15 steps, and both the editor and qaqc will also get 15 steps (the last value in the list).
+
 ### State Persistence
 
 Run with state persistence to allow resuming from where you left off:
@@ -122,6 +151,8 @@ poetry run python agent_loop.py --query "Explain machine learning" --agent-seque
 The Agent Loop script:
 
 1. Initializes each agent in the sequence
+   - Each agent can have its own maximum number of steps, specified via the `--max-steps-per-agent` parameter
+   - This allows fine-tuning the behavior of each agent independently
 2. For each iteration:
    - Runs each agent in order
    - Passes results from previous agents to the next agent
@@ -189,10 +220,11 @@ To extend the Agent Loop script:
 2. Modify the `_format_prompt_for_agent` method to handle new agent types
 3. Add custom logic for determining when to stop iterations
 4. Enhance the QAQC agent's selection logic for specific use cases
-5. To extend the QAQC agent:
+5. Customize the max steps per agent to optimize performance for different agent types
+6. To extend the QAQC agent:
    - Add new tools to `qaqc/tools.py` for additional functionality
    - Modify the `create_qaqc_agent` function in `qaqc/agents.py` to include new tools
-   - Update the `run_qaqc_comparison` function to handle different output formats
+   - Update the `compare_outputs` function to handle different output formats
    - Customize the system prompt to include instructions for new tools or decision formats
 
 ## Troubleshooting
@@ -209,3 +241,6 @@ If you encounter issues:
    - Check that the agent's prompt includes instructions to use the tool
    - Ensure the agent has access to the memory attribute by adding appropriate checks
    - Review the comparison request format to make sure it clearly instructs the agent to make a selection
+7. If using custom max steps per agent, verify that the values are properly formatted:
+   - For a single value, use an integer: `--max-steps-per-agent 15`
+   - For multiple values, use a comma-separated string: `--max-steps-per-agent "20,15,10,5"`
