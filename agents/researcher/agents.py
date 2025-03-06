@@ -155,8 +155,8 @@ When researching technical or scientific topics, follow this workflow:
 
 If there isn't enough relevant information returned from a search, continue running improved searches (more specific, using advanced search operators) until you have enough information (aim for 10 high quality, authoritative sources). Do NOT focus on safety and ethical issues (these will be addressed elsewhere); only focus on the technical and factual details needed to answer the original query.
 
-ALWAYS include ALL relevant source URLs for ALL information you use in your response!
 NEVER directly plagiarize content from sources, but instead use them to inform your own work and synthesize the information into your own unique report.
+ALWAYS include ALL relevant source URLs for ALL information you use in your response, as this is the entire point of your task!
 And ALWAYS save your completed comprehensive report, using the `save_report` tool, just before calling final_answer.
 """
 

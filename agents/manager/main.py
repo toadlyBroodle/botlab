@@ -14,6 +14,8 @@ from writer_critic.agents import create_writer_agent, create_critic_agent
 from editor.agents import create_editor_agent
 from qaqc.agents import create_qaqc_agent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from utils.file_manager.file_manager import FileManager
+from utils.agents.tools import save_final_answer
 
 def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None, managed_agents=None):
     """Set up environment variables, API keys, and telemetry
@@ -111,6 +113,15 @@ def initialize(
 
         # Run the query
         result = manager_agent.run(query)
+        
+        # Save the final answer using the shared tool
+        save_final_answer(
+            agent=manager_agent,
+            result=result,
+            query_or_prompt=query,
+            agent_name="manager_agent",
+            file_type="report"
+        )
 
         return result
     
@@ -161,6 +172,7 @@ def create_agent_by_type(
     # Default empty dict if None provided
     agent_configs = agent_configs or {}
     
+    # Create the appropriate agent using the prompts defined in their respective agents.py files
     if agent_type.lower() == 'researcher':
         return create_researcher_agent(
             model=model,
@@ -252,20 +264,15 @@ def parse_arguments():
     Returns:
         The parsed arguments
     """
-    parser = argparse.ArgumentParser(description="Run the manager agent system")
-    
-    # Add command line arguments
-    parser.add_argument("--query", nargs="?", help="Query to process")
-    parser.add_argument("--telemetry", action="store_true", help="Enable telemetry")
-    parser.add_argument("--managed-agents", type=str, default=None, help="Comma-separated list of agent types to create (e.g. researcher,writer,editor)")
-    parser.add_argument("--max-steps", type=int, default=20, help="Maximum steps for agents")
+    parser = argparse.ArgumentParser(description="Run the manager agent with a query.")
+    parser.add_argument("--query", type=str, default="Research the latest advancements in quantum computing and write a 500-word article about it.", 
+                        help="The query to process")
+    parser.add_argument("--enable-telemetry", action="store_true", help="Enable telemetry")
+    parser.add_argument("--max-steps", type=int, default=20, help="Maximum number of steps")
+    parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
     parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
-    
-    # Add arguments for agent configurations - simplified to a single toggle
-    parser.add_argument("--use-custom-prompts", action="store_true", help="Use custom agent descriptions and prompts")
-    parser.add_argument("--config-file", type=str, default=None,
-                        help="Path to a JSON file containing agent configurations")
+    parser.add_argument("--config-path", type=str, default=None, help="Path to agent configuration JSON file")
     
     return parser.parse_args()
 
@@ -305,15 +312,22 @@ def main():
     
     # Initialize the manager agent with parameters from command line
     run_query = initialize(
-        enable_telemetry=args.telemetry,
-        managed_agents=agents,
+        enable_telemetry=args.enable_telemetry,
         max_steps=args.max_steps,
+        max_retries=args.max_retries,
         model_id=args.model_id,
         model_info_path=args.model_info_path,
         agent_configs=agent_configs
     )
-
-    return run_query(args.query)
+    
+    # Run the query
+    result = run_query(args.query)
+    
+    # Print the result
+    print("\nResult:")
+    print(result)
+    
+    return result
 
 if __name__ == "__main__":
     main()

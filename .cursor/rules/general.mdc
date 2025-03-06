@@ -8,7 +8,7 @@ alwaysApply: false
 
 ## Project Structure
 - Never modify the structure of the project without explicit permission
-- Each agent project (researcher, writer_critic, manager, editor) follows a common structure:
+- Each agent project (researcher, writer_critic, manager, editor, qaqc) follows a common structure:
   - `__init__.py`
   - `agents.py`: Project agents
   - `example.py`: Example usages

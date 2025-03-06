@@ -7,6 +7,8 @@ from typing import Optional
 from dotenv import load_dotenv
 from utils.telemetry import start_telemetry, suppress_litellm_logs
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from utils.file_manager.file_manager import FileManager
+from utils.agents.tools import save_final_answer
 
 from researcher.agents import create_researcher_agent
 from researcher.tools import PAPERS_DIR, REPORTS_DIR
@@ -89,7 +91,7 @@ def initialize(
         max_retries=max_retries,
     )
     
-    # Create researcher agent
+    # Create researcher agent - using the prompts defined in agents.py
     researcher_agent = create_researcher_agent(
         model=model, 
         max_steps=max_steps,
@@ -116,6 +118,16 @@ def initialize(
         execution_time = time.time() - start_time
         
         print(f"\nExecution time: {execution_time:.2f} seconds")
+        
+        # Save the final answer using the shared tool
+        save_final_answer(
+            agent=researcher_agent,
+            result=result,
+            query_or_prompt=query,
+            agent_name="researcher_agent",
+            file_type="report",
+            additional_metadata={"execution_time": execution_time}
+        )
         
         return result
     

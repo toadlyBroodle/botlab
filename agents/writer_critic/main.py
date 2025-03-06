@@ -3,6 +3,8 @@ from dotenv import load_dotenv
 import sys
 from typing import Optional
 from utils.telemetry import start_telemetry, suppress_litellm_logs
+from utils.file_manager.file_manager import FileManager
+from utils.agents.tools import save_final_answer
 
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from writer_critic.agents import create_writer_agent, create_critic_agent
@@ -83,6 +85,7 @@ def initialize(
         )
     
     # Create agents in the right order - critic first, then writer that manages critic
+    # Using the prompts defined in agents.py
     critic_agent = create_critic_agent(
         model=model,
         agent_description=critic_description,
@@ -108,6 +111,16 @@ def initialize(
         """
         # Run the writer agent with the prompt
         result = writer_agent.run(prompt)
+        
+        # Save the final answer using the shared tool
+        save_final_answer(
+            agent=writer_agent,
+            result=result,
+            query_or_prompt=prompt,
+            agent_name="writer_agent",
+            file_type="draft"
+        )
+        
         return result
     
     # Wrap with traced decorator if telemetry is enabled
