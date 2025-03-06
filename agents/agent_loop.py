@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from utils.telemetry import start_telemetry, suppress_litellm_logs
 from manager.main import create_agent_by_type
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from qaqc.agents import run_qaqc_comparison
+from qaqc.main import initialize as initialize_qaqc
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""
@@ -52,12 +52,11 @@ class AgentLoop:
         
         # Initialize state
         self.state = {
-            "iteration": 0,
-            "current_agent_index": 0,
-            "results": {},
             "status": "initialized",
+            "current_iteration": 0,
+            "current_agent": 0,
+            "results": {},
             "error": None,
-            "start_time": time.time(),
             "last_updated": time.time()
         }
         
@@ -65,8 +64,22 @@ class AgentLoop:
         if state_file and os.path.exists(state_file):
             try:
                 with open(state_file, 'r') as f:
-                    saved_state = json.load(f)
-                    self.state.update(saved_state)
+                    loaded_state = json.load(f)
+                    self.state.update(loaded_state)
+                    
+                    # Ensure critical state variables are valid
+                    if self.state.get("current_agent") is None:
+                        self.state["current_agent"] = 0
+                        
+                    if self.state.get("current_iteration") is None:
+                        self.state["current_iteration"] = 0
+                        
+                    if self.state.get("results") is None:
+                        self.state["results"] = {}
+                        
+                    # Add iteration key for compatibility with agent_loop_example.py
+                    self.state["iteration"] = self.state["current_iteration"]
+                    
                     print(f"Loaded state from {state_file}")
             except Exception as e:
                 print(f"Error loading state from {state_file}: {e}")
@@ -142,6 +155,10 @@ class AgentLoop:
                     print(f"Error initializing agent {agent_type}: {e}")
                     self.state["error"] = f"Error initializing agent {agent_type}: {str(e)}"
                     self.state["status"] = "error"
+                    # Add iteration key for compatibility with agent_loop_example.py
+                    self.state["iteration"] = self.state["current_iteration"]
+                    self._save_state()
+                    return self.state
     
     def _save_state(self):
         """Save the current state to a file if a state file is specified."""
@@ -172,9 +189,28 @@ class AgentLoop:
         # Add context from previous agents if available
         if previous_results:
             prompt += "Previous results:\n"
+            
+            # Filter out results that include iteration numbers (except the latest for each agent type)
+            # This ensures we only include the most recent/selected outputs
+            latest_results = {}
             for prev_agent, result in previous_results.items():
-                if prev_agent != agent_type:  # Don't include this agent's own previous results
-                    prompt += f"\n--- Results from {prev_agent} ---\n{result}\n"
+                # Skip this agent's own previous results
+                if prev_agent == agent_type:
+                    continue
+                    
+                # Check if this is an iteration-specific result (e.g., "researcher_0")
+                if "_" in prev_agent:
+                    base_agent, iteration = prev_agent.rsplit("_", 1)
+                    # Only keep if we don't have a non-iteration version of this agent's result
+                    if base_agent not in previous_results:
+                        latest_results[base_agent] = result
+                else:
+                    # This is the latest result for this agent type
+                    latest_results[prev_agent] = result
+            
+            # Add the filtered results to the prompt
+            for prev_agent, result in latest_results.items():
+                prompt += f"\n--- Results from {prev_agent} ---\n{result}\n"
         
         # Add specific instructions based on agent type
         if agent_type == "researcher":
@@ -207,8 +243,8 @@ class AgentLoop:
         
         try:
             # Continue from where we left off if resuming
-            iteration = self.state["iteration"]
-            agent_index = self.state["current_agent_index"]
+            iteration = self.state["current_iteration"]
+            agent_index = self.state["current_agent"]
             
             while iteration < self.max_iterations:
                 print(f"\nIteration {iteration + 1}/{self.max_iterations}")
@@ -223,6 +259,8 @@ class AgentLoop:
                         print(f"Error: {error_msg}")
                         self.state["error"] = error_msg
                         self.state["status"] = "error"
+                        # Add iteration key for compatibility with agent_loop_example.py
+                        self.state["iteration"] = self.state["current_iteration"]
                         self._save_state()
                         return self.state
                     
@@ -240,48 +278,72 @@ class AgentLoop:
                         
                         # Special handling for QAQC agent
                         if agent_type == "qaqc":
-                            # Only run QAQC if we have enough iterations
-                            if iteration > 0:
-                                # Get the previous agent in the sequence (the one before QAQC)
-                                qaqc_index = self.agent_sequence.index("qaqc")
-                                if qaqc_index > 0:
-                                    previous_agent_type = self.agent_sequence[qaqc_index - 1]
-                                else:
-                                    previous_agent_type = self.agent_sequence[-1]  # Wrap around to the last agent
+                            # Get the previous agent in the sequence (the one before QAQC)
+                            qaqc_index = self.agent_sequence.index("qaqc")
+                            if qaqc_index > 0:
+                                previous_agent_type = self.agent_sequence[qaqc_index - 1]
+                            else:
+                                previous_agent_type = self.agent_sequence[-1]  # Wrap around to the last agent
+                            
+                            # Get the current and previous outputs from the agent before QAQC
+                            current_output = previous_results.get(f"{previous_agent_type}_{iteration}")
+                            previous_output = previous_results.get(f"{previous_agent_type}_{iteration - 1}")
+                            
+                            # Create a dictionary of outputs to compare
+                            outputs_to_compare = {}
+                            
+                            # Only add outputs that exist
+                            if previous_output:
+                                outputs_to_compare["Previous Iteration"] = previous_output
+                            if current_output:
+                                outputs_to_compare["Current Iteration"] = current_output
+                            
+                            try:
+                                # Initialize the QAQC comparison function
+                                compare_outputs = initialize_qaqc(
+                                    max_steps=self.max_steps_per_agent,
+                                    max_retries=self.max_retries,
+                                    model_id=self.model_id,
+                                    model_info_path=self.model_info_path,
+                                    enable_telemetry=self.enable_telemetry
+                                )
                                 
-                                # Get the current and previous outputs from the agent before QAQC
-                                current_output = previous_results.get(f"{previous_agent_type}_{iteration}")
-                                previous_output = previous_results.get(f"{previous_agent_type}_{iteration - 1}")
+                                # Run the comparison
+                                selected_output, result, selected_name = compare_outputs(query, outputs_to_compare)
                                 
-                                if current_output and previous_output:
-                                    # Create outputs dictionary for comparison
-                                    outputs = {
-                                        "Previous Iteration": previous_output,
-                                        "Current Iteration": current_output
-                                    }
-                                    
-                                    # Run the QAQC comparison
-                                    selected_output, result, selected_name = run_qaqc_comparison(
-                                        query=query,
-                                        outputs=outputs,
-                                        model=self.model,
-                                        max_steps=self.max_steps_per_agent
-                                    )
-                                    
+                                # If we have two outputs and a comparison was made
+                                if "Previous Iteration" in outputs_to_compare and "Current Iteration" in outputs_to_compare and selected_name:
                                     # Update the result based on the selection
                                     if selected_name == "Previous Iteration":
                                         print("QAQC selected the previous iteration's output as better")
                                         
                                         # Replace the current iteration's result with the previous iteration's result
-                                        self.state["results"][f"{previous_agent_type}_{iteration}"] = previous_output
-                                        self.state["results"][previous_agent_type] = previous_output
+                                        self.state["results"][f"{previous_agent_type}_{iteration}"] = selected_output
+                                        self.state["results"][previous_agent_type] = selected_output
+                                        
                                         print(f"Updated {previous_agent_type} result with the better version from the previous iteration")
                                     else:
                                         print("QAQC selected the current iteration's output as better")
+                                        
+                                        # Make sure the current output is stored correctly
+                                        self.state["results"][f"{previous_agent_type}_{iteration}"] = selected_output
+                                        self.state["results"][previous_agent_type] = selected_output
+                                        
+                                        # Remove the previous iteration's result since it was not selected
+                                        # This ensures it won't be included in future prompts
+                                        if f"{previous_agent_type}_{iteration-1}" in self.state["results"]:
+                                            del self.state["results"][f"{previous_agent_type}_{iteration-1}"]
                                 else:
-                                    result = "Not enough outputs to compare yet. Please wait for more iterations."
-                            else:
-                                result = "Not enough iterations to compare outputs yet. Please wait for more iterations."
+                                    # Just log the result
+                                    print(f"QAQC result: {result}")
+                                    
+                                    # If we have a single output, make sure it's stored correctly
+                                    if selected_output and selected_name and previous_agent_type:
+                                        self.state["results"][f"{previous_agent_type}_{iteration}"] = selected_output
+                                        self.state["results"][previous_agent_type] = selected_output
+                            except Exception as e:
+                                result = f"Error in QAQC comparison: {str(e)}"
+                                print(result)
                         else:
                             # For all other agents, run normally
                             result = agent.run(formatted_prompt)
@@ -303,7 +365,7 @@ class AgentLoop:
                         print(f"Result length: {len(result)} characters")
                         
                         # Update state
-                        self.state["current_agent_index"] = agent_index + 1
+                        self.state["current_agent"] = agent_index + 1
                         self._save_state()
                         
                     except Exception as e:
@@ -311,6 +373,8 @@ class AgentLoop:
                         print(f"Error: {error_msg}")
                         self.state["error"] = error_msg
                         self.state["status"] = "error"
+                        # Add iteration key for compatibility with agent_loop_example.py
+                        self.state["iteration"] = self.state["current_iteration"]
                         self._save_state()
                         return self.state
                     
@@ -319,11 +383,11 @@ class AgentLoop:
                 
                 # Completed one full iteration
                 iteration += 1
-                self.state["iteration"] = iteration
+                self.state["current_iteration"] = iteration
                 
                 # Reset agent index for the next iteration
                 agent_index = 0
-                self.state["current_agent_index"] = agent_index
+                self.state["current_agent"] = agent_index
                 
                 # Save state after each iteration
                 self._save_state()
@@ -334,6 +398,8 @@ class AgentLoop:
             
             # Loop completed successfully
             self.state["status"] = "completed"
+            # Add iteration key for compatibility with agent_loop_example.py
+            self.state["iteration"] = self.state["current_iteration"]
             self._save_state()
             
             return self.state
@@ -343,34 +409,10 @@ class AgentLoop:
             print(f"Error: {error_msg}")
             self.state["error"] = error_msg
             self.state["status"] = "error"
+            # Add iteration key for compatibility with agent_loop_example.py
+            self.state["iteration"] = self.state["current_iteration"]
             self._save_state()
             return self.state
-
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Run a loop of agent calls with state management")
-    
-    parser.add_argument("--query", type=str, required=True, help="The query to process")
-    parser.add_argument("--agent-sequence", type=str, default="researcher,writer,editor", 
-                        help="Comma-separated list of agent types to call in sequence")
-    parser.add_argument("--max-iterations", type=int, default=3, 
-                        help="Maximum number of iterations through the entire sequence")
-    parser.add_argument("--max-steps-per-agent", type=int, default=15, 
-                        help="Maximum steps for each agent")
-    parser.add_argument("--max-retries", type=int, default=3, 
-                        help="Maximum retries for rate limiting")
-    parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", 
-                        help="The model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", 
-                        help="Path to model info JSON file")
-    parser.add_argument("--use-custom-prompts", action="store_true", 
-                        help="Whether to use custom agent descriptions and prompts")
-    parser.add_argument("--enable-telemetry", action="store_true", 
-                        help="Whether to enable OpenTelemetry tracing")
-    parser.add_argument("--state-file", type=str, default=None, 
-                        help="Path to a file for persisting state between runs")
-    
-    return parser.parse_args()
 
 def main():
     """Main entry point for the agent loop script."""
@@ -411,6 +453,32 @@ def main():
         print(f"\nAgent loop ended with status: {result['status']}")
         if result.get("error"):
             print(f"Error: {result['error']}")
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Run a loop of agent calls with state management")
+    
+    parser.add_argument("--query", type=str, required=True, help="The query to process")
+    parser.add_argument("--agent-sequence", type=str, default="researcher,writer,editor", 
+                        help="Comma-separated list of agent types to call in sequence")
+    parser.add_argument("--max-iterations", type=int, default=3, 
+                        help="Maximum number of iterations through the entire sequence")
+    parser.add_argument("--max-steps-per-agent", type=int, default=5, 
+                        help="Maximum steps for each agent")
+    parser.add_argument("--max-retries", type=int, default=3, 
+                        help="Maximum retries for rate limiting")
+    parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", 
+                        help="The model ID to use")
+    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", 
+                        help="Path to model info JSON file")
+    parser.add_argument("--use-custom-prompts", action="store_true", 
+                        help="Whether to use custom agent descriptions and prompts")
+    parser.add_argument("--enable-telemetry", action="store_true", 
+                        help="Whether to enable OpenTelemetry tracing")
+    parser.add_argument("--state-file", type=str, default="../shared_data/logs/agent_loop_state.json", 
+                        help="Path to a file for persisting state between runs")
+    
+    return parser.parse_args()
 
 if __name__ == "__main__":
     main() 

@@ -8,13 +8,13 @@ def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Example of using the AgentLoop class")
     
-    parser.add_argument("--query", type=str, default="Explain the impact of artificial intelligence on modern healthcare",
+    parser.add_argument("--query", type=str, default="Write brief report on recent (2025) advances in AI agents",
                         help="The query to process")
     parser.add_argument("--agent-sequence", type=str, default="researcher,writer,editor,qaqc", 
                         help="Comma-separated list of agent types to call in sequence")
-    parser.add_argument("--max-iterations", type=int, default=2, 
+    parser.add_argument("--max-iterations", type=int, default=3, 
                         help="Maximum number of iterations through the entire sequence")
-    parser.add_argument("--state-file", type=str, default="agent_loop_state.json", 
+    parser.add_argument("--state-file", type=str, default="../shared_data/logs/agent_loop_state.json",
                         help="Path to a file for persisting state between runs")
     parser.add_argument("--use-custom-prompts", action="store_true", 
                         help="Whether to use custom agent descriptions and prompts")
@@ -43,7 +43,7 @@ def main():
     agent_loop = AgentLoop(
         agent_sequence=agent_sequence,
         max_iterations=args.max_iterations,
-        max_steps_per_agent=15,
+        max_steps_per_agent=1,
         max_retries=3,
         use_custom_prompts=args.use_custom_prompts,
         enable_telemetry=args.enable_telemetry,
