@@ -12,6 +12,7 @@ from manager.agents import create_manager_agent
 from researcher.agents import create_researcher_agent
 from writer_critic.agents import create_writer_agent, create_critic_agent
 from editor.agents import create_editor_agent
+from qaqc.agents import create_qaqc_agent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
 def setup_environment(enable_telemetry=False, agent_name=None, agent_type=None, managed_agents=None):
@@ -134,7 +135,7 @@ def create_agent_by_type(
     """Create an agent by type
     
     Args:
-        agent_type: The type of agent to create ('researcher', 'writer', or 'editor')
+        agent_type: The type of agent to create ('researcher', 'writer', 'editor', or 'qaqc')
         max_steps: Maximum steps for the agent
         model_id: The model ID to use
         model_info_path: Path to model info JSON file
@@ -144,7 +145,8 @@ def create_agent_by_type(
                       'writer_description', 'writer_prompt',
                       'critic_description', 'critic_prompt',
                       'fact_checker_description', 'fact_checker_prompt',
-                      'editor_description', 'editor_prompt'
+                      'editor_description', 'editor_prompt',
+                      'qaqc_description', 'qaqc_prompt'
         
     Returns:
         The created agent
@@ -193,6 +195,15 @@ def create_agent_by_type(
             # Pass fact checker configurations to be used internally
             fact_checker_description=agent_configs.get('fact_checker_description'),
             fact_checker_prompt=agent_configs.get('fact_checker_prompt')
+        )
+    
+    elif agent_type.lower() == 'qaqc':
+        # Create the QAQC agent
+        return create_qaqc_agent(
+            model=model,
+            max_steps=max_steps,
+            agent_description=agent_configs.get('qaqc_description'),
+            system_prompt=agent_configs.get('qaqc_prompt')
         )
     
     else:

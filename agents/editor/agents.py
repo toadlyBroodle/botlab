@@ -1,4 +1,4 @@
-from smolagents import CodeAgent, ToolCallingAgent
+from smolagents import CodeAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts
 from .tools import save_draft
@@ -253,7 +253,6 @@ if all_claims:
     claims_text = "\\n".join(all_claims)
     verification_report = fact_checker_agent(task=f"Verify these claims and provide specific corrections where needed:\\n{claims_text}")
     print(verification_report)
-```
 
 Process Fact Checker Results and Apply ALL Corrections:
 This will have to be done manually, without code, as it will require your editorial judgement to apply the corrections appropriately.
