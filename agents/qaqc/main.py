@@ -6,7 +6,7 @@ from typing import Optional, Callable, Dict, Tuple
 
 from dotenv import load_dotenv
 from utils.telemetry import start_telemetry, suppress_litellm_logs
-from qaqc.agents import create_qaqc_agent, run_qaqc_comparison
+from qaqc.agents import create_qaqc_agent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 
 def setup_environment(enable_telemetry=False):
@@ -67,7 +67,7 @@ def initialize(
     )
     
     def compare_outputs(query: str, outputs: Dict[str, str]) -> Tuple[str, str, str]:
-        """Runs a comparison of multiple outputs through the QAQC agent
+        """Run a QAQC comparison on multiple outputs and return the selected output
         
         Args:
             query: The original query
@@ -78,15 +78,95 @@ def initialize(
             - The selected output text
             - The full QAQC analysis
             - The name of the selected output
+            
+        Note:
+            If 0 or 1 outputs are provided, no comparison is performed and the function
+            returns the single output or an empty string with an appropriate message.
         """
-        return run_qaqc_comparison(
-            query=query,
-            outputs=outputs,
+        # Check if we have enough outputs to compare
+        output_names = list(outputs.keys())
+        
+        # Handle case with no outputs
+        if len(output_names) == 0:
+            message = "No outputs provided for comparison."
+            return "", message, ""
+        
+        # Handle case with only one output
+        if len(output_names) == 1:
+            output_name = output_names[0]
+            output_text = outputs[output_name]
+            message = f"Only one output provided ({output_name}). No comparison needed."
+            return output_text, message, output_name
+        
+        # For now, we only support comparing two outputs
+        if len(output_names) > 2:
+            print("Warning: More than two outputs provided. Only the first two will be compared.")
+        
+        # Create the QAQC agent
+        qaqc_agent = create_qaqc_agent(
             model=model,
             max_steps=max_steps,
             agent_description=agent_description,
             system_prompt=system_prompt
         )
+        
+        output1_name = output_names[0]
+        output2_name = output_names[1]
+        output1_text = outputs[output1_name]
+        output2_text = outputs[output2_name]
+        
+        comparison_request = f"""
+Original Query: {query}
+
+I need you to compare the following two outputs and select the best one based on quality, accuracy, completeness, and relevance to the original query.
+
+OUTPUT 1 ({output1_name}):
+{output1_text}
+
+OUTPUT 2 ({output2_name}):
+{output2_text}
+
+Please analyze both outputs carefully and provide a detailed comparison. Then select the best output to move forward with by using the select_best_output tool.
+"""
+        
+        # Run the comparison
+        result = qaqc_agent.run(comparison_request)
+        
+        # Extract the selection from the agent's tool calls
+        selected_output = ""
+        selected_name = output2_name  # Default to the second output
+        
+        # Look for tool calls in the agent's memory steps
+        if hasattr(qaqc_agent, 'memory') and hasattr(qaqc_agent.memory, 'steps'):
+            for step in qaqc_agent.memory.steps:
+                if hasattr(step, 'tool_calls') and step.tool_calls:
+                    for tool_call in step.tool_calls:
+                        if tool_call.name == "select_best_output" and tool_call.result.get("success", False):
+                            output_number = tool_call.result.get("selected_output_number")
+                            selected_output = tool_call.result.get("selected_output_text", "")
+                            
+                            if output_number == 1:
+                                selected_name = output1_name
+                            elif output_number == 2:
+                                selected_name = output2_name
+        
+        # If no selected output was found in the tool calls, try to parse it from the result
+        if not selected_output:
+            # Try to find mentions of which output is better in the result text
+            result_lower = result.lower()
+            if "output 1" in result_lower and "better" in result_lower and "output 2" not in result_lower:
+                selected_name = output1_name
+                selected_output = output1_text
+            elif "output 2" in result_lower and "better" in result_lower and "output 1" not in result_lower:
+                selected_name = output2_name
+                selected_output = output2_text
+            else:
+                # If we still can't determine, use the default (output2)
+                print("Warning: Could not determine selected output from tool calls or result text. Using default (Output 2).")
+                selected_name = output2_name
+                selected_output = output2_text
+        
+        return selected_output, result, selected_name
     
     # Wrap with traced decorator if telemetry is enabled
     if enable_telemetry:
