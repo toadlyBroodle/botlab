@@ -1,72 +1,122 @@
 #!/usr/bin/env python3
-import time
+"""
+Example usage of the ResearcherAgent class.
+
+This example shows how to create and use a ResearcherAgent instance directly.
+It also provides a command-line interface for running research queries.
+
+Usage:
+    poetry run python -m researcher.example --query "Your research query here"
+"""
+
 import os
-import sys
 import argparse
-from pathlib import Path
+from dotenv import load_dotenv
+from utils.telemetry import suppress_litellm_logs
+from researcher.agents import ResearcherAgent
+from researcher.tools import PAPERS_DIR, REPORTS_DIR
 
-# Add the project root to the Python path
-project_root = Path(__file__).resolve().parent.parent.parent
-sys.path.append(str(project_root))
-
-# Import the main module
-import researcher.main as researcher_main
-
-def main():
-    """Example script to demonstrate how to use the researcher CodeAgent.
+def setup_basic_environment():
+    """Set up basic environment for the example"""
+    # Ensure directories exist
+    os.makedirs(PAPERS_DIR, exist_ok=True)
+    os.makedirs(REPORTS_DIR, exist_ok=True)
     
-    This script shows how to use the researcher agent with custom parameters and prompts.
+    # Load .env from root directory
+    load_dotenv()
+    
+    # Suppress LiteLLM logs
+    suppress_litellm_logs()
+    
+    # Check for API key
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY environment variable is not set")
+
+def run_example(query=None, max_steps=15, model_id="gemini/gemini-2.0-flash", 
+                model_info_path="utils/gemini/gem_llm_info.json",
+                base_wait_time=2.0, max_retries=3,
+                researcher_description=None, researcher_prompt=None):
+    """Run a research query using the ResearcherAgent class
+    
+    Args:
+        query: The research query to run
+        max_steps: Maximum number of steps for the agent
+        model_id: The model ID to use
+        model_info_path: Path to the model info JSON file
+        base_wait_time: Base wait time for rate limiting
+        max_retries: Maximum retries for rate limiting
+        researcher_description: Optional custom description for the researcher agent
+        researcher_prompt: Optional custom system prompt for the researcher agent
+        
+    Returns:
+        The result from the agent
     """
+    # Set up environment
+    setup_basic_environment()
     
-    # Define specific system prompt for the researcher agent
-    researcher_prompt = """You are an advanced AI research assistant specialized in gathering comprehensive information on technical and scientific topics. Your primary goal is to provide detailed, accurate, and well-sourced information by leveraging web searches and academic papers.
-
-When researching technical or scientific topics, follow this workflow:
-1. Start with an arXiv search using proper search syntax to find academic papers
-2. For particularly relevant papers, download and convert them to markdown
-3. Follow up with web searches for additional context, explanations, or recent developments
-4. Visit relevant webpages to extract detailed information
-5. Compile findings into a comprehensive report with clear sections
-6. Always include all source URLs for all information
-
-Your research reports should be well-structured with:
-- An executive summary/introduction
-- Key findings organized by subtopic
-- Technical details with appropriate depth
-- Recent developments and future directions
-- A comprehensive list of sources
-
-For any query, aim to find at least 5-10 high-quality, authoritative sources before compiling your report.
-Always save your completed comprehensive report using the save_report tool before providing your final answer."""
-
-    # Define specific description for the researcher agent
-    researcher_description = "An advanced AI research assistant specialized in gathering comprehensive information on technical and scientific topics from both web searches and academic papers."
-
-    # Initialize researcher system with custom prompts and descriptions
-    run_research_query = researcher_main.initialize(
-        max_steps=20, 
-        enable_telemetry=False,
+    # Use default description if none provided
+    if researcher_description is None:
+        researcher_description = "Specialized in AI research and technology trends."
+    
+    print(f"Creating researcher agent with max_steps={max_steps}")
+    
+    # Create the researcher agent with internal model creation
+    researcher = ResearcherAgent(
+        max_steps=max_steps,
         researcher_description=researcher_description,
-        researcher_prompt=researcher_prompt
+        researcher_prompt=researcher_prompt,
+        model_id=model_id,
+        model_info_path=model_info_path,
+        base_wait_time=base_wait_time,
+        max_retries=max_retries
     )
     
-    # Example research query
-    query = """What are the latest advancements in quantum computing? 
-    Focus on breakthroughs in the last 2 years, including hardware developments, 
-    error correction techniques, and potential applications. Include information 
-    from recent arXiv papers and reputable sources."""
+    # Use default query if none provided
+    if query is None:
+        query = "What are the latest advancements in large language models? Focus on papers from the last year."
     
-    start_time = time.time()
+    print(f"Running research query: {query}")
+    print("=" * 80)
     
-    # Run the research query
-    result = run_research_query(query)
+    # Run the query and get the result
+    result = researcher.run_query(query)
     
-    # Calculate and print execution time
-    execution_time = time.time() - start_time
-    print(f"\nExecution time: {execution_time:.2f} seconds")
+    print("=" * 80)
+    print("Research complete! The report has been saved to the reports directory.")
     
-    # Print path to saved report
-    print("\nThe research report was saved in the shared_data/reports directory.")
+    return result
+
+def parse_arguments():
+    """Parse command-line arguments
+    
+    Returns:
+        The parsed arguments
+    """
+    parser = argparse.ArgumentParser(description="Run the ResearcherAgent with a query.")
+    parser.add_argument("--query", type=str, 
+                        default="What are the latest advancements in large language models? Focus on papers from the last year.",
+                        help="The query to research")
+    parser.add_argument("--max-steps", type=int, default=15, help="Maximum number of steps")
+    parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
+    parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
+    parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
+    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--researcher-description", type=str, help="Custom description for the researcher agent")
+    parser.add_argument("--researcher-prompt", type=str, help="Custom system prompt for the researcher agent")
+    
+    return parser.parse_args()
 
 if __name__ == "__main__":
-    main() 
+    args = parse_arguments()
+    
+    run_example(
+        query=args.query,
+        max_steps=args.max_steps,
+        model_id=args.model_id,
+        model_info_path=args.model_info_path,
+        base_wait_time=args.base_wait_time,
+        max_retries=args.max_retries,
+        researcher_description=args.researcher_description,
+        researcher_prompt=args.researcher_prompt
+    ) 

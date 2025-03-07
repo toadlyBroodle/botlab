@@ -2,6 +2,6 @@
 
 """Researcher agent system using smolagents for web search and information retrieval.""" 
 
-#from .main import initialize
+from .agents import ResearcherAgent
 
-#__all__ = ["initialize"] 
+__all__ = ["ResearcherAgent"] 

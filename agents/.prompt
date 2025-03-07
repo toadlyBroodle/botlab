@@ -5,9 +5,10 @@
 ### main directory tree
 .../botlab/agents/
                 |__ .venv/
-                |__ researcher/
-                |__ manager/
                 |__ editor/
+                |__ manager/
+                |__ qaqc/
+                |__ researcher/
                 |__ utils/
                 |   |__ gemini/
                 |__ writer_critic/
@@ -37,7 +38,6 @@
         - `__init__.py`
         - `agents.py` : project agents
         - `example.py` : example usages
-        - `main.py` : main setup and entry point
         - `tools.py` : tools used by the agents
 - *manager/* is a smolagent project for coordinating multiple agents
     - provides manager_agent which can orchestrate other agents

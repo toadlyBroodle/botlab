@@ -3,17 +3,15 @@ description: Core guidelines for all Smolagent projects covering structure, envi
 globs: **/*.py, **/pyproject.toml, **/README.md, **/example.py
 alwaysApply: false
 ---
-
 # General Guidelines for Smolagent Projects
 
 ## Project Structure
 - Never modify the structure of the project without explicit permission
-- Each agent project (researcher, writer_critic, manager, editor, qaqc) follows a common structure:
-  - `__init__.py`
-  - `agents.py`: Project agents
-  - `example.py`: Example usages
-  - `main.py`: Main setup and entry point
-  - `tools.py`: Tools used by the agents
+- Each agent project (researcher, writer_critic, manager, editor, qaqc) follows a class-based structure:
+  - `__init__.py`: Exports the agent classes
+  - `agents.py`: Contains agent classes with initialization and execution methods
+  - `example.py`: Demonstrates how to use the agent classes directly
+  - `tools.py`: Contains tools used by the agents
 
 ## Virtual Environment
 - All Python scripts MUST be prefixed by `poetry run python`
@@ -28,6 +26,11 @@ alwaysApply: false
 - Follow PEP 8 guidelines for Python code
 - Use type hints where appropriate
 - Keep functions focused and reasonably sized
+- Use class-based approach for all agents with consistent patterns:
+  - Class-based implementation (e.g., ResearcherAgent, ManagerAgent)
+  - `__init__` method that creates a model internally if one isn't provided
+  - Methods for primary functionality (e.g., run_query, edit_content, compare_outputs)
+  - Internal CodeAgent or ToolCallingAgent instance accessible via the `agent` property
 
 ## Documentation
 - Write clear docstrings for functions and classes
@@ -36,3 +39,7 @@ alwaysApply: false
 
 ## General
 - Before adding unsolicited features, ask user before proceeding
+- Create agent instances directly using their class constructors
+- Provide custom model instances to share models between agents
+- Use the agent's primary methods to execute tasks
+- Configure agents through constructor parameters

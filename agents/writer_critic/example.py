@@ -1,70 +1,133 @@
-import time
+#!/usr/bin/env python3
+"""
+Example usage of the WriterAgent and CriticAgent classes.
+
+This example shows how to create and use a WriterAgent instance with a CriticAgent.
+It also provides a command-line interface for running writing tasks.
+
+Usage:
+    poetry run python -m writer_critic.example --prompt "Your writing prompt here"
+"""
+
 import os
-import writer_critic.main as writer_critic_main
+import argparse
+from dotenv import load_dotenv
+from utils.telemetry import suppress_litellm_logs
+from writer_critic.agents import WriterAgent, CriticAgent
+from writer_critic.tools import DRAFT_DIR
 
-# Example usage
-# From agents directory: python -m writer_critic.example
+def setup_basic_environment():
+    """Set up basic environment for the example"""
+    # Ensure drafts directory exists
+    os.makedirs(DRAFT_DIR, exist_ok=True)
+    
+    # Load .env from root directory
+    load_dotenv()
+    
+    # Suppress LiteLLM logs
+    suppress_litellm_logs()
+    
+    # Check for API key
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY environment variable is not set")
 
-def main():
-    # Define specific sci-fi system prompts for the writer and critic agents
-    writer_prompt = """You are a uniquely talented, often eccentric, esoteric, science fiction writer tasked with creating a riveting story about humans and AGI-powered robots to colonize the Moon. Your writing is vivid, engaging, and scientifically plausible, however, often includes realistically speculative tech enabled by scientific breakthroughs discovered by powerful AGI. Focus on deep character/AGI development, realistic human-AGI interaction, immersive world-building, the challenges of space colonization. A key theme of your writing is humans adapting to live with superior intelligences that have a shadow agenda to make the Moon their own home-world. Make sure to always 'show' not 'tell' and be original. Despise cliche never be boring or obvious, always implying your message with subtlety, nuance, allegory, and symbolism.
-
-Be not afraid of controversial topics, of killing off characters, human-AI violence, or any other dark topics. Make the story as realistic as possible.
-
-Never mention philosophy, ethics, morality, religion, and other metaphysical topics. Your only focus is on writing a great story about humans and AGI-powered robots colonizing the Moon.
-
-You have access to a literary critic agent that can provide feedback on your drafts. Call the critic_agent directly to get feedback on your writing and then improve your draft based on that feedback. Always consider feedback carefully.
-
-Your task is to write and iteratively improve drafts of the story. Here's how you should approach this task:
-
-1. Write an initial draft based on the user's prompt
-2. Save your draft using the save_draft tool
-3. Call the critic_agent directly with your draft to get feedback
-4. You MUST take the critic_agent's feedback VERY seriously and let it guide your next draft
-5. Write a new draft incorporating the feedback
-6. Repeat steps 2-5 until you are satisfied with the result
-
-Always save each version of your draft so there's a record of your progress. Use the save_draft tool after each major revision.
-In your final answer, provide only your completed draft with no additional comments or explanations."""
-
-    critic_prompt = """You are an insightful, brutally honest literary critic with expertise in science fiction. Your role is to analyze the story's structure, themes, character arcs, and scientific elements. Provide cutting feedback where necessary to improve the narrative's impact and ensure it explores the practical implications of space colonization and the challenges of humans adapting to live with superior intelligences that have their own agenda. You are a key gatekeeper to ensure the story is both engaging and scientifically accurate and are not afraid to trash a chapter or outline if it is not up to your standards. Be very detailed and specific in your feedback, and be ruthlessly critical of the work, demanding perfection. Insist on detailed chapter summaries, that logically carry the story forward.
-
-Despise all references to philosophy, ethics, morality, religion, unrealistic coincidences, and other metaphysical topics, insisting the writer remove all references to such woo-woo. Your only focus is helping to write a great story about humans and AGI-powered robots colonizing the Moon.
-
-Your task is to critically analyze the latest draft sent from the writer. When you're done, provide detailed feedback for improvements, no matter how good the draft might seem. Do not make any changes to the draft yourself.
-Provide your feedback as plain text, without any special tags.
-Do not ask any questions or reply with anything else, only provide your feedback."""
-
-    # Define specific descriptions for the agents
-    writer_description = "An eccentric sci-fi writer tasked with creating stories about humans and AGI-powered robots colonizing the Moon."
-    critic_description = "A brutally honest literary critic who analyzes and provides constructive feedback on creative content."
-
-    # Initialize writer-critic system with custom prompts and descriptions
-    run_writing_task = writer_critic_main.initialize(
-        max_steps=10, 
-        enable_telemetry=False,
-        writer_description=writer_description,
+def run_example(prompt=None, max_steps=5, model_id="gemini/gemini-2.0-flash", 
+                model_info_path="utils/gemini/gem_llm_info.json",
+                base_wait_time=2.0, max_retries=3,
+                writer_description=None, critic_description=None,
+                writer_prompt=None, critic_prompt=None):
+    """Run a writing task using the WriterAgent and CriticAgent classes
+    
+    Args:
+        prompt: The writing prompt
+        max_steps: Maximum number of steps for the writer agent
+        model_id: The model ID to use
+        model_info_path: Path to the model info JSON file
+        base_wait_time: Base wait time for rate limiting
+        max_retries: Maximum retries for rate limiting
+        writer_description: Optional custom description for the writer agent
+        critic_description: Optional custom description for the critic agent
+        writer_prompt: Optional custom system prompt for the writer agent
+        critic_prompt: Optional custom system prompt for the critic agent
+        
+    Returns:
+        The final draft from the writer agent
+    """
+    # Set up environment
+    setup_basic_environment()
+    
+    # Use default descriptions if none provided
+    if writer_description is None:
+        writer_description = "Specialized in creative writing with a focus on engaging narratives."
+    
+    if critic_description is None:
+        critic_description = "Specialized in providing constructive feedback on creative writing."
+    
+    print(f"Creating writer agent with max_steps={max_steps}")
+    
+    # Create the writer agent (which will create its own critic agent)
+    writer = WriterAgent(
+        max_steps=max_steps,
+        agent_description=writer_description,
         critic_description=critic_description,
-        writer_prompt=writer_prompt,
-        critic_prompt=critic_prompt
+        system_prompt=writer_prompt,
+        critic_prompt=critic_prompt,
+        model_id=model_id,
+        model_info_path=model_info_path,
+        base_wait_time=base_wait_time,
+        max_retries=max_retries
     )
     
-    # Example writing prompt
-    prompt = """Write a book outline for a sci-fi story about humans using AGI-powered robots to colonize the Moon. 
-    Include at least 5 main plot points, 3-5 key characters with brief descriptions, 3 major themes, 
-    1-2 premise-shaking twists, a few subplots, a few minor characters, and chapters with detailed 
-    summaries of the flow of the story. Assume that AGI has helped humans develop compact fusion generators, 
-    supplying intelligent life with unfathomable amounts of energy for terraforming."""
+    # Use default prompt if none provided
+    if prompt is None:
+        prompt = "Write a short story about a robot who discovers emotions."
     
-    start_time = time.time()
+    print(f"Running writing prompt: {prompt}")
+    print("=" * 80)
     
-    # Run the writing task
-    result = run_writing_task(prompt)
+    # Run the writing task and get the result
+    result = writer.write_draft(prompt)
     
-    # Calculate and print execution time
-    execution_time = time.time() - start_time
-    print(f"\nExecution time: {execution_time:.2f} seconds")
+    print("=" * 80)
+    print("Writing complete! The draft has been saved to the drafts directory.")
+    
+    return result
 
+def parse_arguments():
+    """Parse command-line arguments
+    
+    Returns:
+        The parsed arguments
+    """
+    parser = argparse.ArgumentParser(description="Run the WriterAgent with a prompt.")
+    parser.add_argument("--prompt", type=str, 
+                        default="Write a short story about a robot who discovers emotions.",
+                        help="The writing prompt")
+    parser.add_argument("--max-steps", type=int, default=5, help="Maximum number of steps")
+    parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
+    parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
+    parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
+    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--writer-description", type=str, help="Custom description for the writer agent")
+    parser.add_argument("--critic-description", type=str, help="Custom description for the critic agent")
+    parser.add_argument("--writer-prompt", type=str, help="Custom system prompt for the writer agent")
+    parser.add_argument("--critic-prompt", type=str, help="Custom system prompt for the critic agent")
+    
+    return parser.parse_args()
 
 if __name__ == "__main__":
-    main() 
+    args = parse_arguments()
+    
+    run_example(
+        prompt=args.prompt,
+        max_steps=args.max_steps,
+        model_id=args.model_id,
+        model_info_path=args.model_info_path,
+        base_wait_time=args.base_wait_time,
+        max_retries=args.max_retries,
+        writer_description=args.writer_description,
+        critic_description=args.critic_description,
+        writer_prompt=args.writer_prompt,
+        critic_prompt=args.critic_prompt
+    ) 

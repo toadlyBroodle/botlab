@@ -21,15 +21,18 @@ The `agents/` directory contains a collection of AI agents built with the smolag
 ```bash
 # Example: Run the researcher agent
 cd agents
-poetry run python -m researcher.main --query "What are the latest advancements in AI?"
+poetry run python -m researcher.example --query "What are the latest advancements in AI?"
 ```
 
 **[View the full Agents documentation →](agents/README.md)**
 
 Key components:
-- **Researcher Agent**: Web search and information gathering
-- **Writer-Critic Agent**: Creative writing with feedback
-- **Manager Agent**: Coordinates multiple specialized agents
+- **ResearcherAgent**: Web search and information gathering
+- **WriterAgent & CriticAgent**: Creative writing with feedback
+- **EditorAgent & FactCheckerAgent**: Content editing with fact checking
+- **ManagerAgent**: Coordinates multiple specialized agents
+- **QAQCAgent**: Compares outputs and selects the best one
+- **AgentLoop**: Orchestrates iterative workflows between multiple agents
 
 ### 2. 🐝 Swarms (OpenAI's swarm framework)
 
