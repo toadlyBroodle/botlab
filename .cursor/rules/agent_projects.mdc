@@ -17,6 +17,7 @@ alwaysApply: false
   - `agents.py`: Contains agent classes with initialization and execution methods
   - `example.py`: Demonstrates how to use the agent classes directly
   - `tools.py`: Contains tools used by the agents
+  - `data/`: Directory for storing agent outputs with human-readable date prefixes
 
 ## Agent Class Structure
 - All agent classes follow a consistent pattern:
@@ -24,6 +25,14 @@ alwaysApply: false
   - `__init__` method that creates a model internally if one isn't provided
   - Methods for primary functionality (e.g., run_query, edit_content, compare_outputs)
   - Internal CodeAgent or ToolCallingAgent instance accessible via the `agent` property
+  - Outputs saved to agent-specific data directories with human-readable date prefixes
+
+## File Management
+- Each agent has its own data directory (e.g., researcher/data/)
+- Files are saved with human-readable date prefixes (YYYY-MM-DD_HH-MM)
+- Metadata is stored in a central index for easy retrieval
+- The `load_file` function can retrieve files by agent type and version
+- The `save_final_answer` function saves outputs to the appropriate agent data directory
 
 ## Project-Specific Guidelines
 
@@ -31,7 +40,8 @@ alwaysApply: false
 - Located in *researcher/* directory
 - `ResearcherAgent` class for web search and information gathering
 - Uses DuckDuckGo for web search, arXiv for academic papers
-- Supports PDF to markdown conversion
+- Supports PDF to markdown conversion with files saved to researcher/data/papers/
+- PDFs are temporarily saved and deleted after conversion to markdown
 - Primary method: `run_query(query)`
 
 ### Manager Agent
@@ -63,7 +73,7 @@ alwaysApply: false
 ### Utils
 - Located in *utils/* directory
 - Contains shared utilities for all agent projects
-- *utils/code_agent.yaml* and *utils/toolcalling_agent.yaml* are static top-level agent system_prompts: never modify these!
+- *utils/file_manager/* contains the FileManager for centralized file handling
 - *utils/agents/tools.py* contains all agent shared tools
 - *utils/gemini/* subdirectory contains Google Gemini LLM API utilities
 

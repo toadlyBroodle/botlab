@@ -4,33 +4,39 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
+import logging
 
 # Import the timestamp function we already have
 from utils.agents.tools import get_timestamp
 
-# Base directory for shared data
+# Base directory for the project
 BASE_DIR = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-SHARED_DATA_DIR = BASE_DIR.parent / "shared_data"
 
-# Ensure directories exist
-DRAFTS_DIR = SHARED_DATA_DIR / "drafts"
-REPORTS_DIR = SHARED_DATA_DIR / "reports"
-RESOURCES_DIR = SHARED_DATA_DIR / "resources"
-ARCHIVE_DIR = SHARED_DATA_DIR / "archive"
-RESEARCH_PAPERS_DIR = SHARED_DATA_DIR / "research" / "papers"
+# File manager directory
+FILE_MANAGER_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 
-# Create directories if they don't exist
-for directory in [DRAFTS_DIR, REPORTS_DIR, RESOURCES_DIR, ARCHIVE_DIR]:
-    directory.mkdir(exist_ok=True)
+# Agent-specific data directories
+AGENT_DIRS = {
+    "researcher_agent": BASE_DIR / "researcher" / "data",
+    "manager_agent": BASE_DIR / "manager" / "data",
+    "editor_agent": BASE_DIR / "editor" / "data",
+    "writer_critic_agent": BASE_DIR / "writer_critic" / "data",
+    "qaqc_agent": BASE_DIR / "qaqc" / "data",
+}
 
-# Create research/papers directory with parents=True to ensure parent directories are created
-RESEARCH_PAPERS_DIR.mkdir(exist_ok=True, parents=True)
+# Create researcher papers directory
+RESEARCHER_PAPERS_DIR = AGENT_DIRS["researcher_agent"] / "papers"
+RESEARCHER_PAPERS_DIR.mkdir(exist_ok=True, parents=True)
+
+# Create agent-specific data directories
+for agent_dir in AGENT_DIRS.values():
+    agent_dir.mkdir(exist_ok=True, parents=True)
 
 # Path to the metadata index file
-METADATA_INDEX = SHARED_DATA_DIR / "metadata_index.json"
+METADATA_INDEX = FILE_MANAGER_DIR / "metadata_index.json"
 
 class FileManager:
-    """Centralized file manager for all agents to share files across runs."""
+    """File manager for saving and loading agent outputs."""
     
     def __init__(self, project_id: Optional[str] = None):
         """Initialize the file manager.
@@ -58,42 +64,39 @@ class FileManager:
         with open(METADATA_INDEX, 'w', encoding='utf-8') as f:
             json.dump(self.metadata_index, f, indent=2)
     
-    def _get_directory_for_file_type(self, file_type: str) -> Path:
-        """Get the appropriate directory for a given file type.
+    def _get_directory_for_agent(self, agent_name: Optional[str] = None, file_type: Optional[str] = None) -> Path:
+        """Get the appropriate directory for a given agent.
         
         Args:
-            file_type: Type of file (draft, report, resource, archive, paper)
+            agent_name: Name of the agent (e.g., "researcher_agent")
+            file_type: Type of file (e.g., "paper")
             
         Returns:
             Path to the directory
         """
-        file_type = file_type.lower()
-        if file_type == "draft":
-            return DRAFTS_DIR
-        elif file_type == "report":
-            return REPORTS_DIR
-        elif file_type == "resource":
-            return RESOURCES_DIR
-        elif file_type == "archive":
-            return ARCHIVE_DIR
-        elif file_type == "paper":
-            return RESEARCH_PAPERS_DIR
-        else:
-            # Default to resources for unknown types
-            return RESOURCES_DIR
+        # Special case for researcher papers
+        if file_type == "paper":
+            return RESEARCHER_PAPERS_DIR
+        
+        # Otherwise use the agent's data directory
+        if agent_name and agent_name in AGENT_DIRS:
+            return AGENT_DIRS[agent_name]
+        
+        # Default to researcher if no agent specified
+        return AGENT_DIRS["researcher_agent"]
     
     def save_file(self, 
                  content: str, 
-                 file_type: str, 
+                 file_type: str = "report", 
                  title: Optional[str] = None, 
                  metadata: Optional[Dict[str, Any]] = None,
                  extension: str = ".md",
                  version: Optional[str] = None) -> str:
-        """Save a file to the appropriate directory with metadata.
+        """Save a file to the agent's data directory.
         
         Args:
             content: The content to save
-            file_type: Type of file (draft, report, resource, archive)
+            file_type: Type of file (default: "report")
             title: Optional title for the file
             metadata: Optional metadata to store with the file
             extension: File extension (default: .md)
@@ -105,7 +108,7 @@ class FileManager:
         # Generate a unique file ID
         file_id = str(uuid.uuid4())
         
-        # Get timestamp
+        # Get human-readable timestamp
         timestamp = get_timestamp()
         
         # Clean title for filename
@@ -113,9 +116,9 @@ class FileManager:
             # Remove special characters and replace spaces with underscores
             safe_title = "".join(c if c.isalnum() or c in [' ', '_', '-'] else '_' for c in title)
             safe_title = safe_title.replace(' ', '_')
-            filename = f"{timestamp}_{self.project_id}_{safe_title}"
+            filename = f"{timestamp}_{safe_title}"
         else:
-            filename = f"{timestamp}_{self.project_id}_{file_type}"
+            filename = f"{timestamp}_{file_type}"
         
         # Add version if provided
         if version:
@@ -126,8 +129,11 @@ class FileManager:
             extension = f".{extension}"
         filename = f"{filename}{extension}"
         
+        # Extract agent_name from metadata if available
+        agent_name = metadata.get("agent_name") if metadata else None
+        
         # Get the appropriate directory
-        directory = self._get_directory_for_file_type(file_type)
+        directory = self._get_directory_for_agent(agent_name, file_type)
         
         # Full path to save
         filepath = directory / filename
@@ -146,9 +152,12 @@ class FileManager:
             "project_id": self.project_id,
             "created_at": datetime.now().isoformat(),
             "version": version,
-            "extension": extension,
-            **({} if metadata is None else metadata)
+            "extension": extension
         }
+        
+        # Add additional metadata if provided
+        if metadata:
+            file_metadata.update(metadata)
         
         # Update metadata index
         self.metadata_index["files"][file_id] = file_metadata
@@ -211,10 +220,10 @@ class FileManager:
         results = []
         for file_id, metadata in self.metadata_index["files"].items():
             # Apply filters
-            if file_type and metadata["file_type"] != file_type:
+            if file_type and metadata.get("file_type") != file_type:
                 continue
                 
-            if project_id and metadata["project_id"] != project_id:
+            if project_id and metadata.get("project_id") != project_id:
                 continue
             
             # Apply additional filters
@@ -228,7 +237,7 @@ class FileManager:
                 results.append(metadata)
         
         # Sort by creation date (newest first)
-        results.sort(key=lambda x: x["created_at"], reverse=True)
+        results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         
         return results
     
@@ -257,22 +266,26 @@ class FileManager:
         except (FileNotFoundError, KeyError):
             return False
     
-    def search_files(self, query: str, file_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search_files(self, query: str, agent_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search for files containing the query in title or content.
         
         Args:
             query: Search query
-            file_type: Optional filter by file type
+            agent_name: Optional filter by agent name
             
         Returns:
             List of file metadata matching the query
         """
         query = query.lower()
+        
+        # Get all files, potentially filtered by agent_name
+        if agent_name:
+            filter_criteria = {"agent_name": agent_name}
+            files = self.list_files(filter_criteria=filter_criteria)
+        else:
+            files = self.list_files()
+        
         results = []
-        
-        # First get all files that match the file_type filter
-        files = self.list_files(file_type=file_type)
-        
         for file_metadata in files:
             # Check if query is in title
             title = file_metadata.get("title", "").lower()

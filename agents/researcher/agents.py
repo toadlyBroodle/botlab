@@ -200,9 +200,7 @@ The report should be well-structured and ready to be used as a standalone docume
             agent=self.agent,
             result=result,
             query_or_prompt=query,
-            agent_name="researcher_agent",
-            file_type="report",
-            additional_metadata={"execution_time": execution_time}
+            agent_type="researcher"
         )
         
         return result

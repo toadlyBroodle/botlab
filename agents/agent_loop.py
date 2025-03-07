@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from utils.telemetry import start_telemetry, suppress_litellm_logs
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from utils.file_manager.file_manager import FileManager
-from utils.agents.tools import load_latest_draft, load_latest_report
+from utils.agents.tools import load_file
 
 # Import the agent classes
 from researcher.agents import ResearcherAgent
@@ -585,7 +585,7 @@ def parse_args():
                         help="Whether to use custom agent descriptions and prompts")
     parser.add_argument("--enable-telemetry", action="store_true", 
                         help="Whether to enable OpenTelemetry tracing")
-    parser.add_argument("--state-file", type=str, default="../shared_data/logs/agent_loop_state.json", 
+    parser.add_argument("--state-file", type=str, default="logs/agent_loop_state.json", 
                         help="Path to a file for persisting state between runs")
     parser.add_argument("--load-state", action="store_true", 
                         help="Whether to load state from state_file if it exists (default: False)")

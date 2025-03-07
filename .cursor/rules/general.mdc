@@ -3,6 +3,11 @@ description: Core guidelines for all Smolagent projects covering structure, envi
 globs: **/*.py, **/pyproject.toml, **/README.md, **/example.py
 alwaysApply: false
 ---
+---
+description: Core guidelines for all Smolagent projects covering structure, environment, dependencies, and code style
+globs: **/*.py, **/pyproject.toml, **/README.md, **/example.py
+alwaysApply: false
+---
 # General Guidelines for Smolagent Projects
 
 ## Project Structure
@@ -12,6 +17,14 @@ alwaysApply: false
   - `agents.py`: Contains agent classes with initialization and execution methods
   - `example.py`: Demonstrates how to use the agent classes directly
   - `tools.py`: Contains tools used by the agents
+  - `data/`: Directory for storing agent outputs with human-readable date prefixes
+
+## File Management
+- Each agent has its own data directory (e.g., researcher/data/)
+- Files are saved with human-readable date prefixes (YYYY-MM-DD_HH-MM)
+- The FileManager handles saving and loading files from the correct locations
+- Use `load_file(agent_type)` to load the latest file from an agent
+- Use `save_final_answer(agent, result, query_or_prompt, agent_type)` to save outputs
 
 ## Virtual Environment
 - All Python scripts MUST be prefixed by `poetry run python`
