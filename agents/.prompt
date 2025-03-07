@@ -54,8 +54,14 @@
 - Files are saved with human-readable date prefixes (YYYY-MM-DD_HH-MM)
 - The FileManager handles saving and loading files from the correct locations
 - Use `load_file(agent_type)` to load the latest file from an agent
-- Use `save_final_answer(agent, result, query_or_prompt, agent_type)` to save outputs
+  - Example: `load_file(agent_type="researcher")` loads the latest file from researcher/data/
+  - For previous versions: `load_file(agent_type="researcher", version="previous")`
+- Use `save_final_answer(agent, result, agent_type)` to save outputs
+  - Example: `save_final_answer(agent, result, "researcher")` saves to researcher/data/
 - PDF files are temporarily saved to researcher/data/papers/ and deleted after conversion to markdown
+- CLI commands are available for managing files:
+  - `poetry run python -m utils.file_manager.file_manager list --agent researcher`
+  - `poetry run python -m utils.file_manager.file_manager delete --agent researcher`
 
 ### agent projects
 - *researcher/* is a smolagent project for web search and information gathering
