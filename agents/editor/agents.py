@@ -1,45 +1,66 @@
 from smolagents import CodeAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts
-from .tools import save_draft
+from utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
 from typing import Optional
-import re
+import time
 
-def create_fact_checker_agent(model: RateLimitedLiteLLMModel,
-                            agent_description: Optional[str] = None,
-                            system_prompt: Optional[str] = None,
-                            max_steps: int = 30) -> CodeAgent:
-    """Creates a fact checker agent that verifies claims and provides accuracy feedback
+
+class FactCheckerAgent:
+    """A wrapper class for the fact checker agent that handles initialization and verification."""
     
-    Args:
-        model: The LiteLLM model to use for the agent
-        agent_description: Optional additional description to append to the base description
-        system_prompt: Optional custom system prompt to use instead of the default
-        max_steps: Maximum number of steps for the agent (default 1 since it just verifies and responds)
+    def __init__(
+        self,
+        model: Optional[RateLimitedLiteLLMModel] = None,
+        agent_description: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        max_steps: int = 30,
+        model_id: str = "gemini/gemini-2.0-flash",
+        model_info_path: str = "utils/gemini/gem_llm_info.json",
+        base_wait_time: float = 2.0,
+        max_retries: int = 3
+    ):
+        """Initialize the fact checker agent.
         
-    Returns:
-        A configured fact checker agent
-    """
-    
-    base_description = """A fact checking agent that verifies claims, checks sources, and provides detailed accuracy assessments. 
-    Specializes in evaluating factual accuracy, identifying potential biases, and cross-referencing information across multiple sources."""
-    
-    if agent_description:
-        description = f"{base_description} {agent_description}"
-    else:
-        description = base_description
+        Args:
+            model: Optional RateLimitedLiteLLMModel to use. If not provided, one will be created.
+            agent_description: Optional additional description to append to the base description
+            system_prompt: Optional custom system prompt to use instead of the default
+            max_steps: Maximum number of steps for the agent
+            model_id: The model ID to use if creating a new model
+            model_info_path: Path to the model info JSON file if creating a new model
+            base_wait_time: Base wait time for rate limiting if creating a new model
+            max_retries: Maximum retries for rate limiting if creating a new model
+        """
+        # Create a model if one wasn't provided
+        if model is None:
+            self.model = RateLimitedLiteLLMModel(
+                model_id=model_id,
+                model_info_path=model_info_path,
+                base_wait_time=base_wait_time,
+                max_retries=max_retries,
+            )
+        else:
+            self.model = model
+            
+        base_description = """A fact checking agent that verifies claims, checks sources, and provides detailed accuracy assessments. 
+        Specializes in evaluating factual accuracy, identifying potential biases, and cross-referencing information across multiple sources."""
         
-    agent = CodeAgent(
-        tools=[web_search, visit_webpage],
-        additional_authorized_imports=["json", "re"],
-        model=model,
-        name='fact_checker_agent',
-        description=description,
-        max_steps=max_steps
-    )
-    
-    # Default system prompt if none provided
-    default_system_prompt = """You are a fact checking CodeAgent that verifies claims and provides detailed accuracy assessments.
+        if agent_description:
+            description = f"{base_description} {agent_description}"
+        else:
+            description = base_description
+            
+        self.agent = CodeAgent(
+            tools=[web_search, visit_webpage],
+            additional_authorized_imports=["json", "re"],
+            model=self.model,
+            name='fact_checker_agent',
+            description=description,
+            max_steps=max_steps
+        )
+        
+        # Default system prompt if none provided
+        default_system_prompt = """You are a fact checking CodeAgent that verifies claims and provides detailed accuracy assessments.
 Your role is to help the editor agent ensure content accuracy by following these steps (automating what can be automated with code):
 
 1. Process Incoming Claim Batches
@@ -80,64 +101,99 @@ Corrected Claims:
 Unverified Claims:
 - Claim 2
 """
+        
+        # Apply custom templates with the appropriate system prompt
+        custom_prompt = system_prompt if system_prompt else default_system_prompt
+        apply_custom_agent_prompts(self.agent, custom_prompt)
     
-    # Apply custom templates with the appropriate system prompt
-    custom_prompt = system_prompt if system_prompt else default_system_prompt
-    apply_custom_agent_prompts(agent, custom_prompt)
-    
-    return agent
+    def verify_claims(self, claims: str) -> str:
+        """Verify a set of claims.
+        
+        Args:
+            claims: The claims to verify
+            
+        Returns:
+            The verification report from the fact checker agent
+        """
+        task = f"Verify these claims and provide specific corrections where needed:\n{claims}"
+        return self.agent.run(task)
 
-def create_editor_agent(model: RateLimitedLiteLLMModel,
-                       fact_checker_agent: Optional[CodeAgent] = None,
-                       agent_description: Optional[str] = None,
-                       system_prompt: Optional[str] = None,
-                       max_steps: int = 50,
-                       fact_checker_description: Optional[str] = None,
-                       fact_checker_prompt: Optional[str] = None) -> CodeAgent:
-    """Creates an editor agent that edits content and manages fact checking
+
+class EditorAgent:
+    """A wrapper class for the editor agent that handles initialization and editing."""
     
-    Args:
-        model: The LiteLLM model to use for the agent
-        fact_checker_agent: Optional pre-configured fact checker CodeAgent to be managed
-                     If not provided, one will be created internally
-        agent_description: Optional additional description to append to the base description
-        system_prompt: Optional custom system prompt to use instead of the default
-        max_steps: Maximum number of steps for the agent
-        fact_checker_description: Optional description for the fact checker if created internally
-        fact_checker_prompt: Optional system prompt for the fact checker if created internally
+    def __init__(
+        self,
+        fact_checker_agent: Optional[CodeAgent] = None,
+        model: Optional[RateLimitedLiteLLMModel] = None,
+        agent_description: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        max_steps: int = 50,
+        model_id: str = "gemini/gemini-2.0-flash",
+        model_info_path: str = "utils/gemini/gem_llm_info.json",
+        base_wait_time: float = 2.0,
+        max_retries: int = 3,
+        fact_checker_description: Optional[str] = None,
+        fact_checker_prompt: Optional[str] = None
+    ):
+        """Initialize the editor agent.
         
-    Returns:
-        A configured editor agent that manages fact checking
-    """
-    
-    # Create a fact checker agent if one wasn't provided
-    if fact_checker_agent is None:
-        fact_checker_agent = create_fact_checker_agent(
-            model=model,
-            agent_description=fact_checker_description,
-            system_prompt=fact_checker_prompt
+        Args:
+            fact_checker_agent: Optional CodeAgent to use as the fact checker. If not provided, one will be created.
+            model: Optional RateLimitedLiteLLMModel to use. If not provided, one will be created.
+            agent_description: Optional additional description to append to the base description
+            system_prompt: Optional custom system prompt to use instead of the default
+            max_steps: Maximum number of steps for the agent
+            model_id: The model ID to use if creating a new model
+            model_info_path: Path to the model info JSON file if creating a new model
+            base_wait_time: Base wait time for rate limiting if creating a new model
+            max_retries: Maximum retries for rate limiting if creating a new model
+            fact_checker_description: Optional additional description for the fact checker if creating a new one
+            fact_checker_prompt: Optional custom system prompt for the fact checker if creating a new one
+        """
+        # Create a model if one wasn't provided
+        if model is None:
+            self.model = RateLimitedLiteLLMModel(
+                model_id=model_id,
+                model_info_path=model_info_path,
+                base_wait_time=base_wait_time,
+                max_retries=max_retries,
+            )
+        else:
+            self.model = model
+            
+        # Create a fact checker agent if one wasn't provided
+        if fact_checker_agent is None:
+            fact_checker = FactCheckerAgent(
+                model=self.model,
+                agent_description=fact_checker_description,
+                system_prompt=fact_checker_prompt,
+                max_steps=30
+            )
+            self.fact_checker_agent = fact_checker.agent
+        else:
+            self.fact_checker_agent = fact_checker_agent
+        
+        base_description = """An editor agent that improves content quality while ensuring factual accuracy through fact checking.
+        Specializes in editing, proofreading, and verifying content accuracy. Has access to web search and scraping tools, and a dedicated fact checker agent."""
+        
+        if agent_description:
+            description = f"{base_description} {agent_description}"
+        else:
+            description = base_description
+            
+        self.agent = CodeAgent(
+            tools=[web_search, visit_webpage],
+            additional_authorized_imports=["json", "re"],
+            model=self.model,
+            managed_agents=[self.fact_checker_agent],
+            name='editor_agent',
+            description=description,
+            max_steps=max_steps
         )
-    
-    base_description = """An editor agent that improves content quality while ensuring factual accuracy through fact checking.
-    Specializes in editing, proofreading, and verifying content accuracy. Has access to web search and scraping tools, and a dedicated fact checker agent."""
-    
-    if agent_description:
-        description = f"{base_description} {agent_description}"
-    else:
-        description = base_description
         
-    agent = CodeAgent(
-        tools=[web_search, visit_webpage, save_draft],
-        additional_authorized_imports=["json", "re"],
-        model=model,
-        managed_agents=[fact_checker_agent],
-        name='editor_agent',
-        description=description,
-        max_steps=max_steps
-    )
-    
-    # Default system prompt if none provided
-    default_system_prompt = """You are an editor agent that improves content while ensuring factual accuracy.
+        # Default system prompt if none provided
+        default_system_prompt = """You are an editor agent that improves content while ensuring factual accuracy.
 Your task is to systematically process content through multiple focused passes, each handling a specific aspect of editing:
 
 PASS 0: Initial, High-Level Content Review
@@ -253,6 +309,7 @@ if all_claims:
     claims_text = "\\n".join(all_claims)
     verification_report = fact_checker_agent(task=f"Verify these claims and provide specific corrections where needed:\\n{claims_text}")
     print(verification_report)
+```
 
 Process Fact Checker Results and Apply ALL Corrections:
 This will have to be done manually, without code, as it will require your editorial judgement to apply the corrections appropriately.
@@ -269,20 +326,49 @@ For each editing session:
 - Send all uncertain claims to the fact checker agent for verification
 - Process fact checker results systematically, methodically applying suggested corrections
 - Only make copyediting improvements after all factual corrections are complete
-- Save drafts, with save_draft tool, after each major pass
 - Repeat any passes as needed until the content is factually correct and clear
 
-In your final answer, include:
+IMPORTANT: Your final_answer MUST include your complete, fully edited content in markdown format. The final_answer will be automatically saved as an edited file, so make sure it contains:
 1. Brief summary of final edits, listing what was fixed, improved, added, and removed
 2. Any dubious claims that remain, and your confidence level in them
 3. Recommendations for further required improvements, such as increased scope, depth, completeness, accuracy, etc. requiring additional research or editing cycles
 4. Complete final revised draft in clean markdown format, including all relevant source urls
 
-IMPORTANT: DO NOT just outline steps or describe what you would do. Actually perform the edits and return the fully edited content.
+DO NOT just outline steps or describe what you would do. Actually perform the edits and return the fully edited content in your final_answer.
 """
+        
+        # Apply custom templates with the appropriate system prompt
+        custom_prompt = system_prompt if system_prompt else default_system_prompt
+        apply_custom_agent_prompts(self.agent, custom_prompt)
     
-    # Apply custom templates with the appropriate system prompt
-    custom_prompt = system_prompt if system_prompt else default_system_prompt
-    apply_custom_agent_prompts(agent, custom_prompt)
-    
-    return agent 
+    def edit_content(self, content: str) -> str:
+        """Edit content for accuracy and clarity.
+        
+        Args:
+            content: The content to edit
+            
+        Returns:
+            The edited content from the editor agent
+        """
+        # Time the execution
+        start_time = time.time()
+        
+        # Run the editor agent with the content
+        result = self.agent.run(content)
+        
+        # Calculate execution time
+        execution_time = time.time() - start_time
+        
+        print(f"\nExecution time: {execution_time:.2f} seconds")
+        
+        # Save the final answer using the shared tool
+        save_final_answer(
+            agent=self.agent,
+            result=result,
+            query_or_prompt=content,
+            agent_name="editor_agent",
+            file_type="edited",
+            additional_metadata={"execution_time": execution_time}
+        )
+        
+        return result 

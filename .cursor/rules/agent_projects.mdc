@@ -3,41 +3,62 @@ description: Structure and organization guidelines for specialized agent project
 globs: **/researcher/**, **/manager/**, **/editor/**, **/writer_critic/**, **/qaqc/**
 alwaysApply: false
 ---
+---
+description: Structure and organization guidelines for specialized agent projects
+globs: **/researcher/**, **/manager/**, **/editor/**, **/writer_critic/**, **/qaqc/**
+alwaysApply: false
+---
 
 # Agent Projects Guidelines
 
 ## Common Structure
-- Each agent project (researcher, manager, editor, writer_critic) should maintain its common file structure:
-  - `__init__.py`
-  - `agents.py`: Project agents: ALL agent prompts must be contained here
-  - `example.py`: Example usages: customized usage of agents
-  - `main.py`: Main setup and entry point: standardized, static agent init and setup
-  - `tools.py`: Tools used by the agents
+- Each agent project (researcher, manager, editor, writer_critic, qaqc) follows a class-based structure:
+  - `__init__.py`: Exports the agent classes
+  - `agents.py`: Contains agent classes with initialization and execution methods
+  - `example.py`: Demonstrates how to use the agent classes directly
+  - `tools.py`: Contains tools used by the agents
+
+## Agent Class Structure
+- All agent classes follow a consistent pattern:
+  - Class-based implementation (e.g., ResearcherAgent, ManagerAgent)
+  - `__init__` method that creates a model internally if one isn't provided
+  - Methods for primary functionality (e.g., run_query, edit_content, compare_outputs)
+  - Internal CodeAgent or ToolCallingAgent instance accessible via the `agent` property
 
 ## Project-Specific Guidelines
 
 ### Researcher Agent
 - Located in *researcher/* directory
-- Focuses on web search and information gathering
+- `ResearcherAgent` class for web search and information gathering
 - Uses DuckDuckGo for web search, arXiv for academic papers
 - Supports PDF to markdown conversion
+- Primary method: `run_query(query)`
 
 ### Manager Agent
 - Located in *manager/* directory
-- Coordinates multiple specialized agents
-- Supports customizing agent descriptions and prompts via the --use-custom-prompts flag
-- Custom configurations are defined in example.py
+- `ManagerAgent` class for coordinating multiple specialized agents
+- Takes a list of agent instances to manage
+- Supports customizing agent descriptions and prompts
+- Primary method: `run_query(query)`
 
 ### Editor Agent
 - Located in *editor/* directory
-- Focuses on editing content with fact checking
-- Internally uses fact_checker_agent as a subagent
-- fact_checker_agent should not be used directly, only through editor_agent
+- `EditorAgent` class for editing content with fact checking
+- `FactCheckerAgent` class for verifying claims
+- EditorAgent creates its own FactCheckerAgent if one isn't provided
+- Primary methods: `edit_content(content)` and `verify_claims(claims)`
 
 ### Writer-Critic Agent
 - Located in *writer_critic/* directory
-- Consists of writer agent for drafting and critic agent for feedback
-- Supports iterative refinement through feedback
+- `WriterAgent` class for drafting content
+- `CriticAgent` class for providing feedback
+- WriterAgent creates its own CriticAgent if one isn't provided
+- Primary methods: `write_draft(prompt)` and `provide_feedback(draft)`
+
+### QAQC Agent
+- Located in *qaqc/* directory
+- `QAQCAgent` class for comparing outputs and selecting the best one
+- Primary method: `compare_outputs(outputs, query)`
 
 ### Utils
 - Located in *utils/* directory
@@ -46,8 +67,10 @@ alwaysApply: false
 - *utils/agents/tools.py* contains all agent shared tools
 - *utils/gemini/* subdirectory contains Google Gemini LLM API utilities
 
-## Customization Best Practices
-- Preserve main.py files as they provide core functionality
-- Create custom example files instead of modifying original example.py files
-- Use configuration options like --use-custom-prompts or --config-file
-- Define custom agent descriptions and prompts in custom example files
+## Usage Best Practices
+- Create agent instances directly using their class constructors
+- Provide custom model instances to share models between agents
+- Use the agent's primary methods to execute tasks
+- Configure agents through constructor parameters
+- Define custom agent descriptions and prompts as constructor parameters
+- Use example.py files as reference for how to use the agents

@@ -1,139 +1,190 @@
 #!/usr/bin/env python3
-import time
-import sys
+"""
+Example usage of the ManagerAgent class.
+
+This example shows how to create and use a ManagerAgent instance directly.
+It also provides a command-line interface for running management queries.
+
+Usage:
+    poetry run python -m manager.example --query "Your management query here"
+"""
+
+import os
 import argparse
-from typing import List, Optional, Dict, Tuple, Any
-
-import manager.main as manager_main
+from dotenv import load_dotenv
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from utils.telemetry import suppress_litellm_logs
 
-# Example usage
-# From agents directory: poetry run python -m manager.example --query "Your search query here" --managed-agents researcher,writer,editor --use-custom-prompts
+from manager.agents import ManagerAgent
+from researcher.agents import ResearcherAgent
+from writer_critic.agents import WriterAgent
+from editor.agents import EditorAgent
+from qaqc.agents import QAQCAgent
 
-def get_default_agent_configs():
-    """Get default agent configurations
+def setup_basic_environment():
+    """Set up basic environment for the example"""
+    # Load .env from root directory
+    load_dotenv()
     
-    Returns:
-        Dictionary with default agent configurations
-    """
-    return {
-        "researcher_description": "Expert researcher with focus on scientific papers and academic sources",
-        "researcher_prompt": "You are a meticulous researcher who prioritizes academic sources and provides comprehensive information with proper citations.",
-        
-        "writer_description": "Creative writer with journalistic style and clear explanations",
-        "writer_prompt": "Write engaging content with a focus on clarity, accuracy, and reader engagement. Use a journalistic style that makes complex topics accessible.",
-        
-        "critic_description": "Detail-oriented editor with high standards for clarity and accuracy",
-        "critic_prompt": "Evaluate writing for clarity, accuracy, engagement, and logical flow. Provide constructive feedback that improves the content without changing its voice.",
-        
-        "editor_description": "Skilled editor with focus on accuracy, clarity, and factual correctness",
-        "editor_prompt": "Edit content to ensure factual accuracy while maintaining style and readability. Focus on improving clarity without changing the author's voice.",
-        
-        "fact_checker_description": "Thorough fact checker with attention to detail and source verification",
-        "fact_checker_prompt": "Verify claims against reliable sources with precision. Identify potential inaccuracies and suggest corrections based on authoritative references."
-    }
+    # Suppress LiteLLM logs
+    suppress_litellm_logs()
+    
+    # Check for API key
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY environment variable is not set")
 
-def main(
-    query=None, 
-    telemetry=False, 
-    managed_agents=None, 
-    use_custom_prompts=False,
-    max_steps=8,
-    max_retries=3,
-    model_id="gemini/gemini-2.0-flash",
-    model_info_path="utils/gemini/gem_llm_info.json"
-):
-    """Main entry point for the manager example
+def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash", 
+                model_info_path="utils/gemini/gem_llm_info.json",
+                base_wait_time=2.0, max_retries=3,
+                agent_types=None, agent_configs=None):
+    """Run a management query using the ManagerAgent class
     
     Args:
-        query: The query to process
-        telemetry: Whether to enable OpenTelemetry tracing
-        managed_agents: List of agent types to create (comma-separated string)
-        use_custom_prompts: Whether to use custom agent descriptions and prompts
-        max_steps: Maximum steps for each agent
-        max_retries: Maximum retries for rate limiting
+        query: The management query to run
+        max_steps: Maximum number of steps for the agent
         model_id: The model ID to use
-        model_info_path: Path to model info JSON file
+        model_info_path: Path to the model info JSON file
+        base_wait_time: Base wait time for rate limiting
+        max_retries: Maximum retries for rate limiting
+        agent_types: List of agent types to create and manage
+        agent_configs: Dictionary containing agent configurations
         
     Returns:
-        The result from the manager agent
+        The result from the agent
     """
+    # Set up environment
+    setup_basic_environment()
     
-    # Parse managed agents string into a list
-    agent_types = []
-    if managed_agents:
-        agent_types = [agent_type.strip() for agent_type in managed_agents.split(",")]
-    
-    # Load agent configurations if using custom prompts
-    agent_configs = {}
-    if use_custom_prompts:
-        agent_configs = get_default_agent_configs()
-    
-    # Create agents based on the agent types
-    agents = []
-    for agent_type in agent_types:
-        agent = manager_main.create_agent_by_type(
-            agent_type=agent_type,
-            max_steps=max_steps,
-            model_id=model_id,
-            model_info_path=model_info_path,
-            max_retries=max_retries,
-            agent_configs=agent_configs
-        )
-        if agent:
-            agents.append(agent)
-    
-    # Display configuration information
-    agent_list = [agent.name if hasattr(agent, "name") else "custom_agent" for agent in agents]
-    print(f"Manager is configured with: {', '.join(agent_list) if agent_list else 'no agents'}")
-    
-    # Initialize the manager agent system
-    run_query = manager_main.initialize(
-        enable_telemetry=telemetry,
-        managed_agents=agents,
-        max_steps=max_steps,
-        max_retries=max_retries,
+    # Create a shared model for all agents
+    shared_model = RateLimitedLiteLLMModel(
         model_id=model_id,
         model_info_path=model_info_path,
-        agent_configs=agent_configs
+        base_wait_time=base_wait_time,
+        max_retries=max_retries,
     )
     
-    # Run the query
-    if query:
-        start_time = time.time()
-        result = run_query(query)
-        execution_time = time.time() - start_time
-        print(f"\nExecution time: {execution_time:.2f} seconds")
-        return result
-    else:
-        print("No query provided.")
-        return None
+    # Default agent types if none provided
+    if agent_types is None:
+        agent_types = ["researcher", "writer", "editor", "qaqc"]
+    
+    # Default empty dict if None provided
+    agent_configs = agent_configs or {}
+    
+    print(f"Creating agents: {', '.join(agent_types)}")
+    
+    # Create the managed agents
+    managed_agents = []
+    for agent_type in agent_types:
+        try:
+            if agent_type.lower() == 'researcher':
+                researcher = ResearcherAgent(
+                    model=shared_model,  # Use the shared model
+                    max_steps=max_steps,
+                    researcher_description=agent_configs.get('researcher_description'),
+                    researcher_prompt=agent_configs.get('researcher_prompt')
+                )
+                managed_agents.append(researcher.agent)
+                print(f"Created researcher agent: {researcher.agent.name}")
+            
+            elif agent_type.lower() == 'writer':
+                # Create the writer agent with its own critic
+                writer = WriterAgent(
+                    model=shared_model,  # Use the shared model
+                    max_steps=max_steps,
+                    agent_description=agent_configs.get('writer_description'),
+                    system_prompt=agent_configs.get('writer_prompt'),
+                    critic_description=agent_configs.get('critic_description'),
+                    critic_prompt=agent_configs.get('critic_prompt')
+                )
+                managed_agents.append(writer.agent)
+                print(f"Created writer agent: {writer.agent.name}")
+            
+            elif agent_type.lower() == 'editor':
+                # Create the editor agent with its own fact checker
+                editor = EditorAgent(
+                    model=shared_model,  # Use the shared model
+                    max_steps=max_steps,
+                    agent_description=agent_configs.get('editor_description'),
+                    system_prompt=agent_configs.get('editor_prompt'),
+                    fact_checker_description=agent_configs.get('fact_checker_description'),
+                    fact_checker_prompt=agent_configs.get('fact_checker_prompt')
+                )
+                managed_agents.append(editor.agent)
+                print(f"Created editor agent: {editor.agent.name}")
+            
+            elif agent_type.lower() == 'qaqc':
+                # Create the QAQC agent
+                qaqc = QAQCAgent(
+                    model=shared_model,  # Use the shared model
+                    max_steps=max_steps,
+                    agent_description=agent_configs.get('qaqc_description'),
+                    system_prompt=agent_configs.get('qaqc_prompt')
+                )
+                managed_agents.append(qaqc.agent)
+                print(f"Created QAQC agent: {qaqc.agent.name}")
+            
+            else:
+                print(f"Unknown agent type: {agent_type}")
+                
+        except Exception as e:
+            print(f"Error creating {agent_type} agent: {str(e)}")
+    
+    print(f"Creating manager agent with {len(managed_agents)} managed agents")
+    
+    # Create the manager agent with the shared model
+    manager = ManagerAgent(
+        managed_agents=managed_agents,
+        model=shared_model,  # Use the shared model
+        max_steps=max_steps
+    )
+    
+    # Use default query if none provided
+    if query is None:
+        query = "Research and write a comprehensive report on the latest advancements in quantum computing, focusing on practical applications."
+    
+    print(f"Running management query: {query}")
+    print("=" * 80)
+    
+    # Run the query and get the result
+    result = manager.run_query(query)
+    
+    print("=" * 80)
+    print("Management task complete! The report has been saved to the reports directory.")
+    
+    return result
 
-if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Run the manager example")
-    parser.add_argument("--query", type=str, required=True, help="Query to process")
-    parser.add_argument("--telemetry", action="store_true", help="Enable telemetry")
-    parser.add_argument("--managed-agents", type=str, required=True, 
-                        help="Comma-separated list of agent types to create (e.g. researcher,writer,editor)")
-    parser.add_argument("--use-custom-prompts", action="store_true", 
-                        help="Use custom agent descriptions and prompts")
-    parser.add_argument("--max-steps", type=int, default=8, help="Maximum steps for agents")
+def parse_arguments():
+    """Parse command-line arguments
+    
+    Returns:
+        The parsed arguments
+    """
+    parser = argparse.ArgumentParser(description="Run the ManagerAgent with a query.")
+    parser.add_argument("--query", type=str, 
+                        default="Research and write a comprehensive report on the latest advancements in quantum computing, focusing on practical applications.",
+                        help="The query to process")
+    parser.add_argument("--max-steps", type=int, default=20, help="Maximum number of steps")
+    parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", 
-                        help="Path to model info JSON file")
+    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--agent-types", type=str, default="researcher,writer,editor,qaqc", help="Comma-separated list of agent types to create")
     
-    args = parser.parse_args()
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_arguments()
     
-    # Run the main function with parsed arguments
-    main(
+    # Parse agent types from comma-separated string
+    agent_types = [t.strip() for t in args.agent_types.split(",") if t.strip()]
+    
+    run_example(
         query=args.query,
-        telemetry=args.telemetry,
-        managed_agents=args.managed_agents,
-        use_custom_prompts=args.use_custom_prompts,
         max_steps=args.max_steps,
-        max_retries=args.max_retries,
         model_id=args.model_id,
-        model_info_path=args.model_info_path
+        model_info_path=args.model_info_path,
+        base_wait_time=args.base_wait_time,
+        max_retries=args.max_retries,
+        agent_types=agent_types
     )

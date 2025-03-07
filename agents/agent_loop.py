@@ -9,10 +9,15 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from utils.telemetry import start_telemetry, suppress_litellm_logs
-from manager.main import create_agent_by_type
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from qaqc.main import initialize as initialize_qaqc
 from utils.file_manager.file_manager import FileManager
+from utils.agents.tools import load_latest_draft, load_latest_report
+
+# Import the agent classes
+from researcher.agents import ResearcherAgent
+from writer_critic.agents import WriterAgent, CriticAgent
+from editor.agents import EditorAgent, FactCheckerAgent
+from qaqc.agents import QAQCAgent
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""
@@ -163,7 +168,10 @@ class AgentLoop:
             "editor_prompt": "Edit content to ensure factual accuracy while maintaining style and readability. Focus on improving clarity without changing the author's voice.",
             
             "fact_checker_description": "Thorough fact checker with attention to detail and source verification",
-            "fact_checker_prompt": "Verify claims against reliable sources with precision. Identify potential inaccuracies and suggest corrections based on authoritative references."
+            "fact_checker_prompt": "Verify claims against reliable sources with precision. Identify potential inaccuracies and suggest corrections based on authoritative references.",
+            
+            "qaqc_description": "Quality assurance specialist with focus on comparing outputs and selecting the best one",
+            "qaqc_prompt": "Compare outputs based on quality, accuracy, completeness, and relevance to the original query. Select the best output and explain your reasoning."
         }
     
     def _initialize_agents(self):
@@ -171,15 +179,46 @@ class AgentLoop:
         for agent_type in self.agent_sequence:
             if agent_type not in self.agents:
                 try:
-                    agent = create_agent_by_type(
-                        agent_type=agent_type,
-                        max_steps=self.max_steps_per_agent_dict.get(agent_type, self.max_steps_per_agent),
-                        model_id=self.model_id,
-                        model_info_path=self.model_info_path,
-                        max_retries=self.max_retries,
-                        agent_configs=self.agent_configs
-                    )
-                    self.agents[agent_type] = agent
+                    # Get the max steps for this agent
+                    max_steps = self.max_steps_per_agent_dict.get(agent_type, self.max_steps_per_agent)
+                    
+                    # Create the agent based on its type
+                    if agent_type.lower() == 'researcher':
+                        agent_instance = ResearcherAgent(
+                            max_steps=max_steps,
+                            researcher_description=self.agent_configs.get('researcher_description'),
+                            researcher_prompt=self.agent_configs.get('researcher_prompt')
+                        )
+                        self.agents[agent_type] = agent_instance
+                        
+                    elif agent_type.lower() == 'writer':
+                        agent_instance = WriterAgent(
+                            max_steps=max_steps,
+                            agent_description=self.agent_configs.get('writer_description'),
+                            system_prompt=self.agent_configs.get('writer_prompt'),
+                            critic_description=self.agent_configs.get('critic_description'),
+                            critic_prompt=self.agent_configs.get('critic_prompt')
+                        )
+                        self.agents[agent_type] = agent_instance
+                        
+                    elif agent_type.lower() == 'editor':
+                        agent_instance = EditorAgent(
+                            max_steps=max_steps,
+                            agent_description=self.agent_configs.get('editor_description'),
+                            system_prompt=self.agent_configs.get('editor_prompt'),
+                            fact_checker_description=self.agent_configs.get('fact_checker_description'),
+                            fact_checker_prompt=self.agent_configs.get('fact_checker_prompt')
+                        )
+                        self.agents[agent_type] = agent_instance
+                        
+                    elif agent_type.lower() == 'qaqc':
+                        agent_instance = QAQCAgent(
+                            max_steps=max_steps,
+                            agent_description=self.agent_configs.get('qaqc_description'),
+                            system_prompt=self.agent_configs.get('qaqc_prompt')
+                        )
+                        self.agents[agent_type] = agent_instance
+                    
                     print(f"Initialized agent: {agent_type}")
                 except Exception as e:
                     print(f"Error initializing agent {agent_type}: {e}")
@@ -298,7 +337,7 @@ class AgentLoop:
             prompt += "\nYour task is to edit and fact-check the content, ensuring accuracy while maintaining style and readability."
         elif agent_type == "qaqc":
             # For QAQC agent, we'll handle this differently in the run method
-            # using the run_qaqc_comparison function directly
+            # using the compare_outputs method directly
             prompt = "QAQC agent will be handled separately"
         
         return prompt
@@ -344,9 +383,9 @@ class AgentLoop:
                 # Process each agent in the sequence
                 while agent_index < len(self.agent_sequence):
                     agent_type = self.agent_sequence[agent_index]
-                    agent = self.agents.get(agent_type)
+                    agent_instance = self.agents.get(agent_type)
                     
-                    if not agent:
+                    if not agent_instance:
                         error_msg = f"Agent {agent_type} not initialized"
                         print(f"Error: {error_msg}")
                         self.state["error"] = error_msg
@@ -381,64 +420,30 @@ class AgentLoop:
                             current_output = previous_results.get(f"{previous_agent_type}_{iteration}")
                             previous_output = previous_results.get(f"{previous_agent_type}_{iteration - 1}")
                             
-                            # Create a dictionary of outputs to compare
-                            outputs_to_compare = {}
-                            
-                            # Only add outputs that exist
-                            if previous_output:
-                                outputs_to_compare["Previous Iteration"] = previous_output
-                            if current_output:
-                                outputs_to_compare["Current Iteration"] = current_output
-                            
-                            try:
-                                # Initialize the QAQC comparison function
-                                compare_outputs = initialize_qaqc(
-                                    max_steps=self.max_steps_per_agent_dict.get(previous_agent_type, self.max_steps_per_agent),
-                                    max_retries=self.max_retries,
-                                    model_id=self.model_id,
-                                    model_info_path=self.model_info_path,
-                                    enable_telemetry=self.enable_telemetry
-                                )
-                                
+                            # Only proceed if we have outputs to compare
+                            if current_output and previous_output:
                                 # Run the comparison
-                                selected_output, result, selected_name = compare_outputs(query, outputs_to_compare)
+                                result = agent_instance.compare_outputs([previous_output, current_output], query)
                                 
-                                # If we have two outputs and a comparison was made
-                                if "Previous Iteration" in outputs_to_compare and "Current Iteration" in outputs_to_compare and selected_name:
-                                    # Update the result based on the selection
-                                    if selected_name == "Previous Iteration":
-                                        print("QAQC selected the previous iteration's output as better")
-                                        
-                                        # Replace the current iteration's result with the previous iteration's result
-                                        self.state["results"][f"{previous_agent_type}_{iteration}"] = selected_output
-                                        self.state["results"][previous_agent_type] = selected_output
-                                        
-                                        print(f"Updated {previous_agent_type} result with the better version from the previous iteration")
-                                    else:
-                                        print("QAQC selected the current iteration's output as better")
-                                        
-                                        # Make sure the current output is stored correctly
-                                        self.state["results"][f"{previous_agent_type}_{iteration}"] = selected_output
-                                        self.state["results"][previous_agent_type] = selected_output
-                                        
-                                        # Remove the previous iteration's result since it was not selected
-                                        # This ensures it won't be included in future prompts
-                                        if f"{previous_agent_type}_{iteration-1}" in self.state["results"]:
-                                            del self.state["results"][f"{previous_agent_type}_{iteration-1}"]
-                                else:
-                                    # Just log the result
-                                    print(f"QAQC result: {result}")
-                                    
-                                    # If we have a single output, make sure it's stored correctly
-                                    if selected_output and selected_name and previous_agent_type:
-                                        self.state["results"][f"{previous_agent_type}_{iteration}"] = selected_output
-                                        self.state["results"][previous_agent_type] = selected_output
-                            except Exception as e:
-                                result = f"Error in QAQC comparison: {str(e)}"
+                                # The compare_outputs method already handles selecting the best output
+                                # and saving it to the appropriate file
+                                
+                                # Just log the result
+                                print(f"QAQC result: {result[:200]}...")
+                            else:
+                                result = "Not enough outputs to compare"
                                 print(result)
                         else:
-                            # For all other agents, run normally
-                            result = agent.run(formatted_prompt)
+                            # For all other agents, use their primary method
+                            if agent_type == "researcher":
+                                result = agent_instance.run_query(formatted_prompt)
+                            elif agent_type == "writer":
+                                result = agent_instance.write_draft(formatted_prompt)
+                            elif agent_type == "editor":
+                                result = agent_instance.edit_content(formatted_prompt)
+                            else:
+                                # Fall back to direct agent.agent.run() if no specific method is available
+                                result = agent_instance.agent.run(formatted_prompt)
                         
                         end_time = time.time()
                         

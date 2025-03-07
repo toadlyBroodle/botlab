@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""
+Example usage of the AgentLoop class.
+
+This example shows how to create and use an AgentLoop instance with different agent types.
+It also provides a command-line interface for running agent loops.
+
+Usage:
+    poetry run python -m agent_loop_example --query "Your query here"
+"""
+
 import os
 import sys
 import argparse

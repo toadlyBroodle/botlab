@@ -1,41 +1,62 @@
 from typing import List, Optional, Dict, Any, Tuple
 from smolagents import CodeAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from utils.agents.tools import apply_custom_agent_prompts
+from utils.agents.tools import apply_custom_agent_prompts, save_final_answer
 from .tools import select_best_output
+import time
 
-def create_qaqc_agent(
-    model: RateLimitedLiteLLMModel,
-    max_steps: int = 15,
-    agent_description: Optional[str] = None,
-    system_prompt: Optional[str] = None
-) -> CodeAgent:
-    """Creates a QAQC agent that compares outputs and selects the best one
+
+class QAQCAgent:
+    """A wrapper class for the QAQC agent that handles initialization and output selection."""
     
-    Args:
-        model: The RateLimitedLiteLLMModel model to use for the agent
-        max_steps: Maximum steps the agent can take
-        agent_description: Optional custom description for the agent
-        system_prompt: Optional custom system prompt for the agent
+    def __init__(
+        self,
+        model: Optional[RateLimitedLiteLLMModel] = None,
+        max_steps: int = 15,
+        agent_description: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        model_id: str = "gemini/gemini-2.0-flash",
+        model_info_path: str = "utils/gemini/gem_llm_info.json",
+        base_wait_time: float = 2.0,
+        max_retries: int = 3
+    ):
+        """Initialize the QAQC agent.
         
-    Returns:
-        A configured QAQC agent
-    """
-    
-    # Use custom description if provided, otherwise use default
-    description = agent_description or """This is a Quality Assurance/Quality Control agent that compares multiple outputs (e.g., reports, drafts, content) and selects the best one based on quality, accuracy, completeness, and relevance to the original query."""
-    
-    agent = CodeAgent(
-        tools=[select_best_output],  # Add the selection tool
-        model=model,
-        additional_authorized_imports=["json"],
-        name='qaqc_agent',
-        description=description,
-        max_steps=max_steps
-    )
-    
-    # Define the custom system prompt if not provided
-    custom_system_prompt = system_prompt or """You are a Quality Assurance/Quality Control agent responsible for comparing multiple outputs and selecting the best one.
+        Args:
+            model: Optional RateLimitedLiteLLMModel to use. If not provided, one will be created.
+            max_steps: Maximum number of steps for the agent
+            agent_description: Optional custom description for the agent
+            system_prompt: Optional custom system prompt for the agent
+            model_id: The model ID to use if creating a new model
+            model_info_path: Path to the model info JSON file if creating a new model
+            base_wait_time: Base wait time for rate limiting if creating a new model
+            max_retries: Maximum retries for rate limiting if creating a new model
+        """
+        # Create a model if one wasn't provided
+        if model is None:
+            self.model = RateLimitedLiteLLMModel(
+                model_id=model_id,
+                model_info_path=model_info_path,
+                base_wait_time=base_wait_time,
+                max_retries=max_retries,
+            )
+        else:
+            self.model = model
+            
+        # Use custom description if provided, otherwise use default
+        description = agent_description or """This is a Quality Assurance/Quality Control agent that compares multiple outputs (e.g., reports, drafts, content) and selects the best one based on quality, accuracy, completeness, and relevance to the original query."""
+        
+        self.agent = CodeAgent(
+            tools=[select_best_output],  # Add the selection tool
+            model=self.model,
+            additional_authorized_imports=["json"],
+            name='qaqc_agent',
+            description=description,
+            max_steps=max_steps
+        )
+        
+        # Define the custom system prompt if not provided
+        custom_system_prompt = system_prompt or """You are a Quality Assurance/Quality Control agent responsible for comparing multiple outputs and selecting the best one.
 
 When given multiple outputs to compare:
 
@@ -66,7 +87,48 @@ Your goal is to ensure that only the highest quality output moves forward in the
 Do not modify either of the outputs you are given, only provide a comparison and selection of the best output.
 """
 
-    # Apply custom templates with the custom system prompt
-    apply_custom_agent_prompts(agent, custom_system_prompt)
+        # Apply custom templates with the custom system prompt
+        apply_custom_agent_prompts(self.agent, custom_system_prompt)
     
-    return agent 
+    def compare_outputs(self, outputs: List[str], query: Optional[str] = None) -> str:
+        """Compare multiple outputs and select the best one.
+        
+        Args:
+            outputs: List of outputs to compare
+            query: Optional original query for context
+            
+        Returns:
+            The selected best output with analysis
+        """
+        # Time the execution
+        start_time = time.time()
+        
+        # Prepare the prompt for the agent
+        if len(outputs) != 2:
+            raise ValueError("Currently only supports comparing exactly 2 outputs")
+            
+        prompt = f"Compare these two outputs and select the best one:\n\n"
+        if query:
+            prompt += f"Original Query: {query}\n\n"
+            
+        prompt += f"Output 1:\n{outputs[0]}\n\nOutput 2:\n{outputs[1]}"
+        
+        # Run the QAQC agent with the outputs
+        result = self.agent.run(prompt)
+        
+        # Calculate execution time
+        execution_time = time.time() - start_time
+        
+        print(f"\nExecution time: {execution_time:.2f} seconds")
+        
+        # Save the final answer using the shared tool
+        save_final_answer(
+            agent=self.agent,
+            result=result,
+            query_or_prompt=prompt,
+            agent_name="qaqc_agent",
+            file_type="comparison",
+            additional_metadata={"execution_time": execution_time}
+        )
+        
+        return result 

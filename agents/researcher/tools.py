@@ -87,58 +87,6 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
             status.error = str(e)
 
 @tool
-def save_report(content: str, title: str = None) -> str:
-    """⚠️ IMPORTANT: SAVE YOUR RESEARCH ⚠️
-    
-    Saves the research report to a file in the data/reports directory.
-    
-    As the researcher agent, you MUST use this tool to save your findings after completing research.
-    This ensures your work is preserved and can be accessed by other agents.
-    
-    When to use this tool:
-    - After completing a research task
-    - When you've gathered significant information
-    - Before suggesting further work by another agent
-    - When you want to preserve your findings
-    
-    The saved report will include metadata showing you (researcher_agent) as the creator.
-    
-    Args:
-        content: The markdown content of the report to save (MUST be a markdown STRING)
-        title: Optional title to include in the filename
-        
-    Returns:
-        A message confirming the report was saved with the path and ID
-    """
-    try:
-        # Initialize file manager
-        file_manager = FileManager()
-        
-        # Save the file using the file manager
-        file_id = file_manager.save_file(
-            content=content,
-            file_type="report",
-            title=title,
-            metadata={
-                "word_count": len(content.split()),
-                "source": "researcher",
-                "agent_name": "researcher_agent"
-            }
-        )
-        
-        # Get the file metadata to return the path
-        file_data = file_manager.get_file(file_id)
-        report_path = file_data["metadata"]["filepath"]
-        
-        logger.info(f"Report saved to {report_path}")
-        
-        return f"Report successfully saved to {report_path} (ID: {file_id})"
-        
-    except Exception as e:
-        logger.error(f"Error saving report: {str(e)}")
-        return f"Error: Failed to save report: {str(e)}"
-
-@tool
 def pdf_to_markdown(url: str) -> str:
     """Downloads a PDF from a URL and converts it to markdown format.
     
