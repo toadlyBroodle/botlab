@@ -51,31 +51,20 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
         # Convert PDF to markdown
         markdown = pymupdf4llm.to_markdown(pdf_path, show_progress=False)
         
-        # Initialize file manager
-        file_manager = FileManager()
+        # Save directly to the papers directory with a simple naming convention
+        from utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
+        from utils.agents.tools import get_timestamp
         
-        # Get the status object to extract the URL
-        status = conversion_statuses.get(paper_id)
+        # Create a filename with timestamp and paper_id
+        timestamp = get_timestamp()
+        filename = f"{timestamp}_{paper_id}.md"
+        md_path = RESEARCHER_PAPERS_DIR / filename
         
-        # Extract a title from the URL if available
-        title = "Unknown"
-        if status and status.url:
-            url = status.url
-            title = url.split('/')[-1].replace('.pdf', '') if url.lower().endswith('.pdf') else f"Paper_{paper_id}"
-        else:
-            title = f"Paper_{paper_id}"
+        # Write the markdown content to the file
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(markdown)
         
-        # Save the markdown content using the file manager
-        file_id = file_manager.save_file(
-            content=markdown,
-            file_type="paper",
-            title=title,
-            metadata={
-                "paper_id": paper_id, 
-                "agent_name": "researcher_agent"
-            },
-            extension=".md"
-        )
+        logger.info(f"Saved markdown to {md_path}")
         
         # Update conversion status
         status = conversion_statuses.get(paper_id)
@@ -85,7 +74,7 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
             
         # Clean up PDF after successful conversion
         pdf_path.unlink()
-        logger.info(f"Conversion completed for {paper_id}, saved with file_id: {file_id}")
+        logger.info(f"Conversion completed for {paper_id}")
         
     except Exception as e:
         logger.error(f"Conversion failed for {paper_id}: {str(e)}")
@@ -200,6 +189,19 @@ def check_conversion_status(paper_id: str) -> str:
     
     if status.error:
         result += f"Error: {status.error}\n"
+    
+    # Check if the markdown file exists
+    from utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
+    
+    # Look for any file containing the paper_id
+    found = False
+    for file_path in RESEARCHER_PAPERS_DIR.glob(f"*{paper_id}*.md"):
+        found = True
+        result += f"Markdown file available at: {file_path.name}\n"
+        break
+    
+    if status.status == "success" and not found:
+        result += "Warning: Conversion reported as successful, but no markdown file was found.\n"
         
     return result
 
@@ -214,21 +216,29 @@ def read_paper_markdown(paper_id: str) -> str:
         The markdown content of the paper, or an error message if not available
     """
     try:
-        # Initialize file manager
-        file_manager = FileManager()
+        from utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
+        import os
         
-        # Find the file by searching for files with the paper_id in metadata
-        paper_files = file_manager.list_files(
-            file_type="paper", 
-            filter_criteria={"paper_id": paper_id}
-        )
+        # Direct approach: look for the file in the papers directory
+        papers_dir = RESEARCHER_PAPERS_DIR
         
-        if not paper_files:
-            return f"Error: No markdown file found for paper ID {paper_id}"
+        # First try the exact filename
+        md_path = papers_dir / f"{paper_id}.md"
         
-        # Get the first matching file
-        file_data = file_manager.get_file(paper_files[0]["file_id"])
-        return file_data["content"]
+        # If that doesn't exist, look for files containing the paper_id
+        if not md_path.exists():
+            for file_path in papers_dir.glob("*.md"):
+                if paper_id in file_path.name:
+                    md_path = file_path
+                    break
+        
+        # If we found a file, read it
+        if md_path.exists():
+            with open(md_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                return content
+        
+        return f"Error: No markdown file found for paper ID {paper_id}"
     
     except Exception as e:
         logger.error(f"Error reading paper markdown: {str(e)}")

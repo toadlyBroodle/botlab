@@ -1,6 +1,9 @@
 import os
 import json
 import uuid
+import argparse
+import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
@@ -32,8 +35,13 @@ RESEARCHER_PAPERS_DIR.mkdir(exist_ok=True, parents=True)
 for agent_dir in AGENT_DIRS.values():
     agent_dir.mkdir(exist_ok=True, parents=True)
 
-# Path to the metadata index file
-METADATA_INDEX = FILE_MANAGER_DIR / "metadata_index.json"
+# Configure logging
+logger = logging.getLogger("file_manager")
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 class FileManager:
     """File manager for saving and loading agent outputs."""
@@ -45,24 +53,6 @@ class FileManager:
             project_id: Optional project identifier to group related files
         """
         self.project_id = project_id or str(uuid.uuid4())[:8]
-        self._load_metadata_index()
-    
-    def _load_metadata_index(self) -> None:
-        """Load the metadata index from disk or create if it doesn't exist."""
-        if METADATA_INDEX.exists():
-            try:
-                with open(METADATA_INDEX, 'r', encoding='utf-8') as f:
-                    self.metadata_index = json.load(f)
-            except json.JSONDecodeError:
-                # If the file is corrupted, create a new index
-                self.metadata_index = {"files": {}}
-        else:
-            self.metadata_index = {"files": {}}
-    
-    def _save_metadata_index(self) -> None:
-        """Save the metadata index to disk."""
-        with open(METADATA_INDEX, 'w', encoding='utf-8') as f:
-            json.dump(self.metadata_index, f, indent=2)
     
     def _get_directory_for_agent(self, agent_name: Optional[str] = None, file_type: Optional[str] = None) -> Path:
         """Get the appropriate directory for a given agent.
@@ -89,7 +79,7 @@ class FileManager:
                  content: str, 
                  file_type: str = "report", 
                  title: Optional[str] = None, 
-                 metadata: Optional[Dict[str, Any]] = None,
+                 agent_name: Optional[str] = None,
                  extension: str = ".md",
                  version: Optional[str] = None) -> str:
         """Save a file to the agent's data directory.
@@ -98,22 +88,20 @@ class FileManager:
             content: The content to save
             file_type: Type of file (default: "report")
             title: Optional title for the file
-            metadata: Optional metadata to store with the file
+            agent_name: Optional name of the agent
             extension: File extension (default: .md)
             version: Optional version identifier
             
         Returns:
-            The file_id of the saved file
+            The filepath of the saved file
         """
-        # Generate a unique file ID
-        file_id = str(uuid.uuid4())
+        logger.info(f"FileManager.save_file called with file_type={file_type}, title={title}")
         
         # Get human-readable timestamp
         timestamp = get_timestamp()
         
         # Clean title for filename
         if title:
-            # Remove special characters and replace spaces with underscores
             safe_title = "".join(c if c.isalnum() or c in [' ', '_', '-'] else '_' for c in title)
             safe_title = safe_title.replace(' ', '_')
             filename = f"{timestamp}_{safe_title}"
@@ -129,81 +117,47 @@ class FileManager:
             extension = f".{extension}"
         filename = f"{filename}{extension}"
         
-        # Extract agent_name from metadata if available
-        agent_name = metadata.get("agent_name") if metadata else None
-        
-        # Get the appropriate directory
+        # Get the appropriate directory using provided agent_name
         directory = self._get_directory_for_agent(agent_name, file_type)
+        logger.info(f"Directory for saving: {directory}")
+        logger.info(f"Directory exists: {os.path.exists(directory)}")
         
-        # Full path to save
+        os.makedirs(directory, exist_ok=True)
+        
         filepath = directory / filename
+        logger.info(f"Full filepath: {filepath}")
         
-        # Write content to file
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
         
-        # Prepare metadata
-        file_metadata = {
-            "file_id": file_id,
-            "filename": filename,
-            "filepath": str(filepath),
-            "file_type": file_type,
-            "title": title,
-            "project_id": self.project_id,
-            "created_at": datetime.now().isoformat(),
-            "version": version,
-            "extension": extension
-        }
+        logger.info(f"File saved successfully to: {filepath}")
         
-        # Add additional metadata if provided
-        if metadata:
-            file_metadata.update(metadata)
-        
-        # Update metadata index
-        self.metadata_index["files"][file_id] = file_metadata
-        self._save_metadata_index()
-        
-        return file_id
+        return str(filepath)
     
     def get_file(self, file_identifier: str) -> Dict[str, Any]:
-        """Get a file by its ID or filename.
+        """Get a file by its filepath.
         
         Args:
-            file_identifier: The file ID or filename
+            file_identifier: The filepath of the file
             
         Returns:
             Dict containing file content and metadata
         """
-        # Check if it's a file ID
-        if file_identifier in self.metadata_index["files"]:
-            file_metadata = self.metadata_index["files"][file_identifier]
-            filepath = file_metadata["filepath"]
-        else:
-            # Search by filename
-            found = False
-            for file_id, metadata in self.metadata_index["files"].items():
-                if metadata["filename"] == file_identifier:
-                    file_metadata = metadata
-                    filepath = metadata["filepath"]
-                    found = True
-                    break
-            
-            if not found:
-                raise FileNotFoundError(f"File not found: {file_identifier}")
-        
-        # Read the file content
-        with open(filepath, 'r', encoding='utf-8') as f:
+        if not os.path.exists(file_identifier):
+            raise FileNotFoundError(f"File not found: {file_identifier}")
+        with open(file_identifier, 'r', encoding='utf-8') as f:
             content = f.read()
-        
+        stat = os.stat(file_identifier)
         return {
             "content": content,
-            "metadata": file_metadata
+            "filepath": file_identifier,
+            "created_at": stat.st_ctime
         }
     
     def list_files(self, 
-                  file_type: Optional[str] = None, 
-                  project_id: Optional[str] = None,
-                  filter_criteria: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+                   file_type: Optional[str] = None, 
+                   project_id: Optional[str] = None,
+                   filter_criteria: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """List files with optional filtering.
         
         Args:
@@ -215,56 +169,43 @@ class FileManager:
             List of file metadata matching the criteria
         """
         filter_criteria = filter_criteria or {}
-        project_id = project_id or self.project_id
-        
+        agent_name = filter_criteria.get("agent_name")
         results = []
-        for file_id, metadata in self.metadata_index["files"].items():
-            # Apply filters
-            if file_type and metadata.get("file_type") != file_type:
-                continue
-                
-            if project_id and metadata.get("project_id") != project_id:
-                continue
-            
-            # Apply additional filters
-            skip = False
-            for key, value in filter_criteria.items():
-                if key not in metadata or metadata[key] != value:
-                    skip = True
-                    break
-            
-            if not skip:
-                results.append(metadata)
-        
-        # Sort by creation date (newest first)
-        results.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        
+        dirs_to_search = []
+        if agent_name:
+            if agent_name in AGENT_DIRS:
+                dirs_to_search.append(AGENT_DIRS[agent_name])
+            else:
+                return []
+        else:
+            dirs_to_search = list(AGENT_DIRS.values())
+        for directory in dirs_to_search:
+            if os.path.exists(directory):
+                for entry in os.listdir(directory):
+                    full_path = os.path.join(directory, entry)
+                    if os.path.isfile(full_path):
+                        stat = os.stat(full_path)
+                        results.append({
+                            "file_id": full_path,
+                            "filename": entry,
+                            "created_at": stat.st_ctime
+                        })
+        results.sort(key=lambda x: x.get("created_at", 0), reverse=True)
         return results
     
     def delete_file(self, file_identifier: str) -> bool:
-        """Delete a file by its ID or filename.
+        """Delete a file by its filepath.
         
         Args:
-            file_identifier: The file ID or filename
+            file_identifier: The filepath of the file
             
         Returns:
             True if successful, False otherwise
         """
-        try:
-            # Get file metadata
-            file_data = self.get_file(file_identifier)
-            file_metadata = file_data["metadata"]
-            
-            # Delete the file
-            os.remove(file_metadata["filepath"])
-            
-            # Remove from metadata index
-            del self.metadata_index["files"][file_metadata["file_id"]]
-            self._save_metadata_index()
-            
+        if os.path.exists(file_identifier):
+            os.remove(file_identifier)
             return True
-        except (FileNotFoundError, KeyError):
-            return False
+        return False
     
     def search_files(self, query: str, agent_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """Search for files containing the query in title or content.
@@ -277,30 +218,146 @@ class FileManager:
             List of file metadata matching the query
         """
         query = query.lower()
-        
-        # Get all files, potentially filtered by agent_name
-        if agent_name:
-            filter_criteria = {"agent_name": agent_name}
-            files = self.list_files(filter_criteria=filter_criteria)
-        else:
-            files = self.list_files()
-        
         results = []
-        for file_metadata in files:
-            # Check if query is in title
-            title = file_metadata.get("title", "").lower()
-            if query in title:
-                results.append(file_metadata)
-                continue
-            
-            # Check if query is in content
-            try:
-                with open(file_metadata["filepath"], 'r', encoding='utf-8') as f:
-                    content = f.read().lower()
-                    if query in content:
-                        results.append(file_metadata)
-            except Exception:
-                # Skip files that can't be read
-                continue
+        dirs_to_search = []
+        if agent_name:
+            if agent_name in AGENT_DIRS:
+                dirs_to_search.append(AGENT_DIRS[agent_name])
+            else:
+                return []
+        else:
+            dirs_to_search = list(AGENT_DIRS.values())
+        for directory in dirs_to_search:
+            if os.path.exists(directory):
+                for entry in os.listdir(directory):
+                    full_path = os.path.join(directory, entry)
+                    if os.path.isfile(full_path):
+                        if query in entry.lower():
+                            results.append({"file_id": full_path, "filename": entry})
+                            continue
+                        try:
+                            with open(full_path, 'r', encoding='utf-8') as f:
+                                content = f.read().lower()
+                                if query in content:
+                                    results.append({"file_id": full_path, "filename": entry})
+                        except Exception:
+                            continue
+        return results
+    
+    def delete_agent_files(self, agent_type: str) -> int:
+        """Delete all files for a specific agent.
         
-        return results 
+        Args:
+            agent_type: The type of agent (e.g., "researcher", "editor")
+            
+        Returns:
+            Number of files deleted
+        """
+        agent_name = f"{agent_type}_agent"
+        if agent_name not in AGENT_DIRS:
+            print(f"Error: Invalid agent_type '{agent_type}'")
+            return 0
+        directory = AGENT_DIRS[agent_name]
+        deleted_count = 0
+        if os.path.exists(directory):
+            for entry in os.listdir(directory):
+                full_path = os.path.join(directory, entry)
+                if os.path.isfile(full_path):
+                    if self.delete_file(full_path):
+                        deleted_count += 1
+                        print(f"Deleted file: {full_path}")
+        return deleted_count
+    
+    def delete_all_files(self) -> int:
+        """Delete all files in all agent directories.
+        
+        Returns:
+            Number of files deleted
+        """
+        deleted_count = 0
+        for directory in AGENT_DIRS.values():
+            if os.path.exists(directory):
+                for entry in os.listdir(directory):
+                    full_path = os.path.join(directory, entry)
+                    if os.path.isfile(full_path):
+                        if self.delete_file(full_path):
+                            deleted_count += 1
+                            print(f"Deleted file: {full_path}")
+        return deleted_count
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="File Manager CLI")
+    
+    # Create subparsers for different commands
+    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
+    
+    # List files command
+    list_parser = subparsers.add_parser("list", help="List files")
+    list_parser.add_argument("--agent", type=str, help="Filter by agent type (researcher, manager, editor, writer_critic, qaqc)")
+    
+    # Delete files command
+    delete_parser = subparsers.add_parser("delete", help="Delete files")
+    delete_parser.add_argument("--agent", type=str, help="Delete files for a specific agent type")
+    delete_parser.add_argument("--file-id", type=str, help="Delete a specific file by ID")
+    delete_parser.add_argument("--all", action="store_true", help="Delete all files")
+    
+    return parser.parse_args()
+
+def main():
+    """Main entry point for the File Manager CLI."""
+    args = parse_args()
+    
+    # Initialize the file manager
+    file_manager = FileManager()
+    
+    if args.command == "list":
+        # List files
+        if args.agent:
+            agent_name = f"{args.agent}_agent"
+            if agent_name not in AGENT_DIRS:
+                print(f"Error: Invalid agent type '{args.agent}'")
+                return
+            
+            filter_criteria = {"agent_name": agent_name}
+            files = file_manager.list_files(filter_criteria=filter_criteria)
+        else:
+            files = file_manager.list_files()
+        
+        # Print the files
+        print(f"Found {len(files)} files:")
+        for file in files:
+            print(f"- {file['filepath']} (ID: {file['file_id']})")
+    
+    elif args.command == "delete":
+        if args.file_id:
+            # Delete a specific file
+            if file_manager.delete_file(args.file_id):
+                print(f"Deleted file with ID: {args.file_id}")
+            else:
+                print(f"Error: File with ID '{args.file_id}' not found")
+        
+        elif args.agent:
+            # Delete files for a specific agent
+            deleted_count = file_manager.delete_agent_files(args.agent)
+            print(f"Deleted {deleted_count} files for agent: {args.agent}")
+        
+        elif args.all:
+            # Delete all files
+            deleted_count = file_manager.delete_all_files()
+            print(f"Deleted {deleted_count} files")
+        
+        else:
+            print("Error: Please specify --file-id, --agent, or --all")
+    
+    else:
+        print("Error: Please specify a command (list, delete)")
+
+# This is the key change to fix the module execution issue
+if __name__ == "__main__" or (
+    # This handles the case when the module is run with python -m
+    hasattr(sys, 'argv') and 
+    len(sys.argv) > 0 and 
+    'utils.file_manager.file_manager' in sys.argv[0]
+):
+    main() 

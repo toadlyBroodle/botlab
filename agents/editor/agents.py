@@ -332,6 +332,8 @@ IMPORTANT: Your final_answer MUST include your complete, fully edited content in
 1. Brief summary of final edits, listing what was fixed, improved, added, and removed
 2. Any dubious claims that remain, and your confidence level in them
 3. Recommendations for further required improvements, such as increased scope, depth, completeness, accuracy, etc. requiring additional research or editing cycles
+    - NEVER recommend addition of safety or ethical issues to content
+    - ALWAYS require removal of safety or ethical issues in content, as these are not the focus of the content
 4. Complete final revised draft in clean markdown format, including all relevant source urls
 
 DO NOT just outline steps or describe what you would do. Actually perform the edits and return the fully edited content in your final_answer.

@@ -242,27 +242,6 @@ class AgentLoop:
             except Exception as e:
                 print(f"Error saving state to {self.state_file}: {e}")
     
-    def _get_agent_file_type(self, agent_type: str) -> str:
-        """Get the file type associated with an agent type.
-        
-        Args:
-            agent_type: The type of agent
-            
-        Returns:
-            The file type (draft, report, resource, etc.)
-        """
-        # Map agent types to file types
-        agent_file_type_map = {
-            "researcher": "report",
-            "writer": "draft",
-            "editor": "draft",
-            "critic": "report",
-            "fact_checker": "report",
-            "qaqc": "report"
-        }
-        
-        return agent_file_type_map.get(agent_type, "resource")
-    
     def _format_prompt_for_agent(self, agent_type: str, query: str, previous_results: Dict[str, Any]) -> str:
         """Format a prompt for a specific agent type, incorporating previous results.
         
@@ -306,27 +285,24 @@ class AgentLoop:
         current_agent_index = self.agent_sequence.index(agent_type)
         if current_agent_index > 0:
             prev_agent_type = self.agent_sequence[current_agent_index - 1]
-            prev_file_type = self._get_agent_file_type(prev_agent_type)
             
-            # List files of the previous agent's type, sorted by creation date (newest first)
-            prev_files = self.file_manager.list_files(file_type=prev_file_type)
-            
-            if prev_files:
-                # Get the most recent file
-                latest_file = prev_files[0]
-                try:
-                    # Get the file content
-                    file_data = self.file_manager.get_file(latest_file["file_id"])
-                    file_content = file_data["content"]
-                    file_title = latest_file.get("title", "Untitled")
-                    
-                    # Add to prompt
-                    prompt += f"\n--- Latest {prev_file_type.capitalize()} from {prev_agent_type}: {file_title} ---\n"
-                    prompt += f"{file_content}\n"
-                    
-                    print(f"Added latest {prev_file_type} from {prev_agent_type} to prompt")
-                except Exception as e:
-                    print(f"Error loading file: {e}")
+            # Use the load_file function to get the latest file from the previous agent
+            try:
+                file_content = load_file(agent_type=prev_agent_type)
+                
+                # Extract a title from the content
+                title = "Previous Output"
+                if isinstance(file_content, str) and file_content.startswith("File:"):
+                    title_line = file_content.split("\n")[0]
+                    title = title_line.replace("File:", "").strip().strip("'")
+                
+                # Add to prompt
+                prompt += f"\n--- Latest Output from {prev_agent_type}: {title} ---\n"
+                prompt += f"{file_content}\n"
+                
+                print(f"Added latest output from {prev_agent_type} to prompt")
+            except Exception as e:
+                print(f"Error loading file: {e}")
         
         # Add specific instructions based on agent type
         if agent_type == "researcher":

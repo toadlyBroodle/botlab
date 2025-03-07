@@ -9,6 +9,7 @@ A laboratory for experimenting with AI agents and automation tools. Built with P
 - 🧩 **Modular Architecture**: Plug-and-play components for custom AI solutions
 - ✨ **Simplicity**: Minimal dependencies and easy to understand code
 - 📊 **Extensive Logging**: Built-in monitoring and debugging tools
+- 📁 **Simple File Management**: Agent outputs stored in *data/* directories
 
 ## 📚 Projects
 

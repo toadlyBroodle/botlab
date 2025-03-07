@@ -7,6 +7,16 @@ It also provides a command-line interface for running management queries.
 
 Usage:
     poetry run python -m manager.example --query "Your management query here"
+
+Note:
+    When running this example directly, the manager agent will save its output to
+    the manager/data/ directory with a human-readable date prefix (YYYY-MM-DD_HH-MM).
+    You can access these files using the load_file function:
+    
+    ```python
+    from utils.agents.tools import load_file
+    content = load_file(agent_type="manager")
+    ```
 """
 
 import os
@@ -55,6 +65,14 @@ def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash",
     """
     # Set up environment
     setup_basic_environment()
+    
+    # Print the current working directory for debugging
+    print(f"Current working directory: {os.getcwd()}")
+    
+    # Print the location of the manager data directory
+    from utils.file_manager.file_manager import AGENT_DIRS
+    print(f"Manager data directory: {AGENT_DIRS['manager_agent']}")
+    print(f"Manager data directory exists: {os.path.exists(AGENT_DIRS['manager_agent'])}")
     
     # Create a shared model for all agents
     shared_model = RateLimitedLiteLLMModel(
@@ -161,9 +179,7 @@ def parse_arguments():
         The parsed arguments
     """
     parser = argparse.ArgumentParser(description="Run the ManagerAgent with a query.")
-    parser.add_argument("--query", type=str, 
-                        default="Research and write a comprehensive report on the latest advancements in quantum computing, focusing on practical applications.",
-                        help="The query to process")
+    parser.add_argument("--query", type=str, default="Write brief report on recent (2025) advances in AI agents", help="The query to process")
     parser.add_argument("--max-steps", type=int, default=20, help="Maximum number of steps")
     parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
