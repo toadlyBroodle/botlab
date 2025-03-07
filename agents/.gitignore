@@ -4,3 +4,9 @@
 __pycache__/
 
 poetry.lock
+
+logs/
+
+**/data/
+
+metadata_index.json

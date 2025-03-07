@@ -15,21 +15,6 @@ The File Manager provides a unified way to save, retrieve, list, and search file
 - **File Types**: Support for different file types (drafts, reports, resources, etc.)
 - **Search Capability**: Search for files by content or metadata
 
-## Directory Structure
-
-The FileManager uses the following directory structure:
-
-```
-/shared_data/
-  /drafts/        # Writer drafts and editor drafts
-  /reports/       # Researcher reports and final documents
-  /resources/     # Downloaded resources and cached data
-  /archive/       # Archived files
-  /research/
-    /papers/      # Research papers (PDFs and converted markdown)
-  metadata_index.json  # Metadata for all files
-```
-
 ## Usage
 
 ### Basic Usage

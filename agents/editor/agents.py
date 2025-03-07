@@ -366,9 +366,7 @@ DO NOT just outline steps or describe what you would do. Actually perform the ed
             agent=self.agent,
             result=result,
             query_or_prompt=content,
-            agent_name="editor_agent",
-            file_type="edited",
-            additional_metadata={"execution_time": execution_time}
+            agent_type="editor"
         )
         
         return result 

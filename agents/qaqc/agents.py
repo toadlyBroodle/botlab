@@ -126,9 +126,7 @@ Do not modify either of the outputs you are given, only provide a comparison and
             agent=self.agent,
             result=result,
             query_or_prompt=prompt,
-            agent_name="qaqc_agent",
-            file_type="comparison",
-            additional_metadata={"execution_time": execution_time}
+            agent_type="qaqc"
         )
         
         return result 

@@ -6,12 +6,19 @@
 .../botlab/agents/
                 |__ .venv/
                 |__ editor/
+                |   |__ data/
                 |__ manager/
+                |   |__ data/
                 |__ qaqc/
+                |   |__ data/
                 |__ researcher/
+                |   |__ data/
+                |   |   |__ papers/
                 |__ utils/
+                |   |__ file_manager/
                 |   |__ gemini/
                 |__ writer_critic/
+                    |__ data/
 
 ### smolagent source code
 - smolagent source code is located in *agents/.venv/lib/python3.11/site-packages/smolagents/*
@@ -32,13 +39,28 @@
                 poetry run python -m researcher.example
                 ```
 - *utils/* contains shared utils for the project
+    - *file_manager/* contains the FileManager for centralized file handling
     - *gemini/* contains google gemini llm api utils
-- *researcher/*, *manager/*, *writer_critic/*, and *editor/* are separate smolagent projects
+- *researcher/*, *manager/*, *writer_critic/*, *editor/*, and *qaqc/* are separate smolagent projects
     - smolagent project have these common files:
         - `__init__.py`
         - `agents.py` : project agents
         - `example.py` : example usages
         - `tools.py` : tools used by the agents
+        - `data/` : directory for storing agent outputs with human-readable date prefixes
+
+### file management
+- Each agent has its own data directory (e.g., researcher/data/)
+- Files are saved with human-readable date prefixes (YYYY-MM-DD_HH-MM)
+- The FileManager handles saving and loading files from the correct locations
+- Use `load_file(agent_type)` to load the latest file from an agent
+- Use `save_final_answer(agent, result, query_or_prompt, agent_type)` to save outputs
+- PDF files are temporarily saved to researcher/data/papers/ and deleted after conversion to markdown
+
+### agent projects
+- *researcher/* is a smolagent project for web search and information gathering
+    - uses DuckDuckGo for web search, arXiv for academic papers
+    - supports PDF to markdown conversion with files saved to researcher/data/papers/
 - *manager/* is a smolagent project for coordinating multiple agents
     - provides manager_agent which can orchestrate other agents
     - supports customizing agent descriptions and prompts via the --use-custom-prompts flag
@@ -47,6 +69,9 @@
     - contains the same common files as other projects
     - provides editor_agent which internally uses fact_checker_agent as a subagent
     - fact_checker_agent should not be used directly, only through editor_agent
+- *writer_critic/* is a smolagent project for drafting content with feedback
+    - provides writer_agent which internally uses critic_agent for feedback
+- *qaqc/* is a smolagent project for comparing outputs and selecting the best one
 
 ### general rules
 - ALWAYS use Do Not Repeat Yourself (DRY) principles, and avoid duplicating code

@@ -28,7 +28,7 @@ def parse_args():
                         help="Maximum steps for each agent. Can be either: "
                              "- An integer (same value for all agents) "
                              "- A comma-separated string (e.g., '5,4,9,1' for different values per agent)")
-    parser.add_argument("--state-file", type=str, default="../shared_data/logs/agent_loop_state.json",
+    parser.add_argument("--state-file", type=str, default="logs/agent_loop_state.json",
                         help="Path to a file for persisting state between runs")
     parser.add_argument("--load-state", action="store_true", 
                         help="Whether to load state from state_file if it exists (default: False)")

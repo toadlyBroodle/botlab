@@ -36,15 +36,9 @@ class ConversionStatus:
         self.error = None
 
 def get_paper_path(paper_id: str, extension: str = ".pdf") -> Path:
-    """Get the path for a paper file using the FileManager."""
-    # Initialize file manager
-    file_manager = FileManager()
-    
-    # Get the directory for paper files
-    from utils.file_manager.file_manager import RESEARCH_PAPERS_DIR
-    
-    # Return the path in the research/papers directory
-    return RESEARCH_PAPERS_DIR / f"{paper_id}{extension}"
+    """Get the path for a paper file in the papers directory."""
+    from utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
+    return RESEARCHER_PAPERS_DIR / f"{paper_id}{extension}"
 
 def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
     """Convert PDF to Markdown in a separate thread."""
@@ -54,21 +48,36 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
         # Import here to avoid loading the library unless needed
         import pymupdf4llm
         
+        # Convert PDF to markdown
         markdown = pymupdf4llm.to_markdown(pdf_path, show_progress=False)
-        md_path = get_paper_path(paper_id, ".md")
         
         # Initialize file manager
         file_manager = FileManager()
+        
+        # Get the status object to extract the URL
+        status = conversion_statuses.get(paper_id)
+        
+        # Extract a title from the URL if available
+        title = "Unknown"
+        if status and status.url:
+            url = status.url
+            title = url.split('/')[-1].replace('.pdf', '') if url.lower().endswith('.pdf') else f"Paper_{paper_id}"
+        else:
+            title = f"Paper_{paper_id}"
         
         # Save the markdown content using the file manager
         file_id = file_manager.save_file(
             content=markdown,
             file_type="paper",
-            title=f"Paper_{paper_id}",
-            metadata={"paper_id": paper_id, "source": "pdf_conversion"},
+            title=title,
+            metadata={
+                "paper_id": paper_id, 
+                "agent_name": "researcher_agent"
+            },
             extension=".md"
         )
-
+        
+        # Update conversion status
         status = conversion_statuses.get(paper_id)
         if status:
             status.status = "success"
@@ -76,7 +85,7 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
             
         # Clean up PDF after successful conversion
         pdf_path.unlink()
-        logger.info(f"Conversion completed for {paper_id}")
+        logger.info(f"Conversion completed for {paper_id}, saved with file_id: {file_id}")
         
     except Exception as e:
         logger.error(f"Conversion failed for {paper_id}: {str(e)}")
@@ -109,6 +118,9 @@ def pdf_to_markdown(url: str) -> str:
         status = ConversionStatus(paper_id, url)
         conversion_statuses[paper_id] = status
         
+        # Extract a title from the URL
+        title = url.split('/')[-1].replace('.pdf', '') if url.lower().endswith('.pdf') else paper_id
+        
         # Download the PDF
         logger.info(f"Downloading PDF from {url}")
         response = requests.get(url, stream=True)
@@ -127,9 +139,6 @@ def pdf_to_markdown(url: str) -> str:
             status.error = f"URL does not point to a PDF file: {content_type}"
             return f"Error: URL does not appear to point to a PDF file. Content-Type: {content_type}"
         
-        # Save the PDF locally using the FileManager
-        file_manager = FileManager()
-        
         # Get the path where the PDF should be saved
         pdf_path = get_paper_path(paper_id)
         
@@ -142,21 +151,27 @@ def pdf_to_markdown(url: str) -> str:
         # Update status
         status.status = "processing"
         
-        # Start conversion in a separate thread
-        thread = threading.Thread(
+        # Start the conversion in a background thread
+        conversion_thread = threading.Thread(
             target=convert_pdf_to_markdown,
             args=(paper_id, pdf_path)
         )
-        thread.daemon = True
-        thread.start()
+        conversion_thread.daemon = True
+        conversion_thread.start()
         
-        return (
-            f"PDF download successful. Converting to markdown in the background.\n"
-            f"Paper ID: {paper_id}\n"
-            f"You can check the status with check_conversion_status('{paper_id}')\n"
-            f"Once complete, you can read the markdown with read_paper_markdown('{paper_id}')"
-        )
+        # Return a message with the paper ID and title
+        return f"""PDF download started for "{title}". Paper ID: {paper_id}
         
+To check the conversion status, use:
+```python
+check_conversion_status("{paper_id}")
+```
+
+Once the conversion is complete, you can read the markdown with:
+```python
+read_paper_markdown("{paper_id}")
+```
+"""
     except Exception as e:
         logger.error(f"Error in pdf_to_markdown: {str(e)}")
         return f"Error: Failed to process PDF: {str(e)}"
@@ -166,14 +181,15 @@ def check_conversion_status(paper_id: str) -> str:
     """Check the status of a PDF to markdown conversion.
     
     Args:
-        paper_id: The ID of the paper conversion to check
+        paper_id: The ID of the paper to check
         
     Returns:
         A message with the current status of the conversion
     """
     status = conversion_statuses.get(paper_id)
+    
     if not status:
-        return f"Error: No conversion found with ID {paper_id}"
+        return f"Error: No conversion found for paper ID {paper_id}"
     
     result = f"Conversion status for {paper_id}:\n"
     result += f"Status: {status.status}\n"
@@ -181,7 +197,7 @@ def check_conversion_status(paper_id: str) -> str:
     
     if status.completed_at:
         result += f"Completed at: {status.completed_at}\n"
-        
+    
     if status.error:
         result += f"Error: {status.error}\n"
         
@@ -201,27 +217,18 @@ def read_paper_markdown(paper_id: str) -> str:
         # Initialize file manager
         file_manager = FileManager()
         
-        # Try to find the file by searching for files with the paper_id in metadata
+        # Find the file by searching for files with the paper_id in metadata
         paper_files = file_manager.list_files(
             file_type="paper", 
             filter_criteria={"paper_id": paper_id}
         )
         
-        if paper_files:
-            # Get the first matching file
-            file_data = file_manager.get_file(paper_files[0]["file_id"])
-            return file_data["content"]
-        
-        # If not found in metadata, try the traditional path approach as fallback
-        md_path = get_paper_path(paper_id, ".md")
-        
-        if not md_path.exists():
+        if not paper_files:
             return f"Error: No markdown file found for paper ID {paper_id}"
         
-        with open(md_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        
-        return content
+        # Get the first matching file
+        file_data = file_manager.get_file(paper_files[0]["file_id"])
+        return file_data["content"]
     
     except Exception as e:
         logger.error(f"Error reading paper markdown: {str(e)}")

@@ -207,9 +207,7 @@ IMPORTANT: Your final_answer MUST include your complete final draft in its entir
             agent=self.agent,
             result=result,
             query_or_prompt=prompt,
-            agent_name="writer_agent",
-            file_type="draft",
-            additional_metadata={"execution_time": execution_time}
+            agent_type="writer_critic"
         )
         
         return result 

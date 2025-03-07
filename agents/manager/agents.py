@@ -1,7 +1,7 @@
 from typing import List, Optional
 from smolagents import CodeAgent
 from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from utils.agents.tools import apply_custom_agent_prompts, load_latest_draft, load_latest_report, load_file, save_final_answer
+from utils.agents.tools import apply_custom_agent_prompts, load_file, save_final_answer
 import time
 
 
@@ -49,7 +49,7 @@ class ManagerAgent:
         available_agents_text = ", ".join(available_agents)
                 
         self.agent = CodeAgent(
-            tools=[load_latest_draft, load_latest_report, load_file],
+            tools=[load_file],
             model=self.model,
             managed_agents=self.managed_agents,
             additional_authorized_imports=["time", "json", "re"],
@@ -108,9 +108,7 @@ Always maintain a clean, organized format in your responses, including citations
             agent=self.agent,
             result=result,
             query_or_prompt=query,
-            agent_name="manager_agent",
-            file_type="report",
-            additional_metadata={"execution_time": execution_time}
+            agent_type="manager"
         )
         
         return result

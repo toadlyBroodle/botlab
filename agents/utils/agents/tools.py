@@ -1,7 +1,7 @@
 import os
 import yaml
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import logging
 from typing import Dict, Any, Tuple, Optional, Union
@@ -12,6 +12,14 @@ import requests
 import json
 from pathlib import Path
 import pytz
+import re
+import uuid
+import hashlib
+from smolagents import Tool
+
+# Import Google Generative AI library for direct Gemini search
+from google import genai
+from google.genai.types import Tool as GenaiTool, GenerateContentConfig, GoogleSearch
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -28,6 +36,15 @@ _consecutive_failures = 0
 _base_wait_time = 5.0
 _current_rate_limit = _base_wait_time  # Initialize with base wait time
 _max_backoff_time = 300.0 # 5 minutes
+
+# Variables for Gemini search fallback
+_using_gemini_fallback = False
+_gemini_fallback_until = 0  # Timestamp until which to use Gemini fallback
+_gemini_fallback_duration = 300  # Duration to use Gemini fallback in seconds (5 minutes)
+_gemini_search_count = 0  # Count of Gemini searches performed today
+_gemini_search_limit = 500  # Daily limit for Gemini searches
+_gemini_search_reset_time = 0  # Time when the search count was last reset
+_gemini_client = None  # Lazy-loaded Gemini client
 
 def get_timestamp() -> str:
     """Get current timestamp in a human-readable format.
@@ -97,12 +114,150 @@ def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     # Reinitialize the system prompt to apply the new template
     agent.system_prompt = agent.initialize_system_prompt()
 
+def _initialize_gemini_client():
+    """Initialize the Gemini client for search.
+    
+    Returns:
+        The initialized Gemini client or None if initialization fails
+    """
+    global _gemini_client
+    
+    if _gemini_client is None:
+        # Get the Google API key from environment
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            logger.warning("GEMINI_API_KEY not set. Gemini search fallback will not work.")
+            return None
+            
+        try:
+            # Initialize the Gemini client with the current API
+            # The Client constructor now takes the API key directly
+            _gemini_client = genai.Client(api_key=api_key)
+            logger.info("Initialized Gemini client for search fallback")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini client: {e}")
+            return None
+            
+    return _gemini_client
+
+def _check_gemini_search_limit():
+    """Check if we've exceeded the daily Gemini search limit.
+    
+    Returns:
+        Tuple of (limit_exceeded, current_count, limit)
+    """
+    global _gemini_search_count, _gemini_search_limit, _gemini_search_reset_time
+    
+    # Check if we need to reset the counter (daily)
+    current_time = time.time()
+    if _gemini_search_reset_time == 0:
+        # Initialize reset time to next midnight
+        now = datetime.now()
+        tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        _gemini_search_reset_time = tomorrow.timestamp()
+    elif current_time > _gemini_search_reset_time:
+        # Reset counter and set new reset time
+        _gemini_search_count = 0
+        now = datetime.now()
+        tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        _gemini_search_reset_time = tomorrow.timestamp()
+        logger.info(f"Reset Gemini search counter. Next reset at {datetime.fromtimestamp(_gemini_search_reset_time)}")
+    
+    # Check if we've exceeded the limit
+    return _gemini_search_count >= _gemini_search_limit, _gemini_search_count, _gemini_search_limit
+
+def _perform_gemini_search(query: str, max_results: int = 10) -> str:
+    """Perform a search using Gemini's search grounding capability.
+    
+    Args:
+        query: The search query
+        max_results: Maximum number of results (not directly used but kept for API compatibility)
+        
+    Returns:
+        Formatted search results as a markdown string
+    """
+    global _gemini_search_count
+    
+    # Check if we've exceeded the daily search limit
+    limit_exceeded, current_count, limit = _check_gemini_search_limit()
+    if limit_exceeded:
+        return f"Error: Daily Gemini search limit exceeded ({current_count}/{limit}). Try again tomorrow."
+    
+    # Initialize the Gemini client
+    client = _initialize_gemini_client()
+    if client is None:
+        return "Error: Gemini search unavailable. GOOGLE_API_KEY may not be set."
+    
+    try:
+        # Create the search tool
+        google_search_tool = GenaiTool(
+            google_search=GoogleSearch()
+        )
+        
+        # Perform the search using Gemini
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=query,
+            config=GenerateContentConfig(
+                tools=[google_search_tool],
+                response_modalities=["TEXT"],
+            )
+        )
+        
+        # Increment the search counter
+        _gemini_search_count += 1
+        
+        # Extract the main content
+        main_content = ""
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'content') and candidate.content:
+                for part in candidate.content.parts:
+                    if hasattr(part, 'text'):
+                        main_content += part.text + "\n"
+        
+        # Format the result
+        result = f"# Search Results for: {query}\n\n{main_content.strip()}\n\n"
+        
+        # Add grounding sources if available
+        sources_info = ""
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'grounding_metadata'):
+                grounding_metadata = candidate.grounding_metadata
+                
+                # Add search suggestions if available
+                if hasattr(grounding_metadata, 'web_search_queries') and grounding_metadata.web_search_queries:
+                    sources_info += "\n## Related Searches\n"
+                    for query in grounding_metadata.web_search_queries:
+                        sources_info += f"- {query}\n"
+                
+                # Add source information if available
+                if hasattr(grounding_metadata, 'grounding_chunks') and grounding_metadata.grounding_chunks:
+                    sources_info += "\n## Sources\n"
+                    for i, chunk in enumerate(grounding_metadata.grounding_chunks):
+                        if hasattr(chunk, 'web') and hasattr(chunk.web, 'uri') and hasattr(chunk.web, 'title'):
+                            sources_info += f"{i+1}. [{chunk.web.title}]({chunk.web.uri})\n"
+        
+        # Add sources information if available
+        if sources_info:
+            result += sources_info
+        
+        # Add a note about the search provider
+        result += f"\n\n---\n*Note: These results were provided by Gemini Search due to DuckDuckGo rate limiting. Search count: {_gemini_search_count}/{_gemini_search_limit}*"
+        
+        return result
+    except Exception as e:
+        logger.error(f"Gemini search error: {e}")
+        return f"Error performing Gemini search: {str(e)}"
+
 @tool
 def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.0, max_retries: int = 3) -> str:
-    """Performs a DuckDuckGo web search with intelligent rate limiting to avoid being blocked.
+    """Performs a web search with intelligent rate limiting and fallback mechanisms.
     
-    This tool uses exponential backoff and jitter to handle rate limits gracefully. When rate limits
-    are encountered, it will automatically retry with increasing wait times between attempts.
+    This tool primarily uses DuckDuckGo for web searches, but will temporarily switch to
+    Gemini Search if DuckDuckGo rate limits are encountered repeatedly. This provides
+    a robust search capability that can handle rate limiting gracefully.
     
     DuckDuckGo search operators:
     - Use quotes for exact phrases: "climate change solutions"
@@ -125,6 +280,21 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
         Formatted search results as a markdown string with titles, URLs, and snippets
     """
     global _last_search_time, _consecutive_failures, _base_wait_time, _max_backoff_time, _current_rate_limit
+    global _using_gemini_fallback, _gemini_fallback_until, _gemini_fallback_duration
+
+    # Check if we should use Gemini fallback
+    current_time = time.time()
+    if _using_gemini_fallback and current_time < _gemini_fallback_until:
+        # We're in fallback mode, use Gemini search
+        time_left = int(_gemini_fallback_until - current_time)
+        logger.info(f"Using Gemini search fallback (DuckDuckGo cooling off for {time_left} more seconds)")
+        return _perform_gemini_search(query, max_results)
+
+    # If fallback period has expired, reset the fallback flag
+    if _using_gemini_fallback and current_time >= _gemini_fallback_until:
+        _using_gemini_fallback = False
+        _consecutive_failures = 0  # Reset failures when coming out of fallback
+        logger.info("Fallback period expired, switching back to DuckDuckGo search")
 
     # Limit max_retries to 5 if a larger value is passed
     if max_retries > 5:
@@ -189,9 +359,11 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
                     time.sleep(backoff_time)
                     continue
                 else:
-                    # Reset consecutive failures before returning
-                    _consecutive_failures = 0
-                    return f"Error: DuckDuckGo search failed after {retries} retries. Last result: {result}"
+                    # Max retries exceeded - switch to Gemini fallback
+                    logger.warning(f"DuckDuckGo search failed after {retries} retries. Switching to Gemini search fallback.")
+                    _using_gemini_fallback = True
+                    _gemini_fallback_until = time.time() + _gemini_fallback_duration
+                    return _perform_gemini_search(query, max_results)
             
             # Success - reset consecutive failures, rate limit, and update last search time
             _consecutive_failures = 0
@@ -223,19 +395,22 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
                     logger.info(f"Rate limit detected. Retrying in {backoff_time:.2f} seconds (failure count: {_consecutive_failures})...")
                     time.sleep(backoff_time)
                 else:
-                    # Max retries exceeded - reset consecutive failures before returning
-                    _consecutive_failures = 0
-                    return f"Error: DuckDuckGo search rate limit exceeded after {retries} retries."
+                    # Max retries exceeded - switch to Gemini fallback
+                    logger.warning(f"DuckDuckGo search rate limited after {retries} retries. Switching to Gemini search fallback.")
+                    _using_gemini_fallback = True
+                    _gemini_fallback_until = time.time() + _gemini_fallback_duration
+                    return _perform_gemini_search(query, max_results)
             else:
                 # Not a rate limit error, just return the error
-                # Reset consecutive failures before returning
-                _consecutive_failures = 0
+                logger.error(f"Non-rate-limit error in search: {error_message}")
                 return f"Error performing search: {error_message}"
     
     # This should not be reached, but just in case
-    # Reset consecutive failures before returning
-    _consecutive_failures = 0
-    return "Error: Unable to complete search after multiple attempts."
+    # Switch to Gemini fallback if we've had too many failures
+    logger.warning("Unable to complete search after multiple attempts. Switching to Gemini search fallback.")
+    _using_gemini_fallback = True
+    _gemini_fallback_until = time.time() + _gemini_fallback_duration
+    return _perform_gemini_search(query, max_results)
 
 @tool
 def visit_webpage(url: str) -> str:
@@ -252,226 +427,83 @@ def visit_webpage(url: str) -> str:
     return webpage_tool.forward(url)
 
 @tool
-def load_latest_draft(agent_name: str = None) -> str:
-    """Load the most recent draft file.
+def load_file(agent_type: Optional[str] = None, version: str = "latest") -> str:
+    """Load a file from an agent's data directory.
     
-    This tool retrieves the most recent draft file from the system. Draft files are typically saved by:
-    - Writer agent: When creating draft versions
-    - Editor agent: When saving major revisions
-    
-    The drafts are stored in chronological order, so this will return the most recently saved draft
-    by default. If agent_name is specified, it will return the most recent draft created by that agent.
-    
-    Use this tool to continue work from where a previous agent left off. The tool will show which 
-    agent created the draft in the "Created by" field.
+    This tool retrieves files from agent-specific data directories. Each agent stores its
+    output files in its own data directory (e.g., researcher/data/, editor/data/).
     
     Args:
-        agent_name: Optional. If provided, only drafts created by this agent will be considered.
-                   Common values: "writer_agent", "editor_agent"
+        agent_type: The type of agent to load files from. Options include:
+                   "researcher", "manager", "editor", "writer_critic", "qaqc".
+                   If None, files from all agents will be considered.
+        version: Which version to load. Options:
+                - "latest": The most recent file (default)
+                - "previous": The second most recent file
     
     Returns:
-        The content of the most recent draft, or an error message if no drafts are found.
+        The content of the file, or an error message if no files are found.
     """
     try:
-        from utils.file_manager import FileManager
-        from datetime import datetime
+        from utils.file_manager.file_manager import FileManager
         
         # Initialize file manager
         file_manager = FileManager()
         
-        # Get all draft files
-        drafts = file_manager.list_files(file_type="draft")
+        # Map agent_type to agent_name used in metadata
+        agent_name_map = {
+            "researcher": "researcher_agent",
+            "manager": "manager_agent",
+            "editor": "editor_agent",
+            "writer_critic": "writer_critic_agent",
+            "qaqc": "qaqc_agent"
+        }
         
-        if not drafts:
-            return "No draft files found."
+        # Convert agent_type to agent_name if provided
+        agent_name = None
+        if agent_type:
+            agent_name = agent_name_map.get(agent_type)
+            if not agent_name:
+                return f"Error: Invalid agent_type '{agent_type}'. Valid options are: researcher, manager, editor, writer_critic, qaqc."
         
-        # Filter by agent_name if specified
+        # Get all files, potentially filtered by agent_name
+        all_files = []
+        
+        # If agent_name is specified, filter files by that agent
         if agent_name:
-            filtered_drafts = []
-            for draft in drafts:
-                # Get the full file to check metadata
-                full_draft = file_manager.get_file(draft['file_id'])
-                draft_agent = full_draft["metadata"].get("agent_name", 
-                              full_draft["metadata"].get("source", "Unknown"))
-                
-                if draft_agent == agent_name:
-                    filtered_drafts.append(draft)
-            
-            if not filtered_drafts:
-                return f"No draft files found created by '{agent_name}'."
-            
-            drafts = filtered_drafts
+            filter_criteria = {"agent_name": agent_name}
+            all_files = file_manager.list_files(filter_criteria=filter_criteria)
+        else:
+            # Get all files
+            all_files = file_manager.list_files()
+        
+        if not all_files:
+            if agent_type:
+                return f"No files found for agent type '{agent_type}'."
+            else:
+                return "No files found."
         
         # Sort by creation date (newest first)
-        sorted_drafts = sorted(drafts, key=lambda x: x.get('created_at', ''), reverse=True)
+        sorted_files = sorted(all_files, key=lambda x: x.get('created_at', ''), reverse=True)
         
-        if sorted_drafts:
-            # Get the latest draft
-            latest_draft = file_manager.get_file(sorted_drafts[0]['file_id'])
-            
-            # Return information about the draft
-            title = latest_draft["metadata"].get("title", "Untitled")
-            created_at = latest_draft["metadata"].get("created_at", "Unknown date")
-            word_count = latest_draft["metadata"].get("word_count", "Unknown")
-            
-            # Get agent information
-            source = latest_draft["metadata"].get("source", "Unknown")
-            agent_name = latest_draft["metadata"].get("agent_name", source)
-            
-            # Format creation date for better readability
-            try:
-                created_dt = datetime.fromisoformat(created_at)
-                created_at = created_dt.strftime("%Y-%m-%d %H:%M:%S")
-            except:
-                pass  # Keep the original format if parsing fails
-            
-            return f"Latest draft: '{title}'\nCreated: {created_at}\nWords: {word_count}\nCreated by: {agent_name}\n\n{latest_draft['content']}"
+        # Get the requested version
+        if version == "latest":
+            index = 0
+        elif version == "previous":
+            if len(sorted_files) < 2:
+                return "No previous version found. Only one file exists."
+            index = 1
+        else:
+            return f"Error: Invalid version '{version}'. Valid options are: 'latest' or 'previous'."
         
-        return "No draft files found."
+        # Get the file data
+        file_data = file_manager.get_file(sorted_files[index]['file_id'])
+        
+        # Return just the content
+        return file_data['content']
         
     except Exception as e:
-        return f"Error loading latest draft: {str(e)}"
-
-@tool
-def load_latest_report(agent_name: str = None) -> str:
-    """Load the most recent report file.
-    
-    This tool retrieves the most recent report file from the system. Report files are typically saved by:
-    - Researcher agent: When saving research findings and compiled information
-    - Editor agent: When saving final, polished content after thorough review and fact-checking
-    
-    The reports are stored in chronological order, so this will return the most recently saved report
-    by default. If agent_name is specified, it will return the most recent report created by that agent.
-    
-    Use this tool to access the most recent finalized content or research. The tool will show which 
-    agent created the report in the "Created by" field.
-    
-    Args:
-        agent_name: Optional. If provided, only reports created by this agent will be considered.
-                   Common values: "researcher_agent", "editor_agent"
-    
-    Returns:
-        The content of the most recent report, or an error message if no reports are found.
-    """
-    try:
-        from utils.file_manager import FileManager
-        from datetime import datetime
-        
-        # Initialize file manager
-        file_manager = FileManager()
-        
-        # Get all report files
-        reports = file_manager.list_files(file_type="report")
-        
-        if not reports:
-            return "No report files found."
-        
-        # Filter by agent_name if specified
-        if agent_name:
-            filtered_reports = []
-            for report in reports:
-                # Get the full file to check metadata
-                full_report = file_manager.get_file(report['file_id'])
-                report_agent = full_report["metadata"].get("agent_name", 
-                               full_report["metadata"].get("source", "Unknown"))
-                
-                if report_agent == agent_name:
-                    filtered_reports.append(report)
-            
-            if not filtered_reports:
-                return f"No report files found created by '{agent_name}'."
-            
-            reports = filtered_reports
-        
-        # Sort by creation date (newest first)
-        sorted_reports = sorted(reports, key=lambda x: x.get('created_at', ''), reverse=True)
-        
-        if sorted_reports:
-            # Get the latest report
-            latest_report = file_manager.get_file(sorted_reports[0]['file_id'])
-            
-            # Return information about the report
-            title = latest_report["metadata"].get("title", "Untitled")
-            created_at = latest_report["metadata"].get("created_at", "Unknown date")
-            word_count = latest_report["metadata"].get("word_count", "Unknown")
-            
-            # Get agent information
-            source = latest_report["metadata"].get("source", "Unknown")
-            agent_name = latest_report["metadata"].get("agent_name", source)
-            
-            # Format creation date for better readability
-            try:
-                created_dt = datetime.fromisoformat(created_at)
-                created_at = created_dt.strftime("%Y-%m-%d %H:%M:%S")
-            except:
-                pass  # Keep the original format if parsing fails
-            
-            return f"Latest report: '{title}'\nCreated: {created_at}\nWords: {word_count}\nCreated by: {agent_name}\n\n{latest_report['content']}"
-        
-        return "No report files found."
-        
-    except Exception as e:
-        return f"Error loading latest report: {str(e)}"
-
-@tool
-def load_file(file_identifier: str) -> str:
-    """Load a file by its unique ID or filename.
-    
-    This tool retrieves a specific file using either its unique identifier or filename. 
-    File IDs are typically returned when an agent saves a file, while filenames include 
-    the timestamp and title in the format: "YYYYMMDD_HHMMSS_projectid_title.md"
-    
-    Use this tool when you need to access a specific file that isn't the latest. The tool
-    will show detailed metadata including which agent created the file.
-    
-    The file types and their typical sources are:
-    
-    - draft: Writer agent drafts and Editor agent edits
-    - report: Researcher agent findings and Editor agent final content
-    - paper: Research papers downloaded and converted by the Researcher agent
-    - resource: Various downloaded resources and cached data
-    
-    Args:
-        file_identifier: The unique identifier or filename of the file
-        
-    Returns:
-        The content of the file, or an error message if the file is not found.
-    """
-    try:
-        from utils.file_manager import FileManager
-        from datetime import datetime
-        
-        # Initialize file manager
-        file_manager = FileManager()
-        
-        # Get the file
-        file_data = file_manager.get_file(file_identifier)
-        
-        # Return information about the file
-        title = file_data["metadata"].get("title", "Untitled")
-        file_type = file_data["metadata"].get("file_type", "Unknown type")
-        created_at = file_data["metadata"].get("created_at", "Unknown date")
-        
-        # Get agent information
-        source = file_data["metadata"].get("source", "Unknown")
-        agent_name = file_data["metadata"].get("agent_name", source)
-        
-        # Format creation date for better readability
-        try:
-            created_dt = datetime.fromisoformat(created_at)
-            created_at = created_dt.strftime("%Y-%m-%d %H:%M:%S")
-        except:
-            pass  # Keep the original format if parsing fails
-        
-        # Get additional metadata that might be useful
-        word_count = file_data["metadata"].get("word_count", "Unknown")
-        version = file_data["metadata"].get("version", "")
-        version_info = f", Version: {version}" if version else ""
-        
-        return f"File: '{title}'\nType: {file_type}\nCreated: {created_at}{version_info}\nWords: {word_count}\nCreated by: {agent_name}\n\n{file_data['content']}"
-        
-    except Exception as e:
-        return f"Error loading file '{file_identifier}': {str(e)}"
+        return f"Error loading file: {str(e)}"
 
 def extract_final_answer_from_memory(agent) -> Any:
     """Extract the final_answer from an agent's memory.
@@ -494,21 +526,18 @@ def extract_final_answer_from_memory(agent) -> Any:
     
     return None
 
-def save_final_answer(agent, result: str, query_or_prompt: str, agent_name: str, file_type: str = "report", 
-                     additional_metadata: Optional[Dict[str, Any]] = None) -> str:
-    """Extract the final answer from agent memory and save it to a file.
+def save_final_answer(agent, result: str, query_or_prompt: str, agent_type: str) -> str:
+    """Save the agent's final answer to a file in the agent's data directory.
     
     This function extracts the final_answer from an agent's memory if available,
     otherwise it uses the provided result. It then saves the content to a file
-    using the FileManager.
+    in the agent's data directory.
     
     Args:
         agent: The agent instance with memory
         result: The result from the agent.run() call
         query_or_prompt: The original query or prompt given to the agent
-        agent_name: The name of the agent (e.g., "researcher_agent")
-        file_type: The type of file to save ("report" or "draft")
-        additional_metadata: Optional additional metadata to include
+        agent_type: The type of agent (e.g., "researcher", "editor")
         
     Returns:
         The file ID of the saved file, or an error message
@@ -519,13 +548,27 @@ def save_final_answer(agent, result: str, query_or_prompt: str, agent_name: str,
         # Initialize file manager
         file_manager = FileManager()
         
+        # Map agent_type to agent_name used in metadata
+        agent_name_map = {
+            "researcher": "researcher_agent",
+            "manager": "manager_agent",
+            "editor": "editor_agent",
+            "writer_critic": "writer_critic_agent",
+            "qaqc": "qaqc_agent"
+        }
+        
+        # Convert agent_type to agent_name
+        agent_name = agent_name_map.get(agent_type)
+        if not agent_name:
+            return f"Error: Invalid agent_type '{agent_type}'. Valid options are: researcher, manager, editor, writer_critic, qaqc."
+        
         # Extract final_answer from agent memory if available
         final_answer_content = result
         extracted_answer = extract_final_answer_from_memory(agent)
         
         if extracted_answer is not None:
             final_answer_content = extracted_answer
-            print(f"Found final_answer in {agent_name} memory")
+            print(f"Found final_answer in {agent_type} agent memory")
         
         # Extract a title from the content or use the query/prompt
         title = query_or_prompt
@@ -539,35 +582,26 @@ def save_final_answer(agent, result: str, query_or_prompt: str, agent_name: str,
         # Truncate long titles
         if len(title) > 50:
             title = title[:50] + "..."
-            
-        # Calculate word count
-        word_count = len(final_answer_content.split()) if isinstance(final_answer_content, str) else 0
         
-        # Prepare metadata
+        # Minimal required metadata
         metadata = {
             "agent_name": agent_name,
-            "query_or_prompt": query_or_prompt,
-            "word_count": word_count,
-            "timestamp": datetime.now().isoformat()
+            "query_or_prompt": query_or_prompt
         }
-        
-        # Add additional metadata if provided
-        if additional_metadata:
-            metadata.update(additional_metadata)
         
         # Save the file
         file_id = file_manager.save_file(
             content=final_answer_content if isinstance(final_answer_content, str) else str(final_answer_content),
-            file_type=file_type,
+            file_type="report",  # Use a default file_type
             title=title,
             metadata=metadata
         )
         
-        print(f"Saved {agent_name} output to {file_type} file with ID: {file_id}")
+        print(f"Saved {agent_type} output to agent's data directory with ID: {file_id}")
         return file_id
     
     except Exception as e:
-        error_msg = f"Error saving {agent_name} output: {str(e)}"
+        error_msg = f"Error saving {agent_type} output: {str(e)}"
         print(error_msg)
         return error_msg
 
