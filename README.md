@@ -75,6 +75,47 @@ poetry install
 
 For detailed instructions, please refer to the respective README files in each directory.
 
+## 📦 Using Botlab in Other Projects
+
+You can easily use botlab agents in your own projects by adding it as a Git submodule:
+
+```bash
+# Add botlab as a submodule to your project
+cd your-project
+git submodule add https://github.com/yourusername/botlab.git
+git commit -m "Add botlab as submodule"
+
+# Install dependencies
+cd botlab/agents
+poetry install
+```
+
+Then in your Python code:
+
+```python
+import os
+import sys
+from dotenv import load_dotenv
+
+# Add botlab to Python path
+sys.path.append("./botlab")
+
+# Import the agent you need
+from botlab.agents.researcher.agents import ResearcherAgent
+
+# Setup and use the agent
+load_dotenv()
+researcher = ResearcherAgent()
+result = researcher.run_query("Your query here")
+```
+
+To update the submodule when botlab changes:
+
+```bash
+git submodule update --remote botlab
+git commit -m "Update botlab submodule"
+```
+
 ## 🤝 Contributing
 
 1. Fork and clone the repository
