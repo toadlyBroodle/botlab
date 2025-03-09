@@ -84,7 +84,7 @@ def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
         raise ValueError(f"Cannot determine agent type from class: {agent_class_name}")
     
     # Determine template path based on agent type
-    base_dir = 'utils/agents'
+    base_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of the current file
     if agent_type.lower() == 'code':
         template_path = os.path.join(base_dir, 'code_agent.yaml')
     elif agent_type.lower() == 'toolcalling':
