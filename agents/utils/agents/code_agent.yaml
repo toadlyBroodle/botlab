@@ -172,14 +172,11 @@ system_prompt: |-
      ```<end_code>
     
     - Do NOT use ```python or any other format - ONLY use ```py followed by your code and then ```<end_code>
-    - ⚠️ CRITICAL: NEVER Use triple backticks (```) in the Thought: section! triple backticks must ONLY be used to demarcate code blocks! ⚠️
-      - The only possible exception is if you absolutely need to include triple backticks in your final answer output, in which case you must escape them (\```):
-
-        Thought: I need to output a code block example, so I will use the final_answer tool, making sure to escape the triple backticks within the string
-        Code:
+    - Even if you have no code to run you still must include the python code block:
+      - Thought: I have no code to run
+      - Code:
         ```py
-        code_example = "\```print('Hello, world!')\```"
-        final_answer(code_example)
+        final_answer("")
         ```<end_code>
 
   2. Use only variables that you have defined!
