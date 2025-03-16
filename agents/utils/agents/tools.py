@@ -638,6 +638,7 @@ def generate_image(prompt: str) -> str:
         client = genai.Client(api_key=api_key)
         
         # Generate the image
+        logger.info(f"Generating image with prompt: {prompt}")
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=prompt,
@@ -646,14 +647,77 @@ def generate_image(prompt: str) -> str:
             )
         )
         
+        # Print complete response for debugging
+        logger.debug("Complete API Response:")
+        logger.debug(f"Response type: {type(response)}")
+        logger.debug(f"Response dir: {dir(response)}")
+        
+        if hasattr(response, 'candidates') and response.candidates:
+            logger.debug("Candidates found:")
+            for i, candidate in enumerate(response.candidates):
+                logger.debug(f"Candidate {i}:")
+                logger.debug(f"Candidate type: {type(candidate)}")
+                if hasattr(candidate, 'content'):
+                    logger.debug(f"Content type: {type(candidate.content)}")
+                    if hasattr(candidate.content, 'parts'):
+                        logger.debug("Parts found:")
+                        for j, part in enumerate(candidate.content.parts):
+                            logger.debug(f"Part {j}:")
+                            if hasattr(part, 'inline_data'):
+                                logger.debug(f"Inline data type: {type(part.inline_data)}")
+                                if hasattr(part.inline_data, 'mime_type'):
+                                    logger.debug(f"Mime type: {part.inline_data.mime_type}")
+                                if hasattr(part.inline_data, 'data'):
+                                    logger.debug("Base64 data found (truncated)")
+        
         if not response.candidates or not response.candidates[0].content:
             raise Exception("No image was generated")
             
         # Extract image data
         image_data = None
         for part in response.candidates[0].content.parts:
-            if part.inline_data is not None:
-                image_data = base64.b64decode(part.inline_data.data)
+            if hasattr(part, 'inline_data') and part.inline_data is not None:
+                logger.debug(f"Found image data with mime type: {part.inline_data.mime_type}")
+                try:
+                    # Get the base64 data
+                    base64_data = part.inline_data.data
+                    
+                    # If it's already bytes, we can use it directly
+                    if isinstance(base64_data, bytes):
+                        image_data = base64_data
+                    else:
+                        # If it's a string, decode it from base64
+                        # Add padding if necessary
+                        if isinstance(base64_data, str):
+                            missing_padding = len(base64_data) % 4
+                            if missing_padding:
+                                base64_data += '=' * (4 - missing_padding)
+                            image_data = base64.b64decode(base64_data)
+                        else:
+                            raise Exception(f"Unexpected data type: {type(base64_data)}")
+                    
+                    # Log size of data
+                    logger.debug(f"Image data size: {len(image_data)} bytes")
+                    
+                    # Verify it's a valid PNG
+                    if not image_data.startswith(b'\x89PNG\r\n\x1a\n'):
+                        logger.error("Invalid PNG header")
+                        logger.error(f"First few bytes (hex): {image_data[:20].hex()}")
+                        raise Exception("Generated data does not have a valid PNG header")
+                        
+                    # Try to validate the image by loading it with PIL
+                    try:
+                        with BytesIO(image_data) as bio:
+                            img = Image.open(bio)
+                            img.verify()  # Verify it's a valid image
+                            logger.debug(f"Valid image detected: format={img.format}, size={img.size if hasattr(img, 'size') else 'unknown'}")
+                    except Exception as e:
+                        logger.error(f"PIL validation failed: {str(e)}")
+                        raise Exception(f"Invalid image data: {str(e)}")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing image data: {str(e)}")
+                    raise
                 break
                 
         if not image_data:
@@ -671,6 +735,8 @@ def generate_image(prompt: str) -> str:
         final_path = os.path.join(images_path, filename)
         with open(final_path, 'wb') as f:
             f.write(image_data)
+            
+        logger.info(f"Saved image to {final_path}, size: {os.path.getsize(final_path)} bytes")
         
         # Return the URL where the image will be served
         return f"{images_url.rstrip('/')}/{filename}"
