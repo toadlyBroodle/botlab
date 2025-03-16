@@ -18,6 +18,7 @@ from researcher.agents import ResearcherAgent
 from writer_critic.agents import WriterAgent, CriticAgent
 from editor.agents import EditorAgent, FactCheckerAgent
 from qaqc.agents import QAQCAgent
+from user_feedback.agents import UserFeedbackAgent
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""
@@ -171,7 +172,12 @@ class AgentLoop:
             "fact_checker_prompt": "Verify claims against reliable sources with precision. Identify potential inaccuracies and suggest corrections based on authoritative references.",
             
             "qaqc_description": "Quality assurance specialist with focus on comparing outputs and selecting the best one",
-            "qaqc_prompt": "Compare outputs based on quality, accuracy, completeness, and relevance to the original query. Select the best output and explain your reasoning."
+            "qaqc_prompt": "Compare outputs based on quality, accuracy, completeness, and relevance to the original query. Select the best output and explain your reasoning.",
+            
+            "user_email": "rob@botlab.dev",
+            "report_frequency": 1,
+            "user_feedback_description": "User feedback agent",
+            "user_feedback_prompt": "Provide feedback on the content"
         }
     
     def _initialize_agents(self):
@@ -216,6 +222,20 @@ class AgentLoop:
                             max_steps=max_steps,
                             agent_description=self.agent_configs.get('qaqc_description'),
                             system_prompt=self.agent_configs.get('qaqc_prompt')
+                        )
+                        self.agents[agent_type] = agent_instance
+                    
+                    elif agent_type.lower() == 'user_feedback':
+                        # Get user email from environment or config
+                        user_email = os.getenv("USER_EMAIL") or self.agent_configs.get('user_email')
+                        report_frequency = self.agent_configs.get('report_frequency', 1)
+                        
+                        agent_instance = UserFeedbackAgent(
+                            max_steps=max_steps,
+                            user_email=user_email,
+                            report_frequency=report_frequency,
+                            agent_description=self.agent_configs.get('user_feedback_description'),
+                            agent_prompt=self.agent_configs.get('user_feedback_prompt')
                         )
                         self.agents[agent_type] = agent_instance
                     
@@ -409,17 +429,41 @@ class AgentLoop:
                             else:
                                 result = "Not enough outputs to compare"
                                 print(result)
-                        else:
-                            # For all other agents, use their primary method
-                            if agent_type == "researcher":
-                                result = agent_instance.run_query(formatted_prompt)
-                            elif agent_type == "writer":
-                                result = agent_instance.write_draft(formatted_prompt)
-                            elif agent_type == "editor":
-                                result = agent_instance.edit_content(formatted_prompt)
+                        
+                        # Special handling for UserFeedbackAgent
+                        elif agent_type == "user_feedback":
+                            # Create a state dictionary to pass to the UserFeedbackAgent
+                            feedback_state = {
+                                "iteration": iteration + 1,
+                                "current_agent": agent_type,
+                                "query": query,
+                                "results": previous_results,
+                                "agent_sequence": self.agent_sequence
+                            }
+                            
+                            # Process feedback and update state
+                            updated_state = agent_instance.process_feedback(feedback_state)
+                            
+                            # Get the result (this will be the report or feedback processing summary)
+                            if agent_instance.should_report():
+                                result = agent_instance.generate_report(feedback_state)
+                                print(f"User feedback report sent: {result[:200]}...")
                             else:
-                                # Fall back to direct agent.agent.run() if no specific method is available
-                                result = agent_instance.agent.run(formatted_prompt)
+                                result = f"Checked for user feedback (reporting every {agent_instance.report_frequency} iterations)"
+                                print(result)
+                            
+                            # Update the state with any user commands
+                            if updated_state.get("user_commands"):
+                                print(f"Received user commands: {updated_state['user_commands']}")
+                                # Apply user commands to the state
+                                for cmd, value in updated_state.get("user_commands", {}).items():
+                                    if cmd == "frequency" and hasattr(agent_instance, "report_frequency"):
+                                        agent_instance.report_frequency = value
+                                        print(f"Updated report frequency to {value}")
+                        
+                        else:
+                            # Standard agent execution
+                            result = agent_instance(formatted_prompt)
                         
                         end_time = time.time()
                         
