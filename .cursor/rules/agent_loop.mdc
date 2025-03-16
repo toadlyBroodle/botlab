@@ -1,6 +1,6 @@
 ---
 description: Rules and best practices for implementing agent loops and iterative agent workflows
-globs: **/agent_loop/**
+globs: agent_loop*.py
 alwaysApply: false
 ---
 
