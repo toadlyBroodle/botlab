@@ -20,6 +20,9 @@ from smolagents import Tool
 # Import Google Generative AI library for direct Gemini search
 from google import genai
 from google.genai.types import Tool as GenaiTool, GenerateContentConfig, GoogleSearch
+from PIL import Image
+from io import BytesIO
+import base64
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -606,4 +609,73 @@ def save_final_answer(agent, result: str, agent_type: str) -> str:
         import traceback
         traceback.print_exc()
         return error_msg
+
+@tool
+def generate_image(prompt: str) -> str:
+    """Generate an image using Google's Gemini API and save it locally.
+    
+    Args:
+        prompt (str): A detailed text description of the image you want to generate.
+            The more detailed and specific the prompt, the better the results.
+            
+    Returns:
+        str: The URL of the locally saved image, already accessible via nginx, you can just use url directly in output.
+        
+    Raises:
+        Exception: If there is an error generating or saving the image.
+    """
+    try:
+        # Check required environment variables
+        images_path = os.getenv('IMAGES_SAVE_PATH')
+        images_url = os.getenv('IMAGES_BASE_URL')
+        if not images_path or not images_url:
+            raise Exception("IMAGES_SAVE_PATH and IMAGES_BASE_URL environment variables must be set")
+
+        # Initialize Gemini client
+        api_key = os.getenv('GEMINI_API_KEY')
+        if not api_key:
+            raise Exception("GEMINI_API_KEY environment variable must be set")
+        client = genai.Client(api_key=api_key)
+        
+        # Generate the image
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp-image-generation",
+            contents=prompt,
+            config=GenerateContentConfig(
+                response_modalities=['Text', 'Image']
+            )
+        )
+        
+        if not response.candidates or not response.candidates[0].content:
+            raise Exception("No image was generated")
+            
+        # Extract image data
+        image_data = None
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                image_data = base64.b64decode(part.inline_data.data)
+                break
+                
+        if not image_data:
+            raise Exception("No image data found in response")
+        
+        # Create a unique filename using timestamp and hash of prompt
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:8]
+        filename = f"gemini_{timestamp}_{prompt_hash}.png"
+        
+        # Ensure the directory exists
+        os.makedirs(images_path, exist_ok=True)
+        
+        # Save to the dedicated directory
+        final_path = os.path.join(images_path, filename)
+        with open(final_path, 'wb') as f:
+            f.write(image_data)
+        
+        # Return the URL where the image will be served
+        return f"{images_url.rstrip('/')}/{filename}"
+        
+    except Exception as e:
+        logger.error(f"Error generating/saving image: {str(e)}")
+        raise Exception(f"Error generating/saving image: {str(e)}")
 

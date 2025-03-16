@@ -3,7 +3,7 @@ import os
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-def process_gemini_data(input_file="agents/utils/gemini/gem_rate_lims.json", output_file="agents/utils/gemini/gem_llm_info.json"):
+def process_gemini_data(input_file="utils/gemini/gem_rate_lims.json", output_file="utils/gemini/gem_llm_info.json"):
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
 
