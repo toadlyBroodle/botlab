@@ -16,6 +16,7 @@ import re
 import uuid
 import hashlib
 from smolagents import Tool
+from ..logger_config import setup_logger
 
 # Import Google Generative AI library for direct Gemini search
 from google import genai
@@ -24,14 +25,20 @@ from PIL import Image
 from io import BytesIO
 import base64
 
-# Set up logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+# Get botlab root directory
+BOTLAB_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
+# Determine if we're running as a submodule by checking for parent project's logs directory
+PARENT_ROOT = os.path.dirname(BOTLAB_ROOT)
+if os.path.exists(os.path.join(PARENT_ROOT, 'logs')):
+    # We're a submodule, use parent's logs directory
+    LOGS_DIR = os.path.join(PARENT_ROOT, 'logs')
+else:
+    # Standalone mode, use botlab's logs directory
+    LOGS_DIR = os.path.join(BOTLAB_ROOT, 'logs')
+
+# Set up logging with dedicated file in appropriate logs directory
+logger = setup_logger('botlab_tools', log_dir=LOGS_DIR)
 
 # Global variables to track search state for rate limiting
 _last_search_time = 0
@@ -638,7 +645,7 @@ def generate_image(prompt: str) -> str:
         client = genai.Client(api_key=api_key)
         
         # Generate the image
-        logger.info(f"Generating image with prompt: {prompt}")
+        logger.info(f"Generating image: {prompt[:100]}...")
         response = client.models.generate_content(
             model="gemini-2.0-flash-exp-image-generation",
             contents=prompt,
@@ -646,102 +653,101 @@ def generate_image(prompt: str) -> str:
                 response_modalities=['Text', 'Image']
             )
         )
-        
-        # Print complete response for debugging
-        logger.debug("Complete API Response:")
-        logger.debug(f"Response type: {type(response)}")
-        logger.debug(f"Response dir: {dir(response)}")
-        
-        if hasattr(response, 'candidates') and response.candidates:
-            logger.debug("Candidates found:")
-            for i, candidate in enumerate(response.candidates):
-                logger.debug(f"Candidate {i}:")
-                logger.debug(f"Candidate type: {type(candidate)}")
-                if hasattr(candidate, 'content'):
-                    logger.debug(f"Content type: {type(candidate.content)}")
-                    if hasattr(candidate.content, 'parts'):
-                        logger.debug("Parts found:")
-                        for j, part in enumerate(candidate.content.parts):
-                            logger.debug(f"Part {j}:")
-                            if hasattr(part, 'inline_data'):
-                                logger.debug(f"Inline data type: {type(part.inline_data)}")
-                                if hasattr(part.inline_data, 'mime_type'):
-                                    logger.debug(f"Mime type: {part.inline_data.mime_type}")
-                                if hasattr(part.inline_data, 'data'):
-                                    logger.debug("Base64 data found (truncated)")
-        
-        if not response.candidates or not response.candidates[0].content:
-            raise Exception("No image was generated")
+
+        # Log prompt feedback and code execution result only if they contain data
+        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+            logger.info(f"Complete prompt feedback: {response.prompt_feedback}")
+
+        if hasattr(response, 'code_execution_result') and response.code_execution_result:
+            logger.info(f"Code execution result: {response.code_execution_result}")
+
+        # Check for response text that might indicate issues
+        if hasattr(response, 'text') and response.text:
+            logger.warning(f"Response included text message: {response.text}")
             
+        # Check for prompt feedback (safety checks, etc)
+        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+            feedback = response.prompt_feedback
+            if hasattr(feedback, 'block_reason') and feedback.block_reason:
+                logger.error(f"Prompt blocked: {feedback.block_reason}")
+                raise Exception(f"Image generation blocked: {feedback.block_reason}")
+            if hasattr(feedback, 'safety_ratings') and feedback.safety_ratings:
+                for rating in feedback.safety_ratings:
+                    if hasattr(rating, 'probability') and hasattr(rating, 'category'):
+                        if rating.probability > 3:  # High probability of issue
+                            logger.warning(f"Safety concern: {rating.category} (probability: {rating.probability})")
+        
         # Extract image data
         image_data = None
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, 'inline_data') and part.inline_data is not None:
-                logger.debug(f"Found image data with mime type: {part.inline_data.mime_type}")
-                try:
-                    # Get the base64 data
-                    base64_data = part.inline_data.data
-                    
-                    # If it's already bytes, we can use it directly
-                    if isinstance(base64_data, bytes):
-                        image_data = base64_data
-                    else:
-                        # If it's a string, decode it from base64
-                        # Add padding if necessary
-                        if isinstance(base64_data, str):
-                            missing_padding = len(base64_data) % 4
-                            if missing_padding:
-                                base64_data += '=' * (4 - missing_padding)
-                            image_data = base64.b64decode(base64_data)
-                        else:
-                            raise Exception(f"Unexpected data type: {type(base64_data)}")
-                    
-                    # Log size of data
-                    logger.debug(f"Image data size: {len(image_data)} bytes")
-                    
-                    # Verify it's a valid PNG
-                    if not image_data.startswith(b'\x89PNG\r\n\x1a\n'):
-                        logger.error("Invalid PNG header")
-                        logger.error(f"First few bytes (hex): {image_data[:20].hex()}")
-                        raise Exception("Generated data does not have a valid PNG header")
-                        
-                    # Try to validate the image by loading it with PIL
-                    try:
-                        with BytesIO(image_data) as bio:
-                            img = Image.open(bio)
-                            img.verify()  # Verify it's a valid image
-                            logger.debug(f"Valid image detected: format={img.format}, size={img.size if hasattr(img, 'size') else 'unknown'}")
-                    except Exception as e:
-                        logger.error(f"PIL validation failed: {str(e)}")
-                        raise Exception(f"Invalid image data: {str(e)}")
-                        
-                except Exception as e:
-                    logger.error(f"Error processing image data: {str(e)}")
-                    raise
-                break
-                
-        if not image_data:
-            raise Exception("No image data found in response")
+        if hasattr(response, 'candidates') and response.candidates:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'inline_data') and part.inline_data is not None:
+                    mime_type = getattr(part.inline_data, 'mime_type', None)
+                    if mime_type == 'image/png':
+                        try:
+                            # Get the base64 data
+                            base64_data = part.inline_data.data
+                            
+                            # If it's already bytes, use it directly
+                            if isinstance(base64_data, bytes):
+                                image_data = base64_data
+                            else:
+                                # If it's a string, decode it from base64
+                                if isinstance(base64_data, str):
+                                    missing_padding = len(base64_data) % 4
+                                    if missing_padding:
+                                        base64_data += '=' * (4 - missing_padding)
+                                    image_data = base64.b64decode(base64_data)
+                                else:
+                                    raise Exception(f"Unexpected data type: {type(base64_data)}")
+                            
+                            # Verify it's a valid PNG
+                            if not image_data.startswith(b'\x89PNG\r\n\x1a\n'):
+                                raise Exception("Generated data is not a valid PNG")
+                                
+                            # Validate image with PIL
+                            with BytesIO(image_data) as bio:
+                                img = Image.open(bio)
+                                img.verify()
+                                logger.debug(f"Image validated: {img.format} ({img.size[0]}x{img.size[1]})")
+                            break
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing image data: {e}")
+                            raise
         
-        # Create a unique filename using timestamp and hash of prompt
+        if not image_data:
+            # Check if there's any useful error information in the response
+            error_msg = "No valid image data found in response"
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'finish_reason'):
+                    error_msg += f" (Finish reason: {candidate.finish_reason})"
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            error_msg += f" - {part.text}"
+            raise Exception(error_msg)
+        
+        # Create a unique filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:8]
         filename = f"gemini_{timestamp}_{prompt_hash}.png"
         
-        # Ensure the directory exists
-        os.makedirs(images_path, exist_ok=True)
-        
         # Save to the dedicated directory
+        os.makedirs(images_path, exist_ok=True)
         final_path = os.path.join(images_path, filename)
+        
         with open(final_path, 'wb') as f:
             f.write(image_data)
             
-        logger.info(f"Saved image to {final_path}, size: {os.path.getsize(final_path)} bytes")
+        file_size = os.path.getsize(final_path)
+        logger.info(f"Image saved: {filename} ({file_size/1024:.1f}KB)")
         
         # Return the URL where the image will be served
         return f"{images_url.rstrip('/')}/{filename}"
         
     except Exception as e:
-        logger.error(f"Error generating/saving image: {str(e)}")
+        logger.error(f"Failed to generate image: {str(e)}")
         raise Exception(f"Error generating/saving image: {str(e)}")
 
