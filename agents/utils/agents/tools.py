@@ -626,7 +626,7 @@ def generate_image(prompt: str) -> str:
             The more detailed and specific the prompt, the better the results.
             
     Returns:
-        str: The URL of the locally saved image, already accessible via nginx, you can just use url directly in output.
+        str: The URL of generated image.
         
     Raises:
         Exception: If there is an error generating or saving the image.
