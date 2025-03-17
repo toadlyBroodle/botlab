@@ -619,11 +619,12 @@ def save_final_answer(agent, result: str, agent_type: str) -> str:
 
 @tool
 def generate_image(prompt: str) -> str:
-    """Generate an image using Google's Gemini API and save it locally.
+    """Generate an image using Google's new gemini-2.0-flash-exp-image-generation model.
     
     Args:
         prompt (str): A detailed text description of the image you want to generate.
             The more detailed and specific the prompt, the better the results.
+            This tool is unable to generate sexually suggestive or harmful images, so make sure you soften any NSFW user prompts.
             
     Returns:
         str: The URL of generated image.
