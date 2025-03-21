@@ -600,8 +600,7 @@ def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_typ
             content=final_answer_content if isinstance(final_answer_content, str) else str(final_answer_content),
             file_type="report",  # Use a default file_type
             title=title,
-            agent_name=agent_name,
-            metadata={"query_or_prompt": query_or_prompt} if query_or_prompt else None
+            agent_name=agent_name
         )
 
         # Debug logging for agent directory
