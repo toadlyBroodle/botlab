@@ -134,7 +134,8 @@ class EditorAgent:
         base_wait_time: float = 2.0,
         max_retries: int = 3,
         fact_checker_description: Optional[str] = None,
-        fact_checker_prompt: Optional[str] = None
+        fact_checker_prompt: Optional[str] = None,
+        additional_authorized_imports: Optional[list] = None
     ):
         """Initialize the editor agent.
         
@@ -150,6 +151,7 @@ class EditorAgent:
             max_retries: Maximum retries for rate limiting if creating a new model
             fact_checker_description: Optional additional description for the fact checker if creating a new one
             fact_checker_prompt: Optional custom system prompt for the fact checker if creating a new one
+            additional_authorized_imports: Optional list of additional imports to authorize for the agent
         """
         # Create a model if one wasn't provided
         if model is None:
@@ -182,9 +184,17 @@ class EditorAgent:
         else:
             description = base_description
             
+        # Set default imports if none provided
+        default_imports = ["json", "re"]
+        if additional_authorized_imports:
+            # Combine default imports with additional imports, ensuring no duplicates
+            imports = list(set(default_imports + additional_authorized_imports))
+        else:
+            imports = default_imports
+            
         self.agent = CodeAgent(
             tools=[web_search, visit_webpage],
-            additional_authorized_imports=["json", "re"],
+            additional_authorized_imports=imports,
             model=self.model,
             managed_agents=[self.fact_checker_agent],
             name='editor_agent',
@@ -246,15 +256,15 @@ def segment_and_triage_content(content: str) -> dict:
     
     # Keywords suggesting fact-checking needed
     fact_check_indicators = [
-        r'\d{4}',           # Years
-        r'\d+%',           # Percentages
-        r'\d+',          # Numbers
-        r'according',    # Source citations
-        r'recent',        # Time-sensitive
-        r'discovered',      # New findings
-        r'research',  # Research claims
-        r'studies',        # Research references
-        r'experts'     # Expert claims
+        '\\\\d{4}',           # Years
+        '\\\\d+%',           # Percentages
+        '\\\\d+',          # Numbers
+        'according',    # Source citations
+        'recent',        # Time-sensitive
+        'discovered',      # New findings
+        'research',  # Research claims
+        'studies',        # Research references
+        'experts'     # Expert claims
     ]
     
     for i, paragraph in enumerate(paragraphs):
@@ -263,7 +273,7 @@ def segment_and_triage_content(content: str) -> dict:
         
         if needs_checking:
             # Determine the type of fact-checking needed
-            if re.search(r'\d', paragraph):
+            if re.search('\\\\d', paragraph):
                 segments['dates_and_numbers'].append((i, paragraph))
             elif any(term in paragraph.lower() for term in ['research', 'study', 'technology', 'discovery']):
                 segments['technical_claims'].append((i, paragraph))
@@ -283,7 +293,7 @@ def extract_claims_from_paragraphs(paragraphs):
     
     for idx, paragraph in paragraphs:
         # Simple sentence-based extraction
-        sentences = re.split(r'(?<=[.!?])\s+', paragraph)
+        sentences = re.split('(?<=[.!?])\\\\s+', paragraph)
         
         for sentence in sentences:
             # Try to include sentences that make factual assertions
