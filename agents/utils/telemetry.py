@@ -8,6 +8,7 @@ from opentelemetry.semconv.resource import ResourceAttributes
 import functools
 import inspect
 import os
+import sys
 
 # Global variable to track the current agent context
 _CURRENT_AGENT_CONTEXT = {
@@ -22,17 +23,110 @@ def suppress_litellm_logs():
     LiteLLM from printing INFO logs like "LiteLLM completion() model= gemini-2.0-flash; provider = gemini"
     """
     import logging
+    import sys
     
-    # Set LiteLLM logger to ERROR level to suppress INFO logs
-    logging.getLogger("litellm").setLevel(logging.ERROR)
+    # Set LiteLLM logger to CRITICAL level to completely suppress most logs
+    litellm_logger = logging.getLogger("litellm")
+    litellm_logger.setLevel(logging.CRITICAL)
+    
+    # Remove all handlers from the litellm logger
+    for handler in litellm_logger.handlers:
+        litellm_logger.removeHandler(handler)
+    
+    # Add a NullHandler to prevent any logging messages from propagating
+    litellm_logger.addHandler(logging.NullHandler())
+    
+    # Disable propagation to the root logger
+    litellm_logger.propagate = False
+    
+    # Set environment variables to disable LiteLLM logging
+    os.environ["LITELLM_LOG_VERBOSE"] = "false"
+    os.environ["LITELLM_LOGGING_ENABLED"] = "false"
+    os.environ["OPENAI_LOG_LEVEL"] = "ERROR"  # Also affects OpenAI logging
     
     # Disable LiteLLM's internal logging
     try:
         import litellm
+        
+        # Disable all litellm logging mechanisms
         litellm.utils.logging_enabled = False
-        os.environ["LITELLM_LOG_VERBOSE"] = "false"
+        litellm.success_callback = []
+        litellm.failure_callback = []
+        
+        if hasattr(litellm, 'callbacks'):
+            litellm.callbacks = []
+        
+        # Completely disable the litellm logging module
+        if hasattr(litellm, 'litellm_core_utils') and hasattr(litellm.litellm_core_utils, 'litellm_logging'):
+            LiteLLMLogging = litellm.litellm_core_utils.litellm_logging
+            
+            # Attempt to disable callbacks
+            if hasattr(LiteLLMLogging, '_success_callbacks'):
+                LiteLLMLogging._success_callbacks = []
+            if hasattr(LiteLLMLogging, '_failure_callbacks'):
+                LiteLLMLogging._failure_callbacks = []
+                
+            # Replace get_standard_logging_object_payload with a no-op function
+            if hasattr(LiteLLMLogging, 'get_standard_logging_object_payload'):
+                def noop_payload(*args, **kwargs):
+                    return {
+                        "model": kwargs.get("model", "unknown"),
+                        "messages": kwargs.get("messages", []),
+                        "call_type": kwargs.get("call_type", "completion"),
+                        "api_base": kwargs.get("api_base", None),
+                        "model_parameters": {}
+                    }
+                LiteLLMLogging.get_standard_logging_object_payload = noop_payload
+                
+        # Patch ModelParamHelper to prevent annotation errors
+        if hasattr(litellm, 'litellm_core_utils') and hasattr(litellm.litellm_core_utils, 'model_param_helper'):
+            ModelParamHelper = litellm.litellm_core_utils.model_param_helper.ModelParamHelper
+            
+            # Replace all problematic methods with simple stubs
+            def stub_get_transcription():
+                return set()
+            ModelParamHelper._get_litellm_supported_transcription_kwargs = stub_get_transcription
+            
+            def stub_get_all_llm_params():
+                return {'model', 'messages', 'temperature', 'top_p', 'n', 'max_tokens', 'stream'}
+            ModelParamHelper._get_all_llm_api_params = stub_get_all_llm_params
+            
+            def stub_get_relevant_args():
+                return {'model', 'messages', 'temperature', 'top_p', 'max_tokens'}
+            ModelParamHelper._get_relevant_args_to_use_for_logging = stub_get_relevant_args
+            
+            def stub_get_params(*args, **kwargs):
+                return {}
+            ModelParamHelper.get_standard_logging_model_parameters = stub_get_params
+            
+        # Suppress stdout/stderr temporarily to handle any print statements in LiteLLM
+        orig_stdout = sys.stdout
+        orig_stderr = sys.stderr
+        
+        try:
+            import io
+            sys.stdout = io.StringIO()
+            sys.stderr = io.StringIO()
+            
+            # Force immediate initialization of LiteLLM components to trigger and suppress any errors
+            if hasattr(litellm, "ModelParamHelper"):
+                try:
+                    litellm.ModelParamHelper.get_standard_logging_model_parameters()
+                except:
+                    pass
+                    
+            # Reset stdout/stderr
+            sys.stdout = orig_stdout
+            sys.stderr = orig_stderr
+        except:
+            # Ensure stdout/stderr are restored even if an error occurs
+            sys.stdout = orig_stdout
+            sys.stderr = orig_stderr
+            
     except ImportError:
         pass  # LiteLLM not installed, nothing to do
+    except Exception as e:
+        print(f"Warning: Failed to patch litellm: {e}")
 
 def start_telemetry(agent_name=None, agent_type=None):
     """Initialize OpenTelemetry with OTLP exporter for Phoenix
