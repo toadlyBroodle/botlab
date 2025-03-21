@@ -536,7 +536,7 @@ def extract_final_answer_from_memory(agent) -> Any:
     
     return None
 
-def save_final_answer(agent, result: str, agent_type: str) -> str:
+def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_type: str = "agent") -> str:
     """Save the agent's final answer to a file in the agent's data directory.
     
     This function extracts the final_answer from an agent's memory if available,
@@ -546,6 +546,7 @@ def save_final_answer(agent, result: str, agent_type: str) -> str:
     Args:
         agent: The agent instance with memory
         result: The result from the agent.run() call
+        query_or_prompt: The original query or prompt that was given to the agent
         agent_type: The type of agent (e.g., "researcher", "editor")
     
     Returns:
@@ -599,7 +600,8 @@ def save_final_answer(agent, result: str, agent_type: str) -> str:
             content=final_answer_content if isinstance(final_answer_content, str) else str(final_answer_content),
             file_type="report",  # Use a default file_type
             title=title,
-            agent_name=agent_name
+            agent_name=agent_name,
+            metadata={"query_or_prompt": query_or_prompt} if query_or_prompt else None
         )
 
         # Debug logging for agent directory
