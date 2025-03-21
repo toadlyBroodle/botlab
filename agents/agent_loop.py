@@ -34,7 +34,9 @@ class AgentLoop:
         use_custom_prompts: bool = False,
         enable_telemetry: bool = False,
         state_file: Optional[str] = None,
-        load_state: bool = False
+        load_state: bool = False,
+        agent_configs: Optional[Dict[str, Any]] = None,
+        agent_contexts: Optional[Dict[str, Dict[str, Any]]] = None
     ):
         """Initialize the agent loop.
         
@@ -51,6 +53,8 @@ class AgentLoop:
             enable_telemetry: Whether to enable OpenTelemetry tracing
             state_file: Optional path to a file for persisting state between runs
             load_state: Whether to load state from state_file if it exists (default: False)
+            agent_configs: Optional dictionary containing custom configuration for agents
+            agent_contexts: Optional dictionary containing context data for specific agents
         """
         self.agent_sequence = agent_sequence
         self.max_iterations = max_iterations
@@ -82,6 +86,7 @@ class AgentLoop:
         self.use_custom_prompts = use_custom_prompts
         self.enable_telemetry = enable_telemetry
         self.state_file = state_file
+        self.agent_contexts = agent_contexts or {}
         
         # Initialize state
         self.state = {
@@ -123,8 +128,14 @@ class AgentLoop:
         # Set up environment
         self._setup_environment()
         
-        # Initialize agent configs
-        self.agent_configs = self._get_default_agent_configs() if use_custom_prompts else {}
+        # Initialize agent configs with provided configs or defaults
+        if use_custom_prompts:
+            self.agent_configs = self._get_default_agent_configs()
+            # Update with any provided configs
+            if agent_configs:
+                self.agent_configs.update(agent_configs)
+        else:
+            self.agent_configs = agent_configs or {}
         
         # Initialize agents
         self.agents = {}
@@ -188,8 +199,17 @@ class AgentLoop:
                     # Get the max steps for this agent
                     max_steps = self.max_steps_per_agent_dict.get(agent_type, self.max_steps_per_agent)
                     
+                    # Get any specific context for this agent
+                    agent_context = self.agent_contexts.get(agent_type, {}).copy()
+                    
                     # Create the agent based on its type
                     if agent_type.lower() == 'researcher':
+                        # Extract special parameters that shouldn't be directly passed to the agent constructor
+                        if 'research_parameters' in agent_context:
+                            self.research_parameters = agent_context.pop('research_parameters')
+                        if 'original_row' in agent_context:
+                            self.original_row = agent_context.pop('original_row')
+                        
                         agent_instance = ResearcherAgent(
                             max_steps=max_steps,
                             researcher_description=self.agent_configs.get('researcher_description'),
@@ -218,6 +238,10 @@ class AgentLoop:
                         self.agents[agent_type] = agent_instance
                         
                     elif agent_type.lower() == 'qaqc':
+                        # Also remove original_row for QAQC agent if present
+                        if 'original_row' in agent_context:
+                            agent_context.pop('original_row')
+                        
                         agent_instance = QAQCAgent(
                             max_steps=max_steps,
                             agent_description=self.agent_configs.get('qaqc_description'),
@@ -326,6 +350,22 @@ class AgentLoop:
         
         # Add specific instructions based on agent type
         if agent_type == "researcher":
+            # Add research parameters if available
+            if hasattr(self, 'research_parameters'):
+                prompt += "\n--- Research Parameters ---\n"
+                for key, value in self.research_parameters.items():
+                    if isinstance(value, list):
+                        value_str = ", ".join(value)
+                        prompt += f"{key}: {value_str}\n"
+                    else:
+                        prompt += f"{key}: {value}\n"
+            
+            # Add original row data if available
+            if hasattr(self, 'original_row'):
+                prompt += "\n--- Original Row Data ---\n"
+                prompt += "\n".join([f"{key}={value}" for key, value in self.original_row.items()])
+                prompt += "\n"
+            
             prompt += "\nYour task is to research this topic thoroughly and provide comprehensive information with proper citations."
         elif agent_type == "writer":
             prompt += "\nYour task is to write engaging content based on the research provided."
@@ -463,7 +503,18 @@ class AgentLoop:
                         
                         else:
                             # Standard agent execution
-                            result = agent_instance(formatted_prompt)
+                            if agent_type.lower() == 'researcher':
+                                # Use run_query method for ResearcherAgent
+                                result = agent_instance.run_query(formatted_prompt)
+                            elif agent_type.lower() == 'writer':
+                                # Use write_draft method for WriterAgent
+                                result = agent_instance.write_draft(formatted_prompt)
+                            elif agent_type.lower() == 'editor':
+                                # Use edit_content method for EditorAgent
+                                result = agent_instance.edit_content(formatted_prompt)
+                            else:
+                                # Other agents may implement __call__
+                                result = agent_instance(formatted_prompt)
                         
                         end_time = time.time()
                         
@@ -548,6 +599,12 @@ def main():
     # Parse agent sequence
     agent_sequence = [agent_type.strip() for agent_type in args.agent_sequence.split(",")]
     
+    # Initialize the agent loop with default agent configs
+    agent_configs = None
+    if args.use_custom_prompts:
+        # You could load custom configs here from a file if needed
+        agent_configs = {}
+    
     # Initialize the agent loop
     agent_loop = AgentLoop(
         agent_sequence=agent_sequence,
@@ -559,7 +616,9 @@ def main():
         use_custom_prompts=args.use_custom_prompts,
         enable_telemetry=args.enable_telemetry,
         state_file=args.state_file,
-        load_state=args.load_state
+        load_state=args.load_state,
+        agent_configs=agent_configs,
+        agent_contexts={}
     )
     
     # Run the agent loop
