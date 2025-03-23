@@ -7,6 +7,10 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
 from smolagents import tool
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Set up logging
 import logging
@@ -30,7 +34,7 @@ COMMAND_PATTERNS = {
 }
 
 @tool
-def send_mail(recipient: str, subject: str, body: str) -> str:
+def send_mail(subject: str, body: str) -> str:
     """Send an email using the system mail command.
     
     Args:
@@ -47,13 +51,13 @@ def send_mail(recipient: str, subject: str, body: str) -> str:
         subject_escaped = subject.replace("'", "'\\''")
         
         # Construct the command
-        cmd = f"echo '{body_escaped}' | mail -s '{subject_escaped}' {recipient}"
+        cmd = f"echo '{body_escaped}' | mail -s '{subject_escaped}' {os.getenv('LOCAL_USER_EMAIL')}"
         
         # Execute the command
         result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
         
-        logger.info(f"Email sent to {recipient} with subject: {subject}")
-        return f"Email sent successfully to {recipient}"
+        logger.info(f"Email sent to user with subject: {subject}")
+        return f"Email sent successfully to user"
     
     except subprocess.CalledProcessError as e:
         error_msg = f"Failed to send email: {e.stderr}"
@@ -66,90 +70,102 @@ def send_mail(recipient: str, subject: str, body: str) -> str:
         return error_msg
 
 @tool
-def check_mail(username: Optional[str] = None, mailbox_path: Optional[str] = None) -> str:
-    """Check for new emails in the system mailbox.
-    
-    Args:
-        username: Optional username to check mail for (defaults to current user)
-        mailbox_path: Optional path to mailbox (defaults to /var/mail/username)
+def check_mail() -> Dict[str, Any]:
+    """Check for the most recent unread email from REMOTE_USER_EMAIL in the system mailbox.
+    Assumes emails are stored in chronological order, with last being most recent.
         
     Returns:
-        JSON string containing new messages
+        Dictionary containing the most recent unread message details or empty dict if no unread messages
     """
     try:
         # Determine username and mailbox path
-        if not username:
-            username = os.getenv("USER") or subprocess.getoutput("whoami").strip()
+        username = os.getenv("USER") or subprocess.getoutput("whoami").strip()
+        mailbox_path = os.path.join(DEFAULT_MAILBOX_PATH, username)
+        remote_email = os.getenv("REMOTE_USER_EMAIL")
         
-        # Use provided mailbox_path if available, otherwise construct default path
-        if not mailbox_path:
-            mailbox_path = os.path.join(DEFAULT_MAILBOX_PATH, username)
+        if not remote_email:
+            logger.error("REMOTE_USER_EMAIL not found in environment variables")
+            return {}
         
         # Check if mailbox exists
         if not os.path.exists(mailbox_path):
-            return f"No mailbox found at {mailbox_path}"
+            logger.error(f"No mailbox found at {mailbox_path}")
+            return {}
         
         # Read the mailbox
         mbox = mailbox.mbox(mailbox_path)
         
-        # Get messages from the last 24 hours
-        current_time = time.time()
-        one_day_ago = current_time - (24 * 60 * 60)
+        # Variables to track the most recent message
+        most_recent_message = None
+        most_recent_key = None
         
-        recent_messages = []
-        for key, message in mbox.items():
-            # Get message date
-            date_str = message.get('Date')
-            if not date_str:
+        # Process messages in reverse order (last to first)
+        # This assumes the last email in the mailbox is the most recent
+        for key in sorted(mbox.keys(), reverse=True):
+            message = mbox[key]
+            
+            # Check if message is unread (Status header doesn't contain 'R')
+            status = message.get('Status', '')
+            if 'R' in status:
                 continue
                 
-            # Try to parse the date
-            try:
-                # Simple parsing for common date formats
-                date_obj = datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %z")
-                message_time = date_obj.timestamp()
-            except ValueError:
-                try:
-                    # Try alternative format
-                    date_obj = datetime.strptime(date_str, "%d %b %Y %H:%M:%S %z")
-                    message_time = date_obj.timestamp()
-                except ValueError:
-                    # If we can't parse the date, assume it's recent
-                    message_time = current_time
+            # Check if message is from the target email
+            from_addr = message.get('From', '')
+            if remote_email not in from_addr:
+                continue
+                
+            # First matching unread email from the target is the most recent
+            subject = message.get('Subject', 'No Subject')
+            date_str = message.get('Date', '')
             
-            # Check if message is recent
-            if message_time >= one_day_ago:
-                # Extract relevant fields
-                from_addr = message.get('From', 'Unknown')
-                subject = message.get('Subject', 'No Subject')
-                
-                # Get message body
-                body = ""
-                if message.is_multipart():
-                    for part in message.walk():
-                        content_type = part.get_content_type()
-                        if content_type == "text/plain":
-                            body = part.get_payload(decode=True).decode('utf-8', errors='replace')
-                            break
-                else:
-                    body = message.get_payload(decode=True).decode('utf-8', errors='replace')
-                
-                recent_messages.append({
-                    "from": from_addr,
-                    "subject": subject,
-                    "date": date_str,
-                    "body": body
-                })
+            # Get message body
+            body = ""
+            if message.is_multipart():
+                for part in message.walk():
+                    content_type = part.get_content_type()
+                    if content_type == "text/plain":
+                        body = part.get_payload(decode=True).decode('utf-8', errors='replace')
+                        break
+            else:
+                body = message.get_payload(decode=True).decode('utf-8', errors='replace')
+            
+            most_recent_message = {
+                "from": from_addr,
+                "subject": subject,
+                "date": date_str,
+                "body": body
+            }
+            
+            most_recent_key = key
+            break  # Stop after finding the first matching email
         
-        if recent_messages:
-            return f"Found {len(recent_messages)} recent messages: {recent_messages}"
-        else:
-            return "No recent messages found"
+        # Mark the message as read if one was found
+        if most_recent_key is not None and most_recent_message is not None:
+            # Get the message
+            message = mbox[most_recent_key]
+            
+            # Update the Status header to include 'R' for read
+            current_status = message.get('Status', '')
+            if 'R' not in current_status:
+                message.replace_header('Status', current_status + 'R')
+                # If Status header doesn't exist, add it
+                if 'Status' not in message:
+                    message['Status'] = 'R'
+                
+                # Save the change to the mailbox
+                mbox.update({most_recent_key: message})
+                mbox.flush()
+                logger.info(f"Marked email with subject '{most_recent_message['subject']}' as read")
+            
+            return most_recent_message
+        
+        # Return empty dict if no unread messages found
+        return {}
     
     except Exception as e:
         error_msg = f"Error checking mail: {str(e)}"
         logger.error(error_msg)
-        return error_msg
+        return {}
 
 @tool
 def parse_commands(email_body: str) -> Dict[str, Any]:

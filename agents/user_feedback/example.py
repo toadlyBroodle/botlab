@@ -6,7 +6,7 @@ This example shows how to create and use a UserFeedbackAgent instance directly.
 It also provides a command-line interface for testing email communication.
 
 Usage:
-    python -m agents.user_feedback.example --email your-email@example.com
+    python -m agents.user_feedback.example [--email your-email@example.com]
 """
 
 import os
@@ -27,20 +27,26 @@ def setup_basic_environment():
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
+    
+    # Check for email environment variables
+    local_email = os.getenv("LOCAL_USER_EMAIL")
+    remote_email = os.getenv("REMOTE_USER_EMAIL")
+    if not local_email:
+        print("Warning: LOCAL_USER_EMAIL environment variable is not set. Email sending will not work.")
+    if not remote_email:
+        print("Warning: REMOTE_USER_EMAIL environment variable is not set. Email checking will not work.")
 
 def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash", 
                 model_info_path="agents/utils/gemini/gem_llm_info.json",
                 base_wait_time=2.0, max_retries=3,
                 report_frequency=1,
-                mailbox_path=None,
                 agent_description=None, agent_prompt=None):
     """Run a test of the UserFeedbackAgent
     
     Args:
-        user_email: Email address to communicate with
+        user_email: Email address to communicate with (stored in .env as LOCAL_USER_EMAIL)
         max_steps: Maximum number of steps for the agent
         report_frequency: How often to send reports (1 = every iteration)
-        mailbox_path: Path to the mailbox file to check for emails
         model_id: The model ID to use
         model_info_path: Path to the model info JSON file
         base_wait_time: Base wait time for rate limiting
@@ -56,7 +62,6 @@ def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash"
         max_steps=max_steps,
         user_email=user_email,
         report_frequency=report_frequency,
-        mailbox_path=mailbox_path,
         model_id=model_id,
         model_info_path=model_info_path,
         base_wait_time=base_wait_time,
@@ -67,7 +72,7 @@ def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash"
     
     print(f"Created UserFeedbackAgent with email: {agent.user_email}")
     print(f"Report frequency: Every {agent.report_frequency} iterations")
-    print(f"Mailbox path: {agent.mailbox_path}")
+    print(f"Remote email (for checking): {os.getenv('REMOTE_USER_EMAIL', 'Not set')}")
     
     # Create a sample state
     sample_state = {
@@ -102,8 +107,7 @@ def main():
         user_email=args.email,
         report_frequency=args.frequency,
         max_steps=args.max_steps,
-        model_id=args.model,
-        mailbox_path=args.mailbox
+        model_id=args.model
     )
     
     print("\nExample completed successfully.")
@@ -112,16 +116,10 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Example of using the UserFeedbackAgent")
     
-    parser.add_argument("--email", type=str, default=os.getenv("USER_EMAIL"),
-                        help="Email address to communicate with")
-    parser.add_argument("--frequency", type=int, default=1,
-                        help="How often to send reports (1 = every iteration)")
-    parser.add_argument("--max-steps", type=int, default=4,
-                        help="Maximum number of steps for the agent")
-    parser.add_argument("--model", type=str, default="gemini/gemini-2.0-flash",
-                        help="The model ID to use")
-    parser.add_argument("--mailbox", type=str, default=os.getenv("USER_MAILBOX_PATH"),
-                        help="Path to the mailbox file to check for emails")
+    parser.add_argument("--email", type=str, help="Email address to communicate with (overrides LOCAL_USER_EMAIL)")
+    parser.add_argument("--frequency", type=int, default=1, help="How often to send reports (1 = every iteration)")
+    parser.add_argument("--max-steps", type=int, default=4, help="Maximum number of steps for the agent")
+    parser.add_argument("--model", type=str, default="gemini/gemini-2.0-flash", help="The model ID to use")
     
     return parser.parse_args()
 

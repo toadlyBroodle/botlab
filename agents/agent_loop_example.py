@@ -38,7 +38,7 @@ def main():
     
     # Set user email environment variable if provided
     if args.user_email:
-        os.environ["USER_EMAIL"] = args.user_email
+        os.environ["LOCAL_USER_EMAIL"] = args.user_email
     
     # Initialize the agent loop with default parameters
     agent_loop_params = {
@@ -142,7 +142,7 @@ def parse_args():
     parser.add_argument("--enable-telemetry", action="store_true", 
                         help="Whether to enable OpenTelemetry tracing")
     parser.add_argument("--user-email", type=str, default=None,
-                        help="Email address for user feedback (defaults to USER_EMAIL env var)")
+                        help="Email address for user feedback (defaults to LOCAL_USER_EMAIL env var)")
     parser.add_argument("--report-frequency", type=int, default=1,
                         help="How often to send user feedback reports (1 = every iteration)")
     
