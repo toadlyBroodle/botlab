@@ -61,25 +61,19 @@ Key features:
 
 ## 🛠️ Setup
 
-Each project maintains it's own virtual environment and dependencies.
-
-### Agents Project Setup
+The project uses a single virtual environment at the root directory for all components.
 
 ```bash
-cd agents
-poetry install
-# Set GEMINI_API_KEY in .env
+# Setup the environment
+./setup_env.sh
+source .venv/bin/activate
+
+# Set API keys in the appropriate .env files
+# For agents: add GEMINI_API_KEY to agents/.env
+# For swarms: add OPENAI_API_KEY to swarms/.env
 ```
 
-### Swarms Project Setup
-
-```bash
-cd swarms
-poetry install
-# Set OPENAI_API_KEY in .env
-```
-
-For detailed instructions, please refer to the respective README files in each directory.
+For detailed instructions, please refer to the [INSTALL.md](INSTALL.md) file.
 
 ## 📦 Using Botlab in Other Projects
 
@@ -91,9 +85,9 @@ cd your-project
 git submodule add https://github.com/yourusername/botlab.git
 git commit -m "Add botlab as submodule"
 
-# Install dependencies
-cd botlab/agents
-poetry install
+# Setup the environment
+cd botlab
+./setup_env.sh
 ```
 
 Then in your Python code:

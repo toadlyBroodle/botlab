@@ -27,7 +27,6 @@
 ### Main directory tree
 ```
 .../agents/
-    |__ .venv/
     |__ researcher/
     |   |__ data/
     |   |   |__ papers/
@@ -45,18 +44,25 @@
 ```
 
 ### Virtual environment
-- *.venv/* is the poetry managed .venv
-- All python scripts MUST be prefixed by `poetry run python `
-    - e.g.  `poetry run python -m researcher.example`
-            `poetry run python researcher/example.py`
+- A shared *.venv/* is located in the project root
+- Virtual environment setup is handled by the setup_env.sh script
+- All dependencies are defined in the root requirements.txt file
 
-### smolagent projects
-- Working directory is *agents/*
-    - All python scripts MUST be run from *agents/* working directory:
-    ```
-    cd agents
-    poetry run python -m researcher.example
-    ```
+### Running the code
+- Working directory is *agents/* or project root
+- All python scripts should be run from the activated virtual environment:
+```
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Run an example
+python -m agents.researcher.example
+# or
+cd agents
+python -m researcher.example
+```
+
+### Project structure
 - *utils/* contains shared utils for the project
     - *file_manager/* contains the FileManager for centralized file handling
     - *gemini/* contains google gemini llm api utils

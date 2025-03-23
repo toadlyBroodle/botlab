@@ -1,11 +1,6 @@
 ---
 description: Core guidelines for all Smolagent projects covering structure, environment, dependencies, and code style
-globs: **/*.py, **/pyproject.toml, **/README.md, **/example.py
-alwaysApply: false
----
----
-description: Core guidelines for all Smolagent projects covering structure, environment, dependencies, and code style
-globs: **/*.py, **/pyproject.toml, **/README.md, **/example.py
+globs: **/*.py, **/README.md, **/example.py
 alwaysApply: false
 ---
 # General Guidelines for Smolagent Projects
@@ -27,13 +22,18 @@ alwaysApply: false
 - Use `save_final_answer(agent, result, query_or_prompt, agent_type)` to save outputs
 
 ## Virtual Environment
-- All Python scripts MUST be prefixed by `poetry run python`
-- Example: `poetry run python -m researcher.example`
-- Working directory for all commands should be the `agents/` directory
+- A shared `.venv` virtual environment is created at the project root
+- All Python scripts should be run with the virtual environment activated
+- Example: 
+  ```bash
+  source .venv/bin/activate
+  python -m agents.researcher.example
+  ```
+- Working directory is always the project root
 
 ## Dependencies
+- Use the existing dependencies in the root-level requirements.txt file
 - Never install new dependencies without asking user first
-- Use the existing dependencies in pyproject.toml
 
 ## Code Style
 - Follow PEP 8 guidelines for Python code

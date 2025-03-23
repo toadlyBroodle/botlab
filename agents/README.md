@@ -11,18 +11,26 @@ This directory contains agent systems built with smolagents:
 
 ```bash
 # From the root directory
-poetry install
+./setup_env.sh
+source .venv/bin/activate
 cd agents/
 echo "GEMINI_API_KEY=<your-api-key>" >> .env
 ```
 
 ## 🏃‍♀️ Running Agents
 
-Run the agents from the root directory:
+Run the agents from the activated virtual environment:
 
 ```bash
+# Make sure the virtual environment is activated
+source .venv/bin/activate
+
 # Run from project root directory
-poetry run python -m agents.researcher.example --query "What are the latest advancements in quantum computing?"
+python -m agents.researcher.example --query "What are the latest advancements in quantum computing?"
+
+# Or run from agents directory
+cd agents
+python -m researcher.example --query "What are the latest advancements in quantum computing?"
 ```
 
 ## 📚 Use as a Submodule
@@ -31,13 +39,15 @@ This repository is designed to be usable as a submodule in other projects:
 
 ```bash
 # In your project
-git submodule add https://github.com/yourusername/agents.git
+git submodule add https://github.com/yourusername/botlab.git
+cd botlab
+./setup_env.sh
 ```
 
 Then import agents with absolute imports:
 ```python
-from agents import AgentLoop
-from agents.researcher.agents import ResearcherAgent
+from botlab.agents import AgentLoop
+from botlab.agents.researcher.agents import ResearcherAgent
 ```
 
 ## 🤖 Available Agents
@@ -48,7 +58,7 @@ The researcher agent can search the web, extract information from websites, and 
 
 ```bash
 # Run the researcher agent
-poetry run python -m agents.researcher.example --query "What are the latest advancements in quantum computing?"
+python -m agents.researcher.example --query "What are the latest advancements in quantum computing?"
 ```
 
 Key features:
@@ -63,7 +73,7 @@ The writer-critic system consists of two agents working together: a writer that 
 
 ```bash
 # Run the writer-critic system
-poetry run python -m writer_critic.main --prompt "Write a short story about a robot who discovers emotions."
+python -m agents.writer_critic.main --prompt "Write a short story about a robot who discovers emotions."
 ```
 
 Key features:
@@ -77,7 +87,7 @@ The editor agent improves content quality while ensuring factual accuracy throug
 
 ```bash
 # Run the editor agent
-poetry run python -m editor.main --content "Content to edit and fact check"
+python -m agents.editor.main --content "Content to edit and fact check"
 ```
 
 Key features:
@@ -92,7 +102,7 @@ The manager agent coordinates multiple specialized agents to solve complex tasks
 
 ```bash
 # Run the manager with researcher, writer, and editor agents
-poetry run python -m manager.main --managed-agents "researcher,writer,editor" --query "Write an article about recent advances in quantum computing."
+python -m agents.manager.main --managed-agents "researcher,writer,editor" --query "Write an article about recent advances in quantum computing."
 ```
 
 Key features:
@@ -108,10 +118,10 @@ You can customize agent behavior using JSON configuration files or command-line 
 
 ```bash
 # Using a config file
-poetry run python -m manager.main --managed-agents researcher,writer,editor --config-file agent_configs.json
+python -m agents.manager.main --managed-agents researcher,writer,editor --config-file agent_configs.json
 
 # Using the simplified custom prompts flag
-poetry run python -m manager.main --managed-agents researcher,writer,editor --use-custom-prompts --query "Write an article about recent advances in quantum computing."
+python -m agents.manager.main --managed-agents researcher,writer,editor --use-custom-prompts --query "Write an article about recent advances in quantum computing."
 ```
 
 The `--use-custom-prompts` flag enables a set of predefined custom descriptions and prompts for all agents, which are defined in the example.py file. This provides a simpler alternative to specifying each property individually.
@@ -152,14 +162,14 @@ You can specify which LLM to use and configure rate limiting:
 
 ```bash
 # Using a specific model
-poetry run python -m researcher.main --model-id "gemini/gemini-2.0-pro" --query "What is quantum computing?"
+python -m agents.researcher.main --model-id "gemini/gemini-2.0-pro" --query "What is quantum computing?"
 ```
 
 ## Start phoenix telemetry server
 To monitor the agents telemetry, you can start the telemetry server with:
 
 ```bash
-poetry run python -m phoenix.server.main serve
+python -m phoenix.server.main serve
 ```
 
 To view the telemetry data, open the phoenix UI at [http://localhost:6006](http://localhost:6006).
@@ -174,28 +184,28 @@ From the `agents` directory:
 
 ```bash
 # Run the researcher example
-poetry run python run_examples.py researcher "your query"
+python run_examples.py researcher "your query"
 
 # Run the basic manager example (with researcher agent)
-poetry run python run_examples.py manager "your query"
+python run_examples.py manager "your query"
 
 # Run the advanced manager example (with custom agent configuration)
-poetry run python run_examples.py manager-advanced "your query"
+python run_examples.py manager-advanced "your query"
 
 # Run the manager with custom agent selection
-poetry run python run_examples.py manager-custom "your query" --agents researcher writer editor
+python run_examples.py manager-custom "your query" --agents researcher writer editor
 
 # Run the writer-critic example
-poetry run python run_examples.py writer
+python run_examples.py writer
 
 # Run the editor example
-poetry run python run_examples.py editor "content to edit and fact check"
+python run_examples.py editor "content to edit and fact check"
 
 # Run all examples
-poetry run python run_examples.py all
+python run_examples.py all
 
 # Enable telemetry for any example
-poetry run python run_examples.py researcher "your query" --telemetry
+python run_examples.py researcher "your query" --telemetry
 ```
 
 ### Option 2: Running individual examples as modules
@@ -204,19 +214,19 @@ From the `agents` directory:
 
 ```bash
 # Run the researcher example
-poetry run python -m researcher.example "your query"
+python -m researcher.example "your query"
 
 # Run the writer-critic example
-poetry run python -m writer_critic.example
+python -m writer_critic.example
 
 # Run the editor example
-poetry run python -m editor.example "content to edit and fact check"
+python -m editor.example "content to edit and fact check"
 
 # Run the manager example with default settings
-poetry run python -m manager.example --query "your query" --managed-agents researcher,writer,editor
+python -m manager.example --query "your query" --managed-agents researcher,writer,editor
 
 # Run the manager with custom prompts
-poetry run python -m manager.example --query "your query" --managed-agents researcher,writer,editor --use-custom-prompts
+python -m manager.example --query "your query" --managed-agents researcher,writer,editor --use-custom-prompts
 ```
 
 ## Project Structure
@@ -225,7 +235,6 @@ The agents project follows this structure:
 
 ```
 agents/
-    |__ .venv/              # Poetry managed virtual environment
     |__ researcher/         # Researcher agent project
     |__ utils/              # Shared utilities
     |   |__ gemini/         # Google Gemini LLM API utilities
