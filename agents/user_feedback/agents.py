@@ -16,7 +16,6 @@ class UserFeedbackAgent:
         max_steps: int = 5,
         user_email: Optional[str] = None,
         report_frequency: int = 1,
-        mailbox_path: Optional[str] = None,
         agent_description: Optional[str] = None,
         agent_prompt: Optional[str] = None,
         model_id: str = "gemini/gemini-2.0-flash",
@@ -31,7 +30,6 @@ class UserFeedbackAgent:
             max_steps: Maximum number of steps for the agent
             user_email: Email address of the user to communicate with
             report_frequency: How often to send reports (1 = every iteration)
-            mailbox_path: Path to the mailbox file to check for emails
             agent_description: Optional additional description to append to the base description
             agent_prompt: Optional custom system prompt to use instead of the default
             model_id: The model ID to use if creating a new model
@@ -51,9 +49,8 @@ class UserFeedbackAgent:
             self.model = model
             
         self.max_steps = max_steps
-        self.user_email = user_email or os.getenv("USER_EMAIL")
+        self.user_email = user_email or os.getenv("LOCAL_USER_EMAIL")
         self.report_frequency = report_frequency
-        self.mailbox_path = mailbox_path
         self.iteration_count = 0
         
         # Create the agent
@@ -102,7 +99,6 @@ class UserFeedbackAgent:
         Current iteration: {self.iteration_count}
         Report frequency: Every {self.report_frequency} iterations
         User email: {self.user_email}
-        Mailbox path: {self.mailbox_path or "default system mailbox"}
         
         First, check for new emails from the user that might contain feedback or commands.
         Then, determine if you should send a progress report based on the current iteration and report frequency.
@@ -111,10 +107,10 @@ class UserFeedbackAgent:
         {state}
         
         1. Check for new emails and extract any commands or feedback
-           - Use check_mail(mailbox_path="{self.mailbox_path}") if a mailbox path is provided
+           - Use check_mail() to check for unread emails from REMOTE_USER_EMAIL
         2. Update the state based on user feedback if any
         3. Determine if a progress report should be sent
-        4. If needed, generate and send a concise progress report to {self.user_email}
+        4. If needed, generate and send a concise progress report using send_mail()
         """
         
         result = self._agent(prompt)

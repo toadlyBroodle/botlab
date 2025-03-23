@@ -251,7 +251,7 @@ class AgentLoop:
                     
                     elif agent_type.lower() == 'user_feedback':
                         # Get user email from environment or config
-                        user_email = os.getenv("USER_EMAIL") or self.agent_configs.get('user_email')
+                        user_email = os.getenv("LOCAL_USER_EMAIL") or self.agent_configs.get('user_email')
                         report_frequency = self.agent_configs.get('report_frequency', 1)
                         
                         agent_instance = UserFeedbackAgent(
