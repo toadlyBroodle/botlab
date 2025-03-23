@@ -3,11 +3,6 @@ description: Structure and organization guidelines for specialized agent project
 globs: **/researcher/**, **/manager/**, **/editor/**, **/writer_critic/**, **/qaqc/**
 alwaysApply: false
 ---
----
-description: Structure and organization guidelines for specialized agent projects
-globs: **/researcher/**, **/manager/**, **/editor/**, **/writer_critic/**, **/qaqc/**
-alwaysApply: false
----
 
 # Agent Projects Guidelines
 
