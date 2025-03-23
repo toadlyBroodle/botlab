@@ -6,7 +6,7 @@ This example shows how to create and use a ManagerAgent instance directly.
 It also provides a command-line interface for running management queries.
 
 Usage:
-    poetry run python -m agents.manager.example --query "Your management query here"
+    python -m agents.manager.example --query "Your management query here"
 
 Note:
     When running this example directly, the manager agent will save its output to

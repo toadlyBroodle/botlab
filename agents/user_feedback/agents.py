@@ -1,4 +1,4 @@
-from smolagents import ToolCallingAgent
+from smolagents import CodeAgent
 from .tools import send_mail, check_mail, parse_commands
 from ..utils.agents.tools import save_final_answer, apply_custom_agent_prompts
 from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
@@ -66,7 +66,7 @@ class UserFeedbackAgent:
             description = base_description
             
         # Create the agent with either the default or custom prompt
-        self._agent = ToolCallingAgent(
+        self._agent = CodeAgent(
             tools=[send_mail, check_mail, parse_commands],
             model=self.model,
             name='user_feedback_agent',

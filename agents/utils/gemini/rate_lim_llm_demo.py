@@ -6,7 +6,7 @@ This script demonstrates how to use the rate-limited LLM client with different m
 including how to specify rate limits and handle retries.
 
 Usage:
-    poetry run python -m agents.utils.gemini.rate_lim_llm_demo
+    python -m agents.utils.gemini.rate_lim_llm_demo
 """
 
 import os

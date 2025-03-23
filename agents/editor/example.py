@@ -6,7 +6,7 @@ This example shows how to create and use an EditorAgent and FactCheckerAgent dir
 It also provides a command-line interface for editing and fact-checking content.
 
 Usage:
-    poetry run python -m agents.editor.example --content "Content to edit and fact check"
+    python -m agents.editor.example --content "Content to edit and fact check"
 """
 
 import os

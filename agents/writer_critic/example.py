@@ -6,7 +6,7 @@ This example shows how to create and use a WriterAgent and CriticAgent instances
 It also provides a command-line interface for running writing prompts.
 
 Usage:
-    poetry run python -m agents.writer_critic.example --prompt "Your writing prompt here"
+    python -m agents.writer_critic.example --prompt "Your writing prompt here"
 """
 
 import os

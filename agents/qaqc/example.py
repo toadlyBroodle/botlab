@@ -6,7 +6,7 @@ This example shows how to create and use a QAQCAgent instance directly.
 It also provides a command-line interface for comparing multiple outputs.
 
 Usage:
-    poetry run python -m agents.qaqc.example --outputs output1.txt output2.txt --query "Original query"
+    python -m agents.qaqc.example --outputs output1.txt output2.txt --query "Original query"
 """
 
 import os

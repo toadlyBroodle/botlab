@@ -6,7 +6,7 @@ This example shows how to create and use a ResearcherAgent instance directly.
 It also provides a command-line interface for running research queries.
 
 Usage:
-    poetry run python -m agents.researcher.example --query "Your research query here"
+    python -m agents.researcher.example --query "Your research query here"
 """
 
 import os

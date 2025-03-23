@@ -83,19 +83,19 @@ The File Manager includes a command-line interface for managing files:
 
 ```bash
 # List all files
-poetry run python -m utils.file_manager.file_manager list
+python -m utils.file_manager.file_manager list
 
 # List files for a specific agent
-poetry run python -m utils.file_manager.file_manager list --agent researcher
+python -m utils.file_manager.file_manager list --agent researcher
 
 # Delete a specific file
-poetry run python -m utils.file_manager.file_manager delete --file-id <file_path>
+python -m utils.file_manager.file_manager delete --file-id <file_path>
 
 # Delete all files for a specific agent
-poetry run python -m utils.file_manager.file_manager delete --agent researcher
+python -m utils.file_manager.file_manager delete --agent researcher
 
 # Delete all files
-poetry run python -m utils.file_manager.file_manager delete --all
+python -m utils.file_manager.file_manager delete --all
 ```
 
 ### Special Case: PDF Handling
