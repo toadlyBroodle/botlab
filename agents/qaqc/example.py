@@ -6,7 +6,7 @@ This example shows how to create and use a QAQCAgent instance directly.
 It also provides a command-line interface for comparing multiple outputs.
 
 Usage:
-    poetry run python -m agents.qaqc.example --outputs "output1.txt,output2.txt" --query "Original query"
+    poetry run python -m agents.qaqc.example --outputs output1.txt output2.txt --query "Original query"
 """
 
 import os
@@ -128,9 +128,9 @@ def parse_arguments():
         The parsed arguments
     """
     parser = argparse.ArgumentParser(description="Run the QAQCAgent to compare outputs.")
-    parser.add_argument("--outputs", type=str, help="Paths to the output files or the content directly")
+    parser.add_argument("--outputs", nargs='+', help="Paths to the output files or content directly")
     parser.add_argument("--query", type=str, help="Optional original query for context")
-    parser.add_argument("--max-steps", type=int, default=15, help="Maximum number of steps")
+    parser.add_argument("--max-steps", type=int, default=4, help="Maximum number of steps")
     parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
@@ -143,10 +143,27 @@ def parse_arguments():
 if __name__ == "__main__":
     args = parse_arguments()
     
-    # If file paths are provided, read the content
-    outputs = args.outputs.split(',') if args.outputs else []
-    output1 = read_file_content(outputs[0]) if outputs and os.path.isfile(outputs[0]) else outputs[0]
-    output2 = read_file_content(outputs[1]) if len(outputs) > 1 and os.path.isfile(outputs[1]) else outputs[1]
+    # Process the outputs
+    outputs = args.outputs if args.outputs else []
+    
+    # Read file contents if they are files
+    processed_outputs = []
+    for output_path in outputs:
+        if os.path.isfile(output_path):
+            content = read_file_content(output_path)
+            if content:
+                processed_outputs.append(content)
+        else:
+            processed_outputs.append(output_path)
+    
+    if len(processed_outputs) < 2:
+        raise ValueError("Please provide at least two outputs to compare")
+    elif len(processed_outputs) > 2:
+        print("Warning: Only the first two outputs will be compared")
+
+    # Get the first two outputs (QAQCAgent currently only supports comparing two outputs)
+    output1 = processed_outputs[0] if len(processed_outputs) > 0 else None
+    output2 = processed_outputs[1] if len(processed_outputs) > 1 else None
     
     run_example(
         output1=output1,

@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: agents
+Version: 0.1.0
+Summary: Small, efficient AI agents for automation
+Author: Landon Mutch
+Author-email: landonmutch@protonmail.com
+Requires-Python: >=3.11,<3.14
+Dynamic: author
+Dynamic: author-email
+Dynamic: requires-python
+Dynamic: summary

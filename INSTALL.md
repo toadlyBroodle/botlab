@@ -1,50 +1,61 @@
 # Installing BotLab Dependencies
 
-This directory contains a script to easily install the Python dependencies required by BotLab.
+This directory contains a script to easily set up a virtual environment and install all Python dependencies required by BotLab.
 
 ## Quick Installation
 
-Run the following commands to install all dependencies:
+Run the following commands to set up the environment and install all dependencies:
 
 ```bash
 # Make the script executable (if needed)
-chmod +x install_dependencies.sh
+chmod +x setup_env.sh
 
-# Run the installation script
-./install_dependencies.sh
-```
-
-## Usage from Any Directory
-
-You can run the installation script from any directory:
-
-```bash
-# Run directly from any path
-/path/to/botlab/install_dependencies.sh
+# Run the setup script
+./setup_env.sh
 ```
 
 ## What Does It Do?
 
 The script:
-1. Automatically finds and parses the dependencies in `agents/pyproject.toml`
-2. Installs all dependencies using pip
-3. Skips the Python version requirement
+1. Creates a `.venv` directory at the root of the project
+2. Installs all dependencies from `requirements.txt`
+3. Installs local packages (`agents` and `swarms`) in development mode
+
+## Usage
+
+After installation, activate the virtual environment:
+
+```bash
+source .venv/bin/activate
+```
+
+To deactivate the virtual environment when you're done:
+
+```bash
+deactivate
+```
 
 ## Troubleshooting
 
-If you encounter permission issues, try running with sudo:
+If you encounter permission issues, make sure the script is executable:
 
 ```bash
-sudo ./install_dependencies.sh
+chmod +x setup_env.sh
 ```
 
-For virtual environment usage:
+For manual installation:
 
 ```bash
-# Create and activate a virtual environment first
-python -m venv .venv
+# Create and activate a virtual environment
+python3 -m venv .venv
 source .venv/bin/activate
 
-# Then run the script
-./install_dependencies.sh
+# Install dependencies
+pip install -r requirements.txt
+
+# Install local packages
+pip install -e ./agents
+pip install -e ./swarms
 ``` 
+
+If you prefer to use Poetry you may use the `poetry.toml` file to install the dependencies.
