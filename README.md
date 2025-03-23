@@ -20,9 +20,12 @@ This repository contains two main projects:
 The `agents/` directory contains a collection of AI agents built with the smolagent framework. These agents can perform tasks like research, writing, and coordination.
 
 ```bash
+# Setup the environment first
+./setup_env.sh
+source .venv/bin/activate
+
 # Example: Run the researcher agent
-cd agents
-poetry run python -m researcher.example --query "What are the latest advancements in AI?"
+python -m agents.researcher.example --query "What are the latest advancements in AI?"
 ```
 
 **[View the full Agents documentation →](agents/README.md)**
@@ -40,9 +43,12 @@ Key components:
 The `swarms/` directory contains implementations based on OpenAI's swarm framework, allowing for the creation of collaborative agent systems.
 
 ```bash
+# Setup the environment first (if not already done)
+./setup_env.sh
+source .venv/bin/activate
+
 # Example: Run the writer-critic swarm
-cd swarms
-python -m writer-critic.writer-critic
+python -m swarms.writer-critic.writer-critic
 ```
 
 **[View the full Swarms documentation →](swarms/README.md)**

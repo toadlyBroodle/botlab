@@ -81,7 +81,8 @@ class FileManager:
                  title: Optional[str] = None, 
                  agent_name: Optional[str] = None,
                  extension: str = ".md",
-                 version: Optional[str] = None) -> str:
+                 version: Optional[str] = None,
+                 metadata: Optional[Dict[str, Any]] = None) -> str:
         """Save a file to the agent's data directory.
         
         Args:
@@ -91,6 +92,7 @@ class FileManager:
             agent_name: Optional name of the agent
             extension: File extension (default: .md)
             version: Optional version identifier
+            metadata: Optional metadata to save alongside the content
             
         Returns:
             The filepath of the saved file
@@ -127,6 +129,30 @@ class FileManager:
         filepath = directory / filename
         logger.info(f"Full filepath: {filepath}")
         
+        # If metadata is provided, save it alongside the content
+        if metadata:
+            # For markdown files, we'll save metadata as JSON in a separate file
+            if extension.lower() in ['.md', '.txt']:
+                metadata_filepath = f"{filepath}.metadata.json"
+                with open(metadata_filepath, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, indent=2)
+                logger.info(f"Metadata saved to: {metadata_filepath}")
+            # For JSON files, we can include metadata in the same file
+            elif extension.lower() == '.json':
+                try:
+                    # Try to parse the content as JSON
+                    content_json = json.loads(content)
+                    # Add metadata field to the JSON content
+                    content_json['__metadata__'] = metadata
+                    # Update the content
+                    content = json.dumps(content_json, indent=2)
+                except json.JSONDecodeError:
+                    # If content isn't valid JSON, create metadata file instead
+                    metadata_filepath = f"{filepath}.metadata.json"
+                    with open(metadata_filepath, 'w', encoding='utf-8') as f:
+                        json.dump(metadata, f, indent=2)
+                    logger.info(f"Content was not valid JSON. Metadata saved to separate file: {metadata_filepath}")
+        
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
         
@@ -145,25 +171,59 @@ class FileManager:
         """
         if not os.path.exists(file_identifier):
             raise FileNotFoundError(f"File not found: {file_identifier}")
+        
         with open(file_identifier, 'r', encoding='utf-8') as f:
             content = f.read()
+        
+        # Check if we have metadata for this file
+        metadata = None
+        metadata_filepath = f"{file_identifier}.metadata.json"
+        
+        if os.path.exists(metadata_filepath):
+            # Load metadata from separate file
+            try:
+                with open(metadata_filepath, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                logger.info(f"Loaded metadata from: {metadata_filepath}")
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse metadata file: {metadata_filepath}")
+        
+        # If no separate metadata file and it's a JSON file, check for embedded metadata
+        elif file_identifier.lower().endswith('.json'):
+            try:
+                content_json = json.loads(content)
+                if '__metadata__' in content_json:
+                    metadata = content_json.pop('__metadata__')
+                    # Update content without the metadata
+                    content = json.dumps(content_json, indent=2)
+                    logger.info(f"Extracted embedded metadata from JSON: {file_identifier}")
+            except json.JSONDecodeError:
+                logger.debug(f"File has .json extension but content isn't valid JSON: {file_identifier}")
+        
         stat = os.stat(file_identifier)
-        return {
+        result = {
             "content": content,
             "filepath": file_identifier,
             "created_at": stat.st_ctime
         }
+        
+        if metadata:
+            result["metadata"] = metadata
+            
+        return result
     
     def list_files(self, 
                    file_type: Optional[str] = None, 
                    project_id: Optional[str] = None,
-                   filter_criteria: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+                   filter_criteria: Optional[Dict[str, Any]] = None,
+                   include_metadata: bool = False) -> List[Dict[str, Any]]:
         """List files with optional filtering.
         
         Args:
             file_type: Optional filter by file type
             project_id: Optional filter by project ID
             filter_criteria: Optional additional filter criteria
+            include_metadata: Whether to include metadata in the results
             
         Returns:
             List of file metadata matching the criteria
@@ -183,13 +243,39 @@ class FileManager:
             if os.path.exists(directory):
                 for entry in os.listdir(directory):
                     full_path = os.path.join(directory, entry)
+                    # Skip metadata files as they'll be handled with their primary files
+                    if entry.endswith('.metadata.json'):
+                        continue
                     if os.path.isfile(full_path):
                         stat = os.stat(full_path)
-                        results.append({
+                        file_info = {
                             "file_id": full_path,
                             "filename": entry,
                             "created_at": stat.st_ctime
-                        })
+                        }
+                        
+                        if include_metadata:
+                            # Check for metadata file
+                            metadata_path = f"{full_path}.metadata.json"
+                            if os.path.exists(metadata_path):
+                                try:
+                                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                                        file_info["metadata"] = json.load(f)
+                                except json.JSONDecodeError:
+                                    logger.warning(f"Failed to parse metadata file: {metadata_path}")
+                            # For JSON files, check for embedded metadata
+                            elif full_path.lower().endswith('.json'):
+                                try:
+                                    with open(full_path, 'r', encoding='utf-8') as f:
+                                        content_json = json.load(f)
+                                        if '__metadata__' in content_json:
+                                            file_info["metadata"] = content_json['__metadata__']
+                                except json.JSONDecodeError:
+                                    pass
+                                except Exception as e:
+                                    logger.warning(f"Error reading JSON file {full_path}: {str(e)}")
+                        
+                        results.append(file_info)
         results.sort(key=lambda x: x.get("created_at", 0), reverse=True)
         return results
     
@@ -207,12 +293,13 @@ class FileManager:
             return True
         return False
     
-    def search_files(self, query: str, agent_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search_files(self, query: str, agent_name: Optional[str] = None, include_metadata: bool = False) -> List[Dict[str, Any]]:
         """Search for files containing the query in title or content.
         
         Args:
             query: Search query
             agent_name: Optional filter by agent name
+            include_metadata: Whether to include metadata in the results
             
         Returns:
             List of file metadata matching the query
@@ -230,18 +317,52 @@ class FileManager:
         for directory in dirs_to_search:
             if os.path.exists(directory):
                 for entry in os.listdir(directory):
+                    # Skip metadata files as they'll be handled with their primary files
+                    if entry.endswith('.metadata.json'):
+                        continue
+                    
                     full_path = os.path.join(directory, entry)
                     if os.path.isfile(full_path):
+                        file_info = {"file_id": full_path, "filename": entry}
+                        found = False
+                        
+                        # Check filename
                         if query in entry.lower():
-                            results.append({"file_id": full_path, "filename": entry})
-                            continue
-                        try:
-                            with open(full_path, 'r', encoding='utf-8') as f:
-                                content = f.read().lower()
-                                if query in content:
-                                    results.append({"file_id": full_path, "filename": entry})
-                        except Exception:
-                            continue
+                            found = True
+                        
+                        # Check content
+                        if not found:
+                            try:
+                                with open(full_path, 'r', encoding='utf-8') as f:
+                                    content = f.read().lower()
+                                    if query in content:
+                                        found = True
+                            except Exception:
+                                continue
+                        
+                        if found:
+                            if include_metadata:
+                                # Check for metadata file
+                                metadata_path = f"{full_path}.metadata.json"
+                                if os.path.exists(metadata_path):
+                                    try:
+                                        with open(metadata_path, 'r', encoding='utf-8') as f:
+                                            file_info["metadata"] = json.load(f)
+                                    except json.JSONDecodeError:
+                                        logger.warning(f"Failed to parse metadata file: {metadata_path}")
+                                # For JSON files, check for embedded metadata
+                                elif full_path.lower().endswith('.json'):
+                                    try:
+                                        with open(full_path, 'r', encoding='utf-8') as f:
+                                            content_json = json.load(f)
+                                            if '__metadata__' in content_json:
+                                                file_info["metadata"] = content_json['__metadata__']
+                                    except json.JSONDecodeError:
+                                        pass
+                                    except Exception as e:
+                                        logger.warning(f"Error reading JSON file {full_path}: {str(e)}")
+                            
+                            results.append(file_info)
         return results
     
     def delete_agent_files(self, agent_type: str) -> int:

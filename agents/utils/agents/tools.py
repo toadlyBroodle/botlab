@@ -28,14 +28,7 @@ import base64
 # Get botlab root directory
 BOTLAB_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-# Determine if we're running as a submodule by checking for parent project's logs directory
-PARENT_ROOT = os.path.dirname(BOTLAB_ROOT)
-if os.path.exists(os.path.join(PARENT_ROOT, 'logs')):
-    # We're a submodule, use parent's logs directory
-    LOGS_DIR = os.path.join(PARENT_ROOT, 'logs')
-else:
-    # Standalone mode, use botlab's logs directory
-    LOGS_DIR = os.path.join(BOTLAB_ROOT, 'logs')
+LOGS_DIR = os.path.join(BOTLAB_ROOT, 'agents', 'logs')
 
 # Set up logging with dedicated file in appropriate logs directory
 logger = setup_logger('botlab_tools', log_dir=LOGS_DIR)
