@@ -3,17 +3,17 @@
 Example usage of the QAQCAgent class.
 
 This example shows how to create and use a QAQCAgent instance directly.
-It also provides a command-line interface for comparing outputs.
+It also provides a command-line interface for comparing multiple outputs.
 
 Usage:
-    poetry run python -m qaqc.example --output1 "path/to/output1.md" --output2 "path/to/output2.md"
+    poetry run python -m agents.qaqc.example --outputs "output1.txt,output2.txt" --query "Original query"
 """
 
 import os
 import argparse
 from dotenv import load_dotenv
-from utils.telemetry import suppress_litellm_logs
-from qaqc.agents import QAQCAgent
+from agents.utils.telemetry import suppress_litellm_logs
+from agents.qaqc.agents import QAQCAgent
 
 def setup_basic_environment():
     """Set up basic environment for the example"""
@@ -28,11 +28,10 @@ def setup_basic_environment():
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
 
-def run_example(output1=None, output2=None, query=None, max_steps=15, 
-                model_id="gemini/gemini-2.0-flash", 
-                model_info_path="utils/gemini/gem_llm_info.json",
+def run_example(output1=None, output2=None, query=None, max_steps=10, model_id="gemini/gemini-2.0-flash", 
+                model_info_path="agents/utils/gemini/gem_llm_info.json",
                 base_wait_time=2.0, max_retries=3,
-                agent_description=None, system_prompt=None):
+                agent_description=None, agent_prompt=None):
     """Run a QAQC comparison using the QAQCAgent class
     
     Args:
@@ -45,7 +44,7 @@ def run_example(output1=None, output2=None, query=None, max_steps=15,
         base_wait_time: Base wait time for rate limiting
         max_retries: Maximum retries for rate limiting
         agent_description: Optional custom description for the agent
-        system_prompt: Optional custom system prompt for the agent
+        agent_prompt: Optional custom system prompt for the agent
         
     Returns:
         The comparison result from the QAQC agent
@@ -88,7 +87,7 @@ MIT researchers recently published a breakthrough quantum algorithm that demonst
     qaqc = QAQCAgent(
         max_steps=max_steps,
         agent_description=agent_description,
-        system_prompt=system_prompt,
+        system_prompt=agent_prompt,
         model_id=model_id,
         model_info_path=model_info_path,
         base_wait_time=base_wait_time,
@@ -129,16 +128,15 @@ def parse_arguments():
         The parsed arguments
     """
     parser = argparse.ArgumentParser(description="Run the QAQCAgent to compare outputs.")
-    parser.add_argument("--output1", type=str, help="Path to the first output file or the content directly")
-    parser.add_argument("--output2", type=str, help="Path to the second output file or the content directly")
+    parser.add_argument("--outputs", type=str, help="Paths to the output files or the content directly")
     parser.add_argument("--query", type=str, help="Optional original query for context")
     parser.add_argument("--max-steps", type=int, default=15, help="Maximum number of steps")
     parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
-    parser.add_argument("--agent-description", type=str, help="Custom description for the agent")
-    parser.add_argument("--system-prompt", type=str, help="Custom system prompt for the agent")
+    parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--agent-description", type=str, help="Custom description for the QAQC agent")
+    parser.add_argument("--agent-prompt", type=str, help="Custom system prompt for the QAQC agent")
     
     return parser.parse_args()
 
@@ -146,8 +144,9 @@ if __name__ == "__main__":
     args = parse_arguments()
     
     # If file paths are provided, read the content
-    output1 = read_file_content(args.output1) if args.output1 and os.path.isfile(args.output1) else args.output1
-    output2 = read_file_content(args.output2) if args.output2 and os.path.isfile(args.output2) else args.output2
+    outputs = args.outputs.split(',') if args.outputs else []
+    output1 = read_file_content(outputs[0]) if outputs and os.path.isfile(outputs[0]) else outputs[0]
+    output2 = read_file_content(outputs[1]) if len(outputs) > 1 and os.path.isfile(outputs[1]) else outputs[1]
     
     run_example(
         output1=output1,
@@ -159,5 +158,5 @@ if __name__ == "__main__":
         base_wait_time=args.base_wait_time,
         max_retries=args.max_retries,
         agent_description=args.agent_description,
-        system_prompt=args.system_prompt
+        agent_prompt=args.agent_prompt
     ) 

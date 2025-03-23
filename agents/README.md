@@ -10,9 +10,34 @@ This directory contains agent systems built with smolagents:
 ## 📦 Installation
 
 ```bash
-cd agents/
+# From the root directory
 poetry install
+cd agents/
 echo "GEMINI_API_KEY=<your-api-key>" >> .env
+```
+
+## 🏃‍♀️ Running Agents
+
+Run the agents from the root directory:
+
+```bash
+# Run from project root directory
+poetry run python -m agents.researcher.example --query "What are the latest advancements in quantum computing?"
+```
+
+## 📚 Use as a Submodule
+
+This repository is designed to be usable as a submodule in other projects:
+
+```bash
+# In your project
+git submodule add https://github.com/yourusername/agents.git
+```
+
+Then import agents with absolute imports:
+```python
+from agents import AgentLoop
+from agents.researcher.agents import ResearcherAgent
 ```
 
 ## 🤖 Available Agents
@@ -23,7 +48,7 @@ The researcher agent can search the web, extract information from websites, and 
 
 ```bash
 # Run the researcher agent
-poetry run python -m researcher.main --query "What are the latest advancements in quantum computing?"
+poetry run python -m agents.researcher.example --query "What are the latest advancements in quantum computing?"
 ```
 
 Key features:

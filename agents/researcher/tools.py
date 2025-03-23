@@ -8,8 +8,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
-from utils.agents.tools import get_timestamp
-from utils.file_manager import FileManager
+
+from agents.utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
 from smolagents import tool
 
 # Set up logging
@@ -37,7 +37,6 @@ class ConversionStatus:
 
 def get_paper_path(paper_id: str, extension: str = ".pdf") -> Path:
     """Get the path for a paper file in the papers directory."""
-    from utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
     return RESEARCHER_PAPERS_DIR / f"{paper_id}{extension}"
 
 def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
@@ -52,8 +51,7 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
         markdown = pymupdf4llm.to_markdown(pdf_path, show_progress=False)
         
         # Save directly to the papers directory with a simple naming convention
-        from utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
-        from utils.agents.tools import get_timestamp
+        from agents.utils.agents.tools import get_timestamp
         
         # Create a filename with timestamp and paper_id
         timestamp = get_timestamp()
@@ -189,10 +187,7 @@ def check_conversion_status(paper_id: str) -> str:
     
     if status.error:
         result += f"Error: {status.error}\n"
-    
-    # Check if the markdown file exists
-    from utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
-    
+        
     # Look for any file containing the paper_id
     found = False
     for file_path in RESEARCHER_PAPERS_DIR.glob(f"*{paper_id}*.md"):
@@ -216,9 +211,6 @@ def read_paper_markdown(paper_id: str) -> str:
         The markdown content of the paper, or an error message if not available
     """
     try:
-        from utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
-        import os
-        
         # Direct approach: look for the file in the papers directory
         papers_dir = RESEARCHER_PAPERS_DIR
         

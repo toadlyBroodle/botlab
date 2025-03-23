@@ -1,5 +1,12 @@
+#!/usr/bin/env python3
 """
-Simple demonstration of the RateLimitedLiteLLMModel.
+Example usage of RateLimitedLiteLLMModel with different models.
+
+This script demonstrates how to use the rate-limited LLM client with different models,
+including how to specify rate limits and handle retries.
+
+Usage:
+    poetry run python -m agents.utils.gemini.rate_lim_llm_demo
 """
 
 import os
@@ -8,9 +15,9 @@ import threading
 import logging
 from dotenv import load_dotenv
 from smolagents import LiteLLMModel, ToolCallingAgent
-from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from utils.agent_utils import apply_agent_specific_templates
-from utils.telemetry import suppress_litellm_logs
+from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from agents.utils.agent_utils import apply_agent_specific_templates
+from agents.utils.telemetry import suppress_litellm_logs
 
 # Suppress LiteLLM logs
 suppress_litellm_logs()
@@ -174,7 +181,7 @@ def test_parallel_model_calls(model_id="gemini/gemini-2.0-flash", num_models=3, 
     for i in range(num_models):
         model = RateLimitedLiteLLMModel(
             model_id=model_id,
-            model_info_path="utils/gemini/gem_llm_info.json",
+            model_info_path="agents/utils/gemini/gem_llm_info.json",
             base_wait_time=1.0,
             max_retries=3,
             jitter_factor=0.2,
@@ -257,7 +264,7 @@ def main():
     # Create a rate-limited version of the model
     rate_limited_model = RateLimitedLiteLLMModel(
         model_id="gemini/gemini-2.0-flash",
-        model_info_path="utils/gemini/gem_llm_info.json",
+        model_info_path="agents/utils/gemini/gem_llm_info.json",
         base_wait_time=0,  # Start with a 1 second base wait time
         max_retries=2,
         jitter_factor=0.2,

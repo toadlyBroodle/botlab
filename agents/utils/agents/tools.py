@@ -454,44 +454,29 @@ def load_file(agent_type: Optional[str] = None, version: str = "latest") -> str:
     Returns:
         The content of the file, or an error message if no files are found.
     """
+    # Import here to avoid circular imports
+    from agents.utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    
     try:
-        from utils.file_manager.file_manager import FileManager, AGENT_DIRS
         import logging
         logger = logging.getLogger("file_manager")
         
         # Initialize file manager
         file_manager = FileManager()
         
-        # Convert agent_type to agent_name if provided
-        agent_name = None
+        # Get list of files from the agent's directory
+        filter_criteria = {}
         if agent_type:
-            agent_name = f"{agent_type}_agent"
-            if agent_name not in AGENT_DIRS:
-                return f"Error: Invalid agent_type '{agent_type}'. Valid options are: researcher, manager, editor, writer_critic, qaqc."
+            filter_criteria["agent_name"] = f"{agent_type}_agent"
             
-            logger.info(f"Loading files for agent_name: {agent_name}")
+        files = file_manager.list_files(filter_criteria=filter_criteria)
         
-        # Get all files, potentially filtered by agent_name
-        all_files = []
+        if not files:
+            agent_list = ", ".join([a.replace("_agent", "") for a in AGENT_DIRS.keys()])
+            return f"No files found for agent_type={agent_type}. Valid agent types: {agent_list}"
         
-        # If agent_name is specified, filter files by that agent
-        if agent_name:
-            filter_criteria = {"agent_name": agent_name}
-            all_files = file_manager.list_files(filter_criteria=filter_criteria)
-            logger.info(f"Found {len(all_files)} files for agent_name: {agent_name}")
-        else:
-            # Get all files
-            all_files = file_manager.list_files()
-            logger.info(f"Found {len(all_files)} files across all agents")
-        
-        if not all_files:
-            if agent_type:
-                return f"No files found for agent type '{agent_type}'."
-            else:
-                return "No files found."
-        
-        # Sort by creation date (newest first)
-        sorted_files = sorted(all_files, key=lambda x: x.get('created_at', ''), reverse=True)
+        # Sort files by creation time (newest first)
+        sorted_files = sorted(files, key=lambda x: x.get("created_at", 0), reverse=True)
         
         # Get the requested version
         if version == "latest":
@@ -504,16 +489,12 @@ def load_file(agent_type: Optional[str] = None, version: str = "latest") -> str:
             return f"Error: Invalid version '{version}'. Valid options are: 'latest' or 'previous'."
         
         # Get the file data
-        file_data = file_manager.get_file(sorted_files[index]['file_id'])
-        logger.info(f"Loaded file: {sorted_files[index]['file_id']}")
-        
-        # Return just the content
-        return file_data['content']
+        file_data = file_manager.get_file(sorted_files[index]["file_id"])
+        return file_data["content"]
         
     except Exception as e:
         import traceback
-        traceback.print_exc()
-        return f"Error loading file: {str(e)}"
+        return f"Error loading file: {str(e)}\n{traceback.format_exc()}"
 
 def extract_final_answer_from_memory(agent) -> Any:
     """Extract the final_answer from an agent's memory.
@@ -552,71 +533,47 @@ def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_typ
     Returns:
         The file ID of the saved file, or an error message
     """
+    # Import here to avoid circular imports
+    from agents.utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    
     try:
-        from utils.file_manager.file_manager import FileManager, AGENT_DIRS
         import os
         import logging
         logger = logging.getLogger("file_manager")
         
         # Print debug information
         logger.info(f"Saving final answer for agent_type: {agent_type}")
-        logger.info(f"Current working directory: {os.getcwd()}")
         
-        # Initialize file manager
+        # Extract the final answer from agent.memory if available
+        final_answer = extract_final_answer_from_memory(agent)
+        
+        # If no final answer found, use the result as-is
+        if not final_answer:
+            logger.info("No final_answer found in agent memory, using result")
+            final_answer = result
+            
+        # Construct metadata
+        metadata = {
+            "agent_name": f"{agent_type}_agent",
+            "query": query_or_prompt if query_or_prompt else "No query provided",
+            "content_type": "final_answer",
+        }
+        
+        # Save the final answer
         file_manager = FileManager()
-        
-        # Convert agent_type to agent_name
-        agent_name = f"{agent_type}_agent"
-        if agent_name not in AGENT_DIRS:
-            return f"Error: Invalid agent_type '{agent_type}'. Valid options are: researcher, manager, editor, writer_critic, qaqc."
-        
-        logger.info(f"Mapped agent_type '{agent_type}' to agent_name '{agent_name}'")
-        
-        # Extract final_answer from agent memory if available
-        final_answer_content = result
-        extracted_answer = extract_final_answer_from_memory(agent)
-        
-        if extracted_answer is not None:
-            final_answer_content = extracted_answer
-            logger.info(f"Found final_answer in {agent_type} agent memory")
-        
-        # Extract a title from the final_answer_content
-        title = ""
-        if isinstance(final_answer_content, str):
-            # Try to extract a title from markdown heading if available
-            if "# " in final_answer_content:
-                title_lines = [line for line in final_answer_content.split('\n') if line.startswith('# ')]
-                if title_lines:
-                    title = title_lines[0].replace('# ', '').strip()
-            if not title:
-                title = final_answer_content.strip()[:50]
-        
-        # Truncate long titles
-        if len(title) > 50:
-            title = title[:50] + "..."
-        
-        # Save the file without metadata
-        file_path = file_manager.save_file(
-            content=final_answer_content if isinstance(final_answer_content, str) else str(final_answer_content),
-            file_type="report",  # Use a default file_type
-            title=title,
-            agent_name=agent_name
+        file_id = file_manager.save_file(
+            content=final_answer,
+            metadata=metadata
         )
-
-        # Debug logging for agent directory
-        agent_dir = AGENT_DIRS.get(agent_name, "unknown_dir")
-        logger.info(f"Agent directory: {agent_dir}")
-        logger.info(f"Agent directory exists: {os.path.exists(agent_dir)}")
-
-        logger.info(f"Saved {agent_type} output to agent's data directory with path: {file_path}")
-        return file_path
-    
+        
+        logger.info(f"Saved final answer as file_id: {file_id}")
+        return file_id
+        
     except Exception as e:
-        error_msg = f"Error saving {agent_type} output: {str(e)}"
-        print(error_msg)
         import traceback
-        traceback.print_exc()
-        return error_msg
+        logger.error(f"Error saving final answer: {str(e)}")
+        logger.error(traceback.format_exc())
+        return f"Error saving final answer: {str(e)}"
 
 @tool
 def generate_image(prompt: str) -> str:

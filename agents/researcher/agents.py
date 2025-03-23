@@ -1,7 +1,7 @@
 from smolagents import CodeAgent
 from .tools import arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown
-from utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
-from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from agents.utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
+from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from typing import Optional
 import os
 import time
@@ -17,7 +17,7 @@ class ResearcherAgent:
         researcher_description: Optional[str] = None,
         researcher_prompt: Optional[str] = None,
         model_id: str = "gemini/gemini-2.0-flash",
-        model_info_path: str = "utils/gemini/gem_llm_info.json",
+        model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
         max_retries: int = 3
     ):

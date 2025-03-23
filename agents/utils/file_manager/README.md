@@ -19,29 +19,37 @@ The File Manager provides a unified way to save, retrieve, list, and search file
 ### Basic Usage
 
 ```python
-from utils.file_manager import FileManager
-from utils.agents.tools import save_final_answer, load_file
+from agents.utils.file_manager import FileManager
+from agents.utils.agents.tools import save_final_answer, load_file
 
-# Save agent output
-save_final_answer(
-    agent=agent,
-    result=result,
-    agent_type="researcher"
+# Initialize the FileManager
+file_manager = FileManager()
+
+# Save a file with metadata
+file_id = file_manager.save_file(
+    content="This is the content of my file.",
+    metadata={
+        "agent_name": "researcher_agent",
+        "query": "Tell me about AI agents",
+        "content_type": "research_notes"
+    }
 )
 
-# Load the latest file from an agent
-content = load_file(agent_type="researcher")
+# List files with filtering
+files = file_manager.list_files(
+    filter_criteria={"agent_name": "researcher_agent"}
+)
 
-# Load the previous version
-content = load_file(agent_type="researcher", version="previous")
+# Get file by ID
+file_data = file_manager.get_file(file_id)
 ```
 
 ### Advanced Usage
 
 ```python
-from utils.file_manager import FileManager
+from agents.utils.file_manager import FileManager
 
-# Initialize file manager
+# Initialize the FileManager
 file_manager = FileManager()
 
 # Save a file

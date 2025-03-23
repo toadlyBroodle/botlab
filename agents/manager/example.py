@@ -6,7 +6,7 @@ This example shows how to create and use a ManagerAgent instance directly.
 It also provides a command-line interface for running management queries.
 
 Usage:
-    poetry run python -m manager.example --query "Your management query here"
+    poetry run python -m agents.manager.example --query "Your management query here"
 
 Note:
     When running this example directly, the manager agent will save its output to
@@ -14,7 +14,7 @@ Note:
     You can access these files using the load_file function:
     
     ```python
-    from utils.agents.tools import load_file
+    from agents.utils.agents.tools import load_file
     content = load_file(agent_type="manager")
     ```
 """
@@ -22,14 +22,21 @@ Note:
 import os
 import argparse
 from dotenv import load_dotenv
-from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from utils.telemetry import suppress_litellm_logs
+from typing import Dict, List, Any, Optional
 
-from manager.agents import ManagerAgent
-from researcher.agents import ResearcherAgent
-from writer_critic.agents import WriterAgent
-from editor.agents import EditorAgent
-from qaqc.agents import QAQCAgent
+from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from agents.utils.telemetry import suppress_litellm_logs
+
+from agents.manager.manager_agent import ManagerAgent
+from agents.researcher.agents import ResearcherAgent
+from agents.writer_critic.agents import WriterAgent
+from agents.editor.editor_agent import EditorAgent
+from agents.qaqc.qaqc_agent import QAQCAgent
+from agents.utils.agents.tools import load_file
+from agents.utils.file_manager.file_manager import AGENT_DIRS
+
+# Path to project directory for all agents to operate on
+PROJECT_DIR = os.path.join(os.getcwd(), "agent_project")
 
 def setup_basic_environment():
     """Set up basic environment for the example"""
@@ -44,21 +51,22 @@ def setup_basic_environment():
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
 
-def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash", 
-                model_info_path="utils/gemini/gem_llm_info.json",
-                base_wait_time=2.0, max_retries=3,
-                agent_types=None, agent_configs=None):
+def run_example(query=None, max_steps=15, managed_agents=None, custom_configs=None,
+                model_id="gemini/gemini-2.0-flash", 
+                model_info_path="agents/utils/gemini/gem_llm_info.json",
+                base_wait_time=2.0, max_retries=3):
     """Run a management query using the ManagerAgent class
     
     Args:
         query: The management query to run
         max_steps: Maximum number of steps for the agent
+        managed_agents: List of managed agents
+        custom_configs: Dictionary containing custom configurations
         model_id: The model ID to use
         model_info_path: Path to the model info JSON file
         base_wait_time: Base wait time for rate limiting
         max_retries: Maximum retries for rate limiting
-        agent_types: List of agent types to create and manage
-        agent_configs: Dictionary containing agent configurations
+        use_custom_prompts: Whether to use custom prompts
         
     Returns:
         The result from the agent
@@ -70,7 +78,6 @@ def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash",
     print(f"Current working directory: {os.getcwd()}")
     
     # Print the location of the manager data directory
-    from utils.file_manager.file_manager import AGENT_DIRS
     print(f"Manager data directory: {AGENT_DIRS['manager_agent']}")
     print(f"Manager data directory exists: {os.path.exists(AGENT_DIRS['manager_agent'])}")
     
@@ -83,26 +90,26 @@ def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash",
     )
     
     # Default agent types if none provided
-    if agent_types is None:
-        agent_types = ["researcher", "writer", "editor", "qaqc"]
+    if managed_agents is None:
+        managed_agents = ["researcher", "writer", "editor", "qaqc"]
     
     # Default empty dict if None provided
-    agent_configs = agent_configs or {}
+    custom_configs = custom_configs or {}
     
-    print(f"Creating agents: {', '.join(agent_types)}")
+    print(f"Creating agents: {', '.join(managed_agents)}")
     
     # Create the managed agents
-    managed_agents = []
-    for agent_type in agent_types:
+    managed_agents_instances = []
+    for agent_type in managed_agents:
         try:
             if agent_type.lower() == 'researcher':
                 researcher = ResearcherAgent(
                     model=shared_model,  # Use the shared model
                     max_steps=max_steps,
-                    researcher_description=agent_configs.get('researcher_description'),
-                    researcher_prompt=agent_configs.get('researcher_prompt')
+                    researcher_description=custom_configs.get('researcher_description'),
+                    researcher_prompt=custom_configs.get('researcher_prompt')
                 )
-                managed_agents.append(researcher.agent)
+                managed_agents_instances.append(researcher.agent)
                 print(f"Created researcher agent: {researcher.agent.name}")
             
             elif agent_type.lower() == 'writer':
@@ -110,12 +117,12 @@ def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash",
                 writer = WriterAgent(
                     model=shared_model,  # Use the shared model
                     max_steps=max_steps,
-                    agent_description=agent_configs.get('writer_description'),
-                    system_prompt=agent_configs.get('writer_prompt'),
-                    critic_description=agent_configs.get('critic_description'),
-                    critic_prompt=agent_configs.get('critic_prompt')
+                    agent_description=custom_configs.get('writer_description'),
+                    system_prompt=custom_configs.get('writer_prompt'),
+                    critic_description=custom_configs.get('critic_description'),
+                    critic_prompt=custom_configs.get('critic_prompt')
                 )
-                managed_agents.append(writer.agent)
+                managed_agents_instances.append(writer.agent)
                 print(f"Created writer agent: {writer.agent.name}")
             
             elif agent_type.lower() == 'editor':
@@ -123,12 +130,12 @@ def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash",
                 editor = EditorAgent(
                     model=shared_model,  # Use the shared model
                     max_steps=max_steps,
-                    agent_description=agent_configs.get('editor_description'),
-                    system_prompt=agent_configs.get('editor_prompt'),
-                    fact_checker_description=agent_configs.get('fact_checker_description'),
-                    fact_checker_prompt=agent_configs.get('fact_checker_prompt')
+                    agent_description=custom_configs.get('editor_description'),
+                    system_prompt=custom_configs.get('editor_prompt'),
+                    fact_checker_description=custom_configs.get('fact_checker_description'),
+                    fact_checker_prompt=custom_configs.get('fact_checker_prompt')
                 )
-                managed_agents.append(editor.agent)
+                managed_agents_instances.append(editor.agent)
                 print(f"Created editor agent: {editor.agent.name}")
             
             elif agent_type.lower() == 'qaqc':
@@ -136,10 +143,10 @@ def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash",
                 qaqc = QAQCAgent(
                     model=shared_model,  # Use the shared model
                     max_steps=max_steps,
-                    agent_description=agent_configs.get('qaqc_description'),
-                    system_prompt=agent_configs.get('qaqc_prompt')
+                    agent_description=custom_configs.get('qaqc_description'),
+                    system_prompt=custom_configs.get('qaqc_prompt')
                 )
-                managed_agents.append(qaqc.agent)
+                managed_agents_instances.append(qaqc.agent)
                 print(f"Created QAQC agent: {qaqc.agent.name}")
             
             else:
@@ -148,11 +155,11 @@ def run_example(query=None, max_steps=20, model_id="gemini/gemini-2.0-flash",
         except Exception as e:
             print(f"Error creating {agent_type} agent: {str(e)}")
     
-    print(f"Creating manager agent with {len(managed_agents)} managed agents")
+    print(f"Creating manager agent with {len(managed_agents_instances)} managed agents")
     
     # Create the manager agent with the shared model
     manager = ManagerAgent(
-        managed_agents=managed_agents,
+        managed_agents=managed_agents_instances,
         model=shared_model,  # Use the shared model
         max_steps=max_steps
     )
@@ -184,7 +191,7 @@ def parse_arguments():
     parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     parser.add_argument("--agent-types", type=str, default="researcher,writer,editor,qaqc", help="Comma-separated list of agent types to create")
     
     return parser.parse_args()
@@ -202,5 +209,5 @@ if __name__ == "__main__":
         model_info_path=args.model_info_path,
         base_wait_time=args.base_wait_time,
         max_retries=args.max_retries,
-        agent_types=agent_types
+        managed_agents=agent_types
     )
