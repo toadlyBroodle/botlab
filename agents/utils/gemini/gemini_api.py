@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Gemini API utilities."""
+
 import os
 import time
 import traceback
@@ -8,9 +11,9 @@ from typing import Optional, Union, List, Dict, Any, Callable
 from dotenv import load_dotenv
 from collections import deque
 from datetime import datetime
-from utils.logger_config import setup_logger
+from agents.utils.logger_config import setup_logger
 from constants import GEMINI_MODELS
-from utils.gemini_tools import register_tools, ensure_meme_templates
+from agents.utils.gemini_tools import register_tools, ensure_meme_templates
 
 # Maximum number of characters in a prompt
 MAX_PROMPT_CHARS = 30000

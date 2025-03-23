@@ -1,7 +1,7 @@
-from smolagents import CodeAgent
+from smolagents import ToolCallingAgent
 from .tools import send_mail, check_mail, parse_commands
-from utils.agents.tools import save_final_answer, apply_custom_agent_prompts
-from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from agents.utils.agents.tools import save_final_answer, apply_custom_agent_prompts
+from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from typing import Optional, Dict, Any, List
 import os
 import time
@@ -20,7 +20,7 @@ class UserFeedbackAgent:
         agent_description: Optional[str] = None,
         agent_prompt: Optional[str] = None,
         model_id: str = "gemini/gemini-2.0-flash",
-        model_info_path: str = "utils/gemini/gem_llm_info.json",
+        model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
         max_retries: int = 3
     ):
@@ -66,7 +66,7 @@ class UserFeedbackAgent:
             description = base_description
             
         # Create the agent with either the default or custom prompt
-        self._agent = CodeAgent(
+        self._agent = ToolCallingAgent(
             tools=[send_mail, check_mail, parse_commands],
             model=self.model,
             name='user_feedback_agent',

@@ -6,15 +6,15 @@ This example shows how to create and use a ResearcherAgent instance directly.
 It also provides a command-line interface for running research queries.
 
 Usage:
-    poetry run python -m researcher.example --query "Your research query here"
+    poetry run python -m agents.researcher.example --query "Your research query here"
 """
 
 import os
 import argparse
 from dotenv import load_dotenv
-from utils.telemetry import suppress_litellm_logs
-from researcher.agents import ResearcherAgent
-from researcher.tools import PAPERS_DIR, REPORTS_DIR
+from agents.utils.telemetry import suppress_litellm_logs
+from agents.researcher.agents import ResearcherAgent
+from agents.researcher.tools import PAPERS_DIR, REPORTS_DIR
 
 def setup_basic_environment():
     """Set up basic environment for the example"""
@@ -34,7 +34,7 @@ def setup_basic_environment():
         raise ValueError("GEMINI_API_KEY environment variable is not set")
 
 def run_example(query=None, max_steps=15, model_id="gemini/gemini-2.0-flash", 
-                model_info_path="utils/gemini/gem_llm_info.json",
+                model_info_path="agents/utils/gemini/gem_llm_info.json",
                 base_wait_time=2.0, max_retries=3,
                 researcher_description=None, researcher_prompt=None):
     """Run a research query using the ResearcherAgent class
@@ -55,21 +55,15 @@ def run_example(query=None, max_steps=15, model_id="gemini/gemini-2.0-flash",
     # Set up environment
     setup_basic_environment()
     
-    # Use default description if none provided
-    if researcher_description is None:
-        researcher_description = "Specialized in AI research and technology trends."
-    
-    print(f"Creating researcher agent with max_steps={max_steps}")
-    
-    # Create the researcher agent with internal model creation
+    # Create the researcher agent
     researcher = ResearcherAgent(
         max_steps=max_steps,
-        researcher_description=researcher_description,
-        researcher_prompt=researcher_prompt,
         model_id=model_id,
         model_info_path=model_info_path,
         base_wait_time=base_wait_time,
-        max_retries=max_retries
+        max_retries=max_retries,
+        researcher_description=researcher_description,
+        researcher_prompt=researcher_prompt
     )
     
     # Use default query if none provided
@@ -82,8 +76,9 @@ def run_example(query=None, max_steps=15, model_id="gemini/gemini-2.0-flash",
     # Run the query and get the result
     result = researcher.run_query(query)
     
-    print("=" * 80)
-    print("Research complete! The report has been saved to the reports directory.")
+    print("\nResearch completed!")
+    print("=" * 50)
+    print(result)
     
     return result
 
@@ -101,7 +96,7 @@ def parse_arguments():
     parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     parser.add_argument("--researcher-description", type=str, help="Custom description for the researcher agent")
     parser.add_argument("--researcher-prompt", type=str, help="Custom system prompt for the researcher agent")
     

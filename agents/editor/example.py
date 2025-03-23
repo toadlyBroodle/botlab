@@ -2,18 +2,18 @@
 """
 Example usage of the EditorAgent and FactCheckerAgent classes.
 
-This example shows how to create and use an EditorAgent instance with a FactCheckerAgent.
-It also provides a command-line interface for running editing tasks.
+This example shows how to create and use an EditorAgent and FactCheckerAgent directly.
+It also provides a command-line interface for editing and fact-checking content.
 
 Usage:
-    poetry run python -m editor.example --content "Your content to edit here"
+    poetry run python -m agents.editor.example --content "Content to edit and fact check"
 """
 
 import os
 import argparse
 from dotenv import load_dotenv
-from utils.telemetry import suppress_litellm_logs
-from editor.agents import EditorAgent, FactCheckerAgent
+from agents.utils.telemetry import suppress_litellm_logs
+from agents.editor.agents import EditorAgent, FactCheckerAgent
 
 def setup_basic_environment():
     """Set up basic environment for the example"""
@@ -29,7 +29,7 @@ def setup_basic_environment():
         raise ValueError("GEMINI_API_KEY environment variable is not set")
 
 def run_example(content=None, max_steps=50, model_id="gemini/gemini-2.0-flash", 
-                model_info_path="utils/gemini/gem_llm_info.json",
+                model_info_path="agents/utils/gemini/gem_llm_info.json",
                 base_wait_time=2.0, max_retries=3,
                 editor_description=None, fact_checker_description=None,
                 editor_prompt=None, fact_checker_prompt=None):
@@ -109,7 +109,7 @@ def parse_arguments():
     parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     parser.add_argument("--editor-description", type=str, help="Custom description for the editor agent")
     parser.add_argument("--fact-checker-description", type=str, help="Custom description for the fact checker agent")
     parser.add_argument("--editor-prompt", type=str, help="Custom system prompt for the editor agent")

@@ -6,14 +6,14 @@ This example shows how to create and use a UserFeedbackAgent instance directly.
 It also provides a command-line interface for testing email communication.
 
 Usage:
-    poetry run python -m user_feedback.example --email user@example.com
+    poetry run python -m agents.user_feedback.example --email your-email@example.com
 """
 
 import os
 import argparse
 from dotenv import load_dotenv
-from utils.telemetry import suppress_litellm_logs
-from user_feedback.agents import UserFeedbackAgent
+from agents.utils.telemetry import suppress_litellm_logs
+from agents.user_feedback.agents import UserFeedbackAgent
 
 def setup_basic_environment():
     """Set up basic environment for the example"""
@@ -28,11 +28,11 @@ def setup_basic_environment():
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is not set")
 
-def run_example(user_email=None, max_steps=4, report_frequency=1, 
-                mailbox_path="/var/mail/rob",
-                model_id="gemini/gemini-2.0-flash", 
-                model_info_path="utils/gemini/gem_llm_info.json",
+def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash", 
+                model_info_path="agents/utils/gemini/gem_llm_info.json",
                 base_wait_time=2.0, max_retries=3,
+                report_frequency=1,
+                mailbox_path=None,
                 agent_description=None, agent_prompt=None):
     """Run a test of the UserFeedbackAgent
     

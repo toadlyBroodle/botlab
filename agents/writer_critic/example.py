@@ -2,19 +2,19 @@
 """
 Example usage of the WriterAgent and CriticAgent classes.
 
-This example shows how to create and use a WriterAgent instance with a CriticAgent.
-It also provides a command-line interface for running writing tasks.
+This example shows how to create and use a WriterAgent and CriticAgent instances directly.
+It also provides a command-line interface for running writing prompts.
 
 Usage:
-    poetry run python -m writer_critic.example --prompt "Your writing prompt here"
+    poetry run python -m agents.writer_critic.example --prompt "Your writing prompt here"
 """
 
 import os
 import argparse
 from dotenv import load_dotenv
-from utils.telemetry import suppress_litellm_logs
-from writer_critic.agents import WriterAgent, CriticAgent
-from writer_critic.tools import DRAFT_DIR
+from agents.utils.telemetry import suppress_litellm_logs
+from agents.writer_critic.agents import WriterAgent, CriticAgent
+from agents.writer_critic.tools import DRAFT_DIR
 
 def setup_basic_environment():
     """Set up basic environment for the example"""
@@ -33,7 +33,7 @@ def setup_basic_environment():
         raise ValueError("GEMINI_API_KEY environment variable is not set")
 
 def run_example(prompt=None, max_steps=5, model_id="gemini/gemini-2.0-flash", 
-                model_info_path="utils/gemini/gem_llm_info.json",
+                model_info_path="agents/utils/gemini/gem_llm_info.json",
                 base_wait_time=2.0, max_retries=3,
                 writer_description=None, critic_description=None,
                 writer_prompt=None, critic_prompt=None):
@@ -108,7 +108,7 @@ def parse_arguments():
     parser.add_argument("--base-wait-time", type=float, default=2.0, help="Base wait time for rate limiting")
     parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     parser.add_argument("--writer-description", type=str, help="Custom description for the writer agent")
     parser.add_argument("--critic-description", type=str, help="Custom description for the critic agent")
     parser.add_argument("--writer-prompt", type=str, help="Custom system prompt for the writer agent")

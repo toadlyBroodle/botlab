@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
 import logging
 
-# Import the timestamp function we already have
-from utils.agents.tools import get_timestamp
+# Import the timestamp function
+from agents.utils.agents.tools import get_timestamp
 
-# Base directory for the project
-BASE_DIR = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+# Base directory for the project - points to agents/
+BASE_DIR = Path(__file__).parent.parent.parent
 
 # File manager directory
 FILE_MANAGER_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
