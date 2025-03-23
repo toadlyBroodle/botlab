@@ -6,7 +6,7 @@ This example shows how to create and use a UserFeedbackAgent instance directly.
 It also provides a command-line interface for testing email communication.
 
 Usage:
-    poetry run python -m agents.user_feedback.example --email your-email@example.com
+    python -m agents.user_feedback.example --email your-email@example.com
 """
 
 import os
@@ -112,7 +112,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Example of using the UserFeedbackAgent")
     
-    parser.add_argument("--email", type=str, default=None,
+    parser.add_argument("--email", type=str, default=os.getenv("USER_EMAIL"),
                         help="Email address to communicate with")
     parser.add_argument("--frequency", type=int, default=1,
                         help="How often to send reports (1 = every iteration)")
@@ -120,7 +120,7 @@ def parse_arguments():
                         help="Maximum number of steps for the agent")
     parser.add_argument("--model", type=str, default="gemini/gemini-2.0-flash",
                         help="The model ID to use")
-    parser.add_argument("--mailbox", type=str, default="/var/mail/rob",
+    parser.add_argument("--mailbox", type=str, default=os.getenv("USER_MAILBOX_PATH"),
                         help="Path to the mailbox file to check for emails")
     
     return parser.parse_args()

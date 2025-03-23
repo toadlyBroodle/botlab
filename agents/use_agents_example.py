@@ -6,7 +6,7 @@ This example shows how to import and use the agents when the code is located
 at the root level, demonstrating the new standardized import system.
 
 Usage:
-    poetry run python use_agents_example.py --query "Your query here"
+    python use_agents_example.py --query "Your query here"
 """
 
 import os

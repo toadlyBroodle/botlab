@@ -55,7 +55,7 @@ pip install -r requirements.txt
 
 # Install local packages
 pip install -e ./agents
-pip install -e ./swarms
+#pip install -e ./swarms
 ``` 
 
-If you prefer to use Poetry you may use the `poetry.toml` file to install the dependencies.
+If you prefer to use Poetry you may use the `poetry.toml` file or `install_dependencies.sh` script.
