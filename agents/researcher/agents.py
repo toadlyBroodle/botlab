@@ -1,7 +1,7 @@
 from smolagents import CodeAgent
 from .tools import arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown
-from agents.utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
-from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
+from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from typing import Optional
 import os
 import time

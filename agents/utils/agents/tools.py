@@ -448,7 +448,7 @@ def load_file(agent_type: Optional[str] = None, version: str = "latest") -> str:
         The content of the file, or an error message if no files are found.
     """
     # Import here to avoid circular imports
-    from agents.utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    from ...utils.file_manager.file_manager import FileManager, AGENT_DIRS
     
     try:
         import logging
@@ -527,7 +527,7 @@ def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_typ
         The file ID of the saved file, or an error message
     """
     # Import here to avoid circular imports
-    from agents.utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    from ...utils.file_manager.file_manager import FileManager, AGENT_DIRS
     
     try:
         import os

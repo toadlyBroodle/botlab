@@ -8,17 +8,17 @@ from typing import List, Dict, Any, Optional, Callable, Tuple, Union
 from datetime import datetime
 
 from dotenv import load_dotenv
-from agents.utils.telemetry import start_telemetry, suppress_litellm_logs
-from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from agents.utils.file_manager.file_manager import FileManager
-from agents.utils.agents.tools import load_file
+from .utils.telemetry import start_telemetry, suppress_litellm_logs
+from .utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from .utils.file_manager.file_manager import FileManager
+from .utils.agents.tools import load_file
 
 # Import the agent classes
-from agents.researcher.agents import ResearcherAgent
-from agents.writer_critic.agents import WriterAgent, CriticAgent
-from agents.editor.agents import EditorAgent, FactCheckerAgent
-from agents.qaqc.agents import QAQCAgent
-from agents.user_feedback.agents import UserFeedbackAgent
+from .researcher.agents import ResearcherAgent
+from .writer_critic.agents import WriterAgent, CriticAgent
+from .editor.agents import EditorAgent, FactCheckerAgent
+from .qaqc.agents import QAQCAgent
+from .user_feedback.agents import UserFeedbackAgent
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""

@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Union, Any
 import logging
 
 # Import the timestamp function
-from agents.utils.agents.tools import get_timestamp
+from ..agents.tools import get_timestamp
 
 # Base directory for the project - points to agents/
 BASE_DIR = Path(__file__).parent.parent.parent

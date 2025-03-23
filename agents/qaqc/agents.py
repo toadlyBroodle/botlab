@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any, Tuple
 from smolagents import CodeAgent
-from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from agents.utils.agents.tools import apply_custom_agent_prompts, save_final_answer
+from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.tools import apply_custom_agent_prompts, save_final_answer
 from .tools import select_best_output
 import time
 

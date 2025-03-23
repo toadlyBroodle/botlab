@@ -1,7 +1,7 @@
 from smolagents import ToolCallingAgent
 from .tools import send_mail, check_mail, parse_commands
-from agents.utils.agents.tools import save_final_answer, apply_custom_agent_prompts
-from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.tools import save_final_answer, apply_custom_agent_prompts
+from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from typing import Optional, Dict, Any, List
 import os
 import time

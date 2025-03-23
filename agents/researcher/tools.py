@@ -9,8 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
-from agents.utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
+from ..utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
 from smolagents import tool
+from ..utils.agents.tools import get_timestamp
 
 # Set up logging
 import logging
@@ -51,7 +52,6 @@ def convert_pdf_to_markdown(paper_id: str, pdf_path: Path) -> None:
         markdown = pymupdf4llm.to_markdown(pdf_path, show_progress=False)
         
         # Save directly to the papers directory with a simple naming convention
-        from agents.utils.agents.tools import get_timestamp
         
         # Create a filename with timestamp and paper_id
         timestamp = get_timestamp()
