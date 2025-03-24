@@ -104,11 +104,23 @@ def check_mail() -> Dict[str, Any]:
         for key in sorted(mbox.keys(), reverse=True):
             message = mbox[key]
             
-            # Check if message is unread (Status header doesn't contain 'R')
+            # Check if message is unread
+            # Different mail systems mark unread differently:
+            # - Some use Status header with 'O' (old) or 'R' (read), 'N' (new) or 'U' (unread)
+            # - Some use X-Status with 'R' for read
+            # - Some use FLAGS header
             status = message.get('Status', '')
-            if 'R' in status:
+            x_status = message.get('X-Status', '')
+            flags = message.get('FLAGS', '')
+            
+            # Consider read if:
+            # - 'R' in Status (traditional Unix mail)
+            # - 'R' in X-Status (some mail systems)
+            # - Does not contain 'N' or 'U' in Status (new/unread)
+            # - 'Seen' in FLAGS (IMAP style)
+            if ('R' in status or 'R' in x_status or 'Seen' in flags) and not ('N' in status or 'U' in status):
                 continue
-                
+            
             # Check if message is from the target email
             from_addr = message.get('From', '')
             if remote_email not in from_addr:
@@ -144,18 +156,30 @@ def check_mail() -> Dict[str, Any]:
             # Get the message
             message = mbox[most_recent_key]
             
-            # Update the Status header to include 'R' for read
+            # Update the Status header to mark as read
+            # Different systems handle this differently, so we'll try to be comprehensive
             current_status = message.get('Status', '')
-            if 'R' not in current_status:
-                message.replace_header('Status', current_status + 'R')
-                # If Status header doesn't exist, add it
-                if 'Status' not in message:
-                    message['Status'] = 'R'
+            
+            if 'Status' in message:
+                # If Status exists but doesn't have 'R', add it
+                if 'R' not in current_status:
+                    # Remove 'N' or 'U' if present
+                    new_status = current_status.replace('N', '').replace('U', '') + 'R'
+                    message.replace_header('Status', new_status)
+            else:
+                # If Status doesn't exist, add it with 'R'
+                message['Status'] = 'R'
                 
-                # Save the change to the mailbox
-                mbox.update({most_recent_key: message})
-                mbox.flush()
-                logger.info(f"Marked email with subject '{most_recent_message['subject']}' as read")
+            # Also handle X-Status if it exists
+            if 'X-Status' in message:
+                x_status = message.get('X-Status', '')
+                if 'R' not in x_status:
+                    message.replace_header('X-Status', x_status + 'R')
+            
+            # Save the change to the mailbox
+            mbox.update({most_recent_key: message})
+            mbox.flush()
+            logger.info(f"Marked email with subject '{most_recent_message['subject']}' as read")
             
             return most_recent_message
         
