@@ -65,35 +65,47 @@ def setup_basic_environment():
         return
     
     # Check fb_agent mailbox
-    mailbox_path = f"/var/mail/{FB_AGENT_USER}"
-    if os.path.exists(mailbox_path):
-        print(f"✓ {FB_AGENT_USER} mailbox exists at {mailbox_path}")
+    fb_maildir = os.path.join("/home/fb_agent/var/mail")
+    if os.path.exists(fb_maildir):
+        print(f"✓ {FB_AGENT_USER} maildir exists at {fb_maildir}")
         
-        # Check permissions
-        read_access = os.access(mailbox_path, os.R_OK)
-        write_access = os.access(mailbox_path, os.W_OK)
+        # Check Maildir structure
+        new_dir = os.path.join(fb_maildir, "new")
+        cur_dir = os.path.join(fb_maildir, "cur")
+        tmp_dir = os.path.join(fb_maildir, "tmp")
         
-        if read_access:
-            print(f"✓ Current user has read access to {mailbox_path}")
+        if os.path.exists(new_dir) and os.path.isdir(new_dir):
+            print(f"✓ Maildir 'new' directory exists")
+            read_access = os.access(new_dir, os.R_OK)
+            write_access = os.access(new_dir, os.W_OK)
+            
+            if read_access:
+                print(f"✓ Current user has read access to {new_dir}")
+            else:
+                print(f"✗ ERROR: Current user doesn't have read access to {new_dir}")
+                print("  Please add the current user to the mail group and ensure proper permissions:")
+                print(f"  sudo usermod -a -G mail $(whoami)")
+                print("  You'll need to log out and back in for this to take effect.")
+            
+            if write_access:
+                print(f"✓ Current user has write access to {new_dir}")
+            else:
+                print(f"! WARNING: Current user doesn't have write access to {new_dir}")
+                print("  Emails can be read but not marked as read.")
+                print("  For full functionality, adjust permissions:")
+                print(f"  sudo chmod -R g+w {fb_maildir}")
         else:
-            print(f"✗ ERROR: Current user doesn't have read access to {mailbox_path}")
-            print("  Please add the current user to the mail group:")
-            print(f"  sudo usermod -a -G mail $(whoami)")
-            print("  You'll need to log out and back in for this to take effect.")
-        
-        if write_access:
-            print(f"✓ Current user has write access to {mailbox_path}")
-        else:
-            print(f"! WARNING: Current user doesn't have write access to {mailbox_path}")
-            print("  Emails can be read but not marked as read.")
-            print("  For full functionality, adjust permissions:")
-            print(f"  sudo chmod g+w {mailbox_path}")
+            print(f"✗ ERROR: Maildir structure not complete. Missing 'new' directory")
+            print(f"  Please create the required Maildir structure:")
+            print(f"  sudo mkdir -p {fb_maildir}/new {fb_maildir}/cur {fb_maildir}/tmp")
+            print(f"  sudo chown -R {FB_AGENT_USER}:mail {fb_maildir}")
+            print(f"  sudo chmod -R 750 {fb_maildir}")
     else:
-        print(f"✗ ERROR: No mailbox found at {mailbox_path}")
-        print("  Please create the mailbox and set proper permissions:")
-        print(f"  sudo mkdir -p {mailbox_path}")
-        print(f"  sudo chown {FB_AGENT_USER}:mail {mailbox_path}")
-        print(f"  sudo chmod 660 {mailbox_path}")
+        print(f"✗ ERROR: No maildir found at {fb_maildir}")
+        print("  Please create the maildir and set proper permissions:")
+        print(f"  sudo mkdir -p {fb_maildir}/new {fb_maildir}/cur {fb_maildir}/tmp")
+        print(f"  sudo chown -R {FB_AGENT_USER}:mail {fb_maildir}")
+        print(f"  sudo chmod -R 750 {fb_maildir}")
         
     # Check if current user is in the mail group
     try:

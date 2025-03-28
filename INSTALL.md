@@ -83,13 +83,13 @@ Configure email forwarding for the fb_agent user:
 sudo sh -c 'echo "fb_agent@botlab.dev fb_agent" >> /etc/postfix/virtual'
 sudo postmap /etc/postfix/virtual
 
-# Create and set permissions for mailbox directory
-sudo mkdir -p /var/mail/fb_agent
-sudo chown fb_agent:mail /var/mail/fb_agent
-sudo chmod 660 /var/mail/fb_agent
+# Create proper Maildir structure for fb_agent
+sudo mkdir -p /home/fb_agent/var/mail/{new,cur,tmp}
+sudo chown -R fb_agent:mail /home/fb_agent/var/mail
+sudo chmod -R 750 /home/fb_agent/var/mail
 
-# Update Postfix configuration
-sudo postconf -e "home_mailbox = /var/mail/"
+# Update Postfix configuration if needed
+sudo postconf -e "home_mailbox = var/mail/"
 sudo systemctl restart postfix
 ```
 
@@ -102,6 +102,9 @@ Add your application user to the mail group so it can read the fb_agent's mailbo
 sudo usermod -a -G mail your_username
 
 # You'll need to log out and back in for this change to take effect
+
+# After logging back in, check if you can access the maildir
+ls -la /home/fb_agent/var/mail/
 ```
 
 ### 4. Configure Environment Variables
