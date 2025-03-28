@@ -1,5 +1,5 @@
 from smolagents import CodeAgent
-from .tools import send_mail, check_mail, parse_commands
+from .tools import send_mail, check_mail, parse_commands, FB_AGENT_USER
 from ..utils.agents.tools import save_final_answer, apply_custom_agent_prompts
 from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from typing import Optional, Dict, Any, List
@@ -52,9 +52,33 @@ class UserFeedbackAgent:
         self.user_email = user_email or os.getenv("LOCAL_USER_EMAIL")
         self.report_frequency = report_frequency
         self.iteration_count = 0
+        self.feedback_agent_user = FB_AGENT_USER
+        
+        # Check if environment variables are properly set up
+        if not self.user_email:
+            print("LOCAL_USER_EMAIL environment variable is not set. Email sending will not work.")
+        
+        if not os.getenv("REMOTE_USER_EMAIL"):
+            print("REMOTE_USER_EMAIL environment variable is not set. Email checking will not work.")
+        
+        # Verify mailbox access
+        mailbox_path = f"/var/mail/{self.feedback_agent_user}"
+        self.has_read_access = False
+        self.has_write_access = False
+        
+        if os.path.exists(mailbox_path):
+            self.has_read_access = os.access(mailbox_path, os.R_OK)
+            self.has_write_access = os.access(mailbox_path, os.W_OK)
+            
+            if not self.has_read_access:
+                print(f"No read access to {mailbox_path}. Email checking will not work.")
+            if not self.has_write_access:
+                print(f"No write access to {mailbox_path}. Emails can be read but not marked as read.")
+        else:
+            print(f"Mailbox {mailbox_path} doesn't exist. Email functionality will be limited.")
         
         # Create the agent
-        base_description = """This agent handles communication with users via email. It can check for new emails from users, parse commands and feedback, and send progress reports and updates to users. Use this agent to maintain communication with users during long-running agent processes."""
+        base_description = f"""This agent handles communication with users via email using the dedicated {self.feedback_agent_user} user. It can check for new emails from users, parse commands and feedback, and send progress reports and updates to users. Use this agent to maintain communication with users during long-running agent processes."""
         
         # Append additional description if provided
         if agent_description:
@@ -92,6 +116,19 @@ class UserFeedbackAgent:
         """
         self.iteration_count += 1
         
+        # Skip email checking if we don't have proper access
+        email_instructions = ""
+        if self.has_read_access:
+            email_instructions = f"""
+            1. Check for new emails and extract any commands or feedback
+               - Use check_mail() to check for unread emails from REMOTE_USER_EMAIL in the {self.feedback_agent_user} mailbox
+            2. Update the state based on user feedback if any
+            """
+        else:
+            email_instructions = """
+            Note: Email checking is disabled due to insufficient permissions.
+            """
+        
         # Check for new emails and process commands
         prompt = f"""
         You are the UserFeedbackAgent responsible for communicating with the user via email.
@@ -99,6 +136,7 @@ class UserFeedbackAgent:
         Current iteration: {self.iteration_count}
         Report frequency: Every {self.report_frequency} iterations
         User email: {self.user_email}
+        Feedback agent user: {self.feedback_agent_user}
         
         First, check for new emails from the user that might contain feedback or commands.
         Then, determine if you should send a progress report based on the current iteration and report frequency.
@@ -106,14 +144,29 @@ class UserFeedbackAgent:
         Current state:
         {state}
         
-        1. Check for new emails and extract any commands or feedback
-           - Use check_mail() to check for unread emails from REMOTE_USER_EMAIL
-        2. Update the state based on user feedback if any
+        {email_instructions}
         3. Determine if a progress report should be sent
         4. If needed, generate and send a concise progress report using send_mail()
         """
         
         result = self._agent(prompt)
+        
+        # Extract user commands from the result
+        if "user_commands" not in state:
+            state["user_commands"] = {}
+            
+        # Look for command processing in the result
+        if self.has_read_access and ("commands found" in result.lower() or "processed command" in result.lower()):
+            # Check if we received any emails
+            emails = check_mail()
+            if emails and "body" in emails:
+                # Parse commands from the email body
+                commands = parse_commands(emails["body"])
+                if commands and isinstance(commands, dict):
+                    state["user_commands"].update(commands)
+                    
+                    # Log the commands we found
+                    print(f"Extracted user commands: {commands}")
         
         # Save the result to the agent's data directory
         save_final_answer(self._agent, result, "user_feedback")

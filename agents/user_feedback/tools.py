@@ -24,6 +24,7 @@ if not logger.handlers:
 
 # Constants
 DEFAULT_MAILBOX_PATH = "/var/mail"
+FB_AGENT_USER = "fb_agent"  # New dedicated user for feedback
 COMMAND_PATTERNS = {
     "frequency": r"FREQUENCY:\s*(\d+)",
     "detail": r"DETAIL:\s*(low|medium|high)",
@@ -38,7 +39,6 @@ def send_mail(subject: str, body: str) -> str:
     """Send an email using the system mail command.
     
     Args:
-        recipient: Email address of the recipient
         subject: Subject line of the email
         body: Body content of the email
         
@@ -50,7 +50,7 @@ def send_mail(subject: str, body: str) -> str:
         body_escaped = body.replace("'", "'\\''")
         subject_escaped = subject.replace("'", "'\\''")
         
-        # Construct the command
+        # Use direct mail command without sudo - assumes proper permissions are set up
         cmd = f"echo '{body_escaped}' | mail -s '{subject_escaped}' {os.getenv('LOCAL_USER_EMAIL')}"
         
         # Execute the command
@@ -71,15 +71,17 @@ def send_mail(subject: str, body: str) -> str:
 
 @tool
 def check_mail() -> Dict[str, Any]:
-    """Check for the most recent unread email from REMOTE_USER_EMAIL in the system mailbox.
+    """Check for the most recent unread email from REMOTE_USER_EMAIL in the fb_agent user's mailbox.
     Assumes emails are stored in chronological order, with last being most recent.
+    
+    This function assumes the main application user has read access to fb_agent's mailbox.
         
     Returns:
         Dictionary containing the most recent unread message details or empty dict if no unread messages
     """
     try:
-        # Determine username and mailbox path
-        username = os.getenv("USER") or subprocess.getoutput("whoami").strip()
+        # Use the fb_agent user's mailbox
+        username = FB_AGENT_USER
         mailbox_path = os.path.join(DEFAULT_MAILBOX_PATH, username)
         remote_email = os.getenv("REMOTE_USER_EMAIL")
         
@@ -92,7 +94,13 @@ def check_mail() -> Dict[str, Any]:
             logger.error(f"No mailbox found at {mailbox_path}")
             return {}
         
-        # Read the mailbox
+        # Check if we have read access to the mailbox
+        if not os.access(mailbox_path, os.R_OK):
+            error_msg = f"No read access to {mailbox_path}. Make sure the current user has proper permissions."
+            logger.error(error_msg)
+            return {"error": error_msg}
+        
+        # Try to directly read the mailbox without using sudo
         mbox = mailbox.mbox(mailbox_path)
         
         # Variables to track the most recent message
@@ -151,8 +159,11 @@ def check_mail() -> Dict[str, Any]:
             most_recent_key = key
             break  # Stop after finding the first matching email
         
-        # Mark the message as read if one was found
-        if most_recent_key is not None and most_recent_message is not None:
+        # Check if we have write access to mark as read
+        can_mark_as_read = os.access(mailbox_path, os.W_OK)
+        
+        # Mark the message as read if one was found and we have write access
+        if most_recent_key is not None and most_recent_message is not None and can_mark_as_read:
             # Get the message
             message = mbox[most_recent_key]
             
@@ -177,19 +188,22 @@ def check_mail() -> Dict[str, Any]:
                     message.replace_header('X-Status', x_status + 'R')
             
             # Save the change to the mailbox
-            mbox.update({most_recent_key: message})
-            mbox.flush()
-            logger.info(f"Marked email with subject '{most_recent_message['subject']}' as read")
-            
-            return most_recent_message
+            try:
+                mbox.update({most_recent_key: message})
+                mbox.flush()
+                logger.info(f"Marked email with subject '{most_recent_message['subject']}' as read")
+            except Exception as e:
+                logger.warning(f"Could not mark email as read: {e}. The email was still read successfully.")
         
-        # Return empty dict if no unread messages found
-        return {}
+        elif most_recent_message is not None and not can_mark_as_read:
+            logger.warning(f"Email found but could not be marked as read: No write access to {mailbox_path}")
+        
+        return most_recent_message or {}
     
     except Exception as e:
         error_msg = f"Error checking mail: {str(e)}"
         logger.error(error_msg)
-        return {}
+        return {"error": error_msg}
 
 @tool
 def parse_commands(email_body: str) -> Dict[str, Any]:
