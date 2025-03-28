@@ -19,6 +19,7 @@ from .writer_critic.agents import WriterAgent, CriticAgent
 from .editor.agents import EditorAgent, FactCheckerAgent
 from .qaqc.agents import QAQCAgent
 from .user_feedback.agents import UserFeedbackAgent
+from .user_feedback.tools import FB_AGENT_USER
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""
@@ -187,8 +188,8 @@ class AgentLoop:
             
             "user_email": "rob@botlab.dev",
             "report_frequency": 1,
-            "user_feedback_description": "User feedback agent",
-            "user_feedback_prompt": "Provide feedback on the content"
+            "user_feedback_description": f"User feedback agent that uses the {FB_AGENT_USER} system user for email communication",
+            "user_feedback_prompt": f"You are a user feedback agent that communicates with users via email. You use the {FB_AGENT_USER} system user to send and receive emails. Your goal is to keep users informed about the progress of agent loops and to process their feedback and commands."
         }
     
     def _initialize_agents(self):
@@ -261,6 +262,12 @@ class AgentLoop:
                             agent_description=self.agent_configs.get('user_feedback_description'),
                             agent_prompt=self.agent_configs.get('user_feedback_prompt')
                         )
+                        
+                        # Log the feedback agent configuration
+                        print(f"Initialized UserFeedbackAgent with email: {user_email}")
+                        print(f"Using feedback agent system user: {FB_AGENT_USER}")
+                        print(f"Report frequency: Every {report_frequency} iterations")
+                        
                         self.agents[agent_type] = agent_instance
                     
                     print(f"Initialized agent: {agent_type}")
@@ -279,6 +286,12 @@ class AgentLoop:
             try:
                 # Update last_updated timestamp
                 self.state["last_updated"] = time.time()
+                
+                # Ensure the directory exists
+                log_dir = os.path.dirname(self.state_file)
+                if log_dir and not os.path.exists(log_dir):
+                    os.makedirs(log_dir, exist_ok=True)
+                    print(f"Created directory: {log_dir}")
                 
                 with open(self.state_file, 'w') as f:
                     json.dump(self.state, f, indent=2)
@@ -447,14 +460,37 @@ class AgentLoop:
                         if agent_type == "qaqc":
                             # Get the previous agent in the sequence (the one before QAQC)
                             qaqc_index = self.agent_sequence.index("qaqc")
-                            if qaqc_index > 0:
-                                previous_agent_type = self.agent_sequence[qaqc_index - 1]
-                            else:
-                                previous_agent_type = self.agent_sequence[-1]  # Wrap around to the last agent
                             
-                            # Get the current and previous outputs from the agent before QAQC
+                            # Find the most recent non-user_feedback agent before QAQC
+                            previous_agent_type = None
+                            for i in range(qaqc_index - 1, -1, -1):
+                                if self.agent_sequence[i] != "user_feedback":
+                                    previous_agent_type = self.agent_sequence[i]
+                                    break
+                            
+                            # If no suitable agent found before QAQC, look at the end of the sequence
+                            if previous_agent_type is None:
+                                for i in range(len(self.agent_sequence) - 1, qaqc_index, -1):
+                                    if self.agent_sequence[i] != "user_feedback":
+                                        previous_agent_type = self.agent_sequence[i]
+                                        break
+                            
+                            # If still no suitable agent found, use the writer agent if available
+                            if previous_agent_type is None and "writer" in self.agent_sequence:
+                                previous_agent_type = "writer"
+                            elif previous_agent_type is None and qaqc_index > 0:
+                                # Fallback: use any non-user_feedback agent
+                                for agent in self.agent_sequence:
+                                    if agent != "user_feedback" and agent != "qaqc":
+                                        previous_agent_type = agent
+                                        break
+                            
+                            # Get the current and previous outputs from the selected agent
                             current_output = previous_results.get(f"{previous_agent_type}_{iteration}")
                             previous_output = previous_results.get(f"{previous_agent_type}_{iteration - 1}")
+                            
+                            # Print which agent we're comparing outputs from
+                            print(f"QAQC is comparing outputs from: {previous_agent_type}")
                             
                             # Only proceed if we have outputs to compare
                             if current_output and previous_output:
@@ -478,7 +514,8 @@ class AgentLoop:
                                 "current_agent": agent_type,
                                 "query": query,
                                 "results": previous_results,
-                                "agent_sequence": self.agent_sequence
+                                "agent_sequence": self.agent_sequence,
+                                "feedback_agent_user": FB_AGENT_USER  # Add the feedback agent user to the state
                             }
                             
                             # Process feedback and update state
@@ -487,7 +524,7 @@ class AgentLoop:
                             # Get the result (this will be the report or feedback processing summary)
                             if agent_instance.should_report():
                                 result = agent_instance.generate_report(feedback_state)
-                                print(f"User feedback report sent: {result[:200]}...")
+                                print(f"User feedback report sent via {FB_AGENT_USER}: {result[:200]}...")
                             else:
                                 result = f"Checked for user feedback (reporting every {agent_instance.report_frequency} iterations)"
                                 print(result)
@@ -500,6 +537,16 @@ class AgentLoop:
                                     if cmd == "frequency" and hasattr(agent_instance, "report_frequency"):
                                         agent_instance.report_frequency = value
                                         print(f"Updated report frequency to {value}")
+                                    elif cmd == "feedback":
+                                        print(f"User feedback: {value}")
+                                        # Store the feedback in the state
+                                        if "user_feedback" not in self.state:
+                                            self.state["user_feedback"] = []
+                                        self.state["user_feedback"].append({
+                                            "iteration": iteration + 1,
+                                            "time": time.time(),
+                                            "feedback": value
+                                        })
                         
                         else:
                             # Standard agent execution

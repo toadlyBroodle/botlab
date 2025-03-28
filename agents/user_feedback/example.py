@@ -5,15 +5,24 @@ Example usage of the UserFeedbackAgent class.
 This example shows how to create and use a UserFeedbackAgent instance directly.
 It also provides a command-line interface for testing email communication.
 
+The agent uses the dedicated 'fb_agent' system user to handle email communication.
+To use this functionality, ensure that:
+1. The fb_agent user exists on the system
+2. The main application user has read (and ideally write) access to /var/mail/fb_agent
+3. The proper mail forwarding is set up for fb_agent
+
 Usage:
     python -m agents.user_feedback.example [--email your-email@example.com]
 """
 
 import os
 import argparse
+import grp
+import pwd
 from dotenv import load_dotenv
 from agents.utils.telemetry import suppress_litellm_logs
 from agents.user_feedback.agents import UserFeedbackAgent
+from agents.user_feedback.tools import FB_AGENT_USER
 
 def setup_basic_environment():
     """Set up basic environment for the example"""
@@ -35,6 +44,59 @@ def setup_basic_environment():
         print("Warning: LOCAL_USER_EMAIL environment variable is not set. Email sending will not work.")
     if not remote_email:
         print("Warning: REMOTE_USER_EMAIL environment variable is not set. Email checking will not work.")
+    
+    # Check for fb_agent user
+    try:
+        fb_agent_info = pwd.getpwnam(FB_AGENT_USER)
+        print(f"✓ {FB_AGENT_USER} user exists (UID: {fb_agent_info.pw_uid})")
+    except KeyError:
+        print(f"✗ ERROR: {FB_AGENT_USER} user does not exist.")
+        print("  Please follow the setup instructions in INSTALL.md")
+        return
+    
+    # Check fb_agent mailbox
+    mailbox_path = f"/var/mail/{FB_AGENT_USER}"
+    if os.path.exists(mailbox_path):
+        print(f"✓ {FB_AGENT_USER} mailbox exists at {mailbox_path}")
+        
+        # Check permissions
+        read_access = os.access(mailbox_path, os.R_OK)
+        write_access = os.access(mailbox_path, os.W_OK)
+        
+        if read_access:
+            print(f"✓ Current user has read access to {mailbox_path}")
+        else:
+            print(f"✗ ERROR: Current user doesn't have read access to {mailbox_path}")
+            print("  Please add the current user to the mail group:")
+            print(f"  sudo usermod -a -G mail $(whoami)")
+            print("  You'll need to log out and back in for this to take effect.")
+        
+        if write_access:
+            print(f"✓ Current user has write access to {mailbox_path}")
+        else:
+            print(f"! WARNING: Current user doesn't have write access to {mailbox_path}")
+            print("  Emails can be read but not marked as read.")
+            print("  For full functionality, adjust permissions:")
+            print(f"  sudo chmod g+w {mailbox_path}")
+    else:
+        print(f"✗ ERROR: No mailbox found at {mailbox_path}")
+        print("  Please create the mailbox and set proper permissions:")
+        print(f"  sudo mkdir -p {mailbox_path}")
+        print(f"  sudo chown {FB_AGENT_USER}:mail {mailbox_path}")
+        print(f"  sudo chmod 660 {mailbox_path}")
+        
+    # Check if current user is in the mail group
+    try:
+        current_user = os.getlogin()
+        mail_group = grp.getgrnam('mail')
+        if current_user in mail_group.gr_mem:
+            print(f"✓ Current user ({current_user}) is in the mail group")
+        else:
+            print(f"! WARNING: Current user ({current_user}) is not in the mail group")
+            print("  Consider adding the user to the mail group for better permission handling:")
+            print(f"  sudo usermod -a -G mail {current_user}")
+    except Exception as e:
+        print(f"! Could not check mail group membership: {e}")
 
 def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash", 
                 model_info_path="agents/utils/gemini/gem_llm_info.json",
@@ -70,9 +132,10 @@ def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash"
         agent_prompt=agent_prompt
     )
     
-    print(f"Created UserFeedbackAgent with email: {agent.user_email}")
+    print(f"\nCreated UserFeedbackAgent with email: {agent.user_email}")
     print(f"Report frequency: Every {agent.report_frequency} iterations")
     print(f"Remote email (for checking): {os.getenv('REMOTE_USER_EMAIL', 'Not set')}")
+    print(f"Using feedback agent system user: {agent.feedback_agent_user}")
     
     # Create a sample state
     sample_state = {
