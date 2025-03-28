@@ -11,6 +11,10 @@ To use this functionality, ensure that:
 2. The main application user has read (and ideally write) access to /var/mail/fb_agent
 3. The proper mail forwarding is set up for fb_agent
 
+Email Configuration:
+- LOCAL_USER_EMAIL: Used for the fb_agent's local mailbox configuration
+- REMOTE_USER_EMAIL: The external user's email for sending reports and receiving commands
+
 Usage:
     python -m agents.user_feedback.example [--email your-email@example.com]
 """
@@ -41,16 +45,22 @@ def setup_basic_environment():
     local_email = os.getenv("LOCAL_USER_EMAIL")
     remote_email = os.getenv("REMOTE_USER_EMAIL")
     if not local_email:
-        print("Warning: LOCAL_USER_EMAIL environment variable is not set. Email sending will not work.")
+        print("Warning: LOCAL_USER_EMAIL environment variable is not set. This may affect mailbox functionality.")
     if not remote_email:
-        print("Warning: REMOTE_USER_EMAIL environment variable is not set. Email checking will not work.")
+        print("Warning: REMOTE_USER_EMAIL environment variable is not set. Email sending and checking will not work.")
+        print("  - Set REMOTE_USER_EMAIL to the external user's email address")
+        print("  - Or use the --email command line parameter")
+    
+    print("\n=== Email Configuration ===")
+    print(f"LOCAL_USER_EMAIL: {local_email or 'Not set'} (used for mailbox)")
+    print(f"REMOTE_USER_EMAIL: {remote_email or 'Not set'} (used for sending/receiving)")
     
     # Check for fb_agent user
     try:
         fb_agent_info = pwd.getpwnam(FB_AGENT_USER)
-        print(f"✓ {FB_AGENT_USER} user exists (UID: {fb_agent_info.pw_uid})")
+        print(f"\n✓ {FB_AGENT_USER} user exists (UID: {fb_agent_info.pw_uid})")
     except KeyError:
-        print(f"✗ ERROR: {FB_AGENT_USER} user does not exist.")
+        print(f"\n✗ ERROR: {FB_AGENT_USER} user does not exist.")
         print("  Please follow the setup instructions in INSTALL.md")
         return
     
@@ -106,7 +116,7 @@ def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash"
     """Run a test of the UserFeedbackAgent
     
     Args:
-        user_email: Email address to communicate with (stored in .env as LOCAL_USER_EMAIL)
+        user_email: Email address to override REMOTE_USER_EMAIL env var
         max_steps: Maximum number of steps for the agent
         report_frequency: How often to send reports (1 = every iteration)
         model_id: The model ID to use
@@ -132,10 +142,11 @@ def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash"
         agent_prompt=agent_prompt
     )
     
-    print(f"\nCreated UserFeedbackAgent with email: {agent.user_email}")
-    print(f"Report frequency: Every {agent.report_frequency} iterations")
-    print(f"Remote email (for checking): {os.getenv('REMOTE_USER_EMAIL', 'Not set')}")
-    print(f"Using feedback agent system user: {agent.feedback_agent_user}")
+    print(f"\nCreated UserFeedbackAgent:")
+    print(f"- External email (sending to): {agent.remote_email or 'Not configured'}")
+    print(f"- Local mailbox: {agent.local_email or 'Not configured'}")
+    print(f"- Report frequency: Every {agent.report_frequency} iterations")
+    print(f"- Feedback agent user: {agent.feedback_agent_user}")
     
     # Create a sample state
     sample_state = {
@@ -156,8 +167,12 @@ def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash"
     
     # Generate a report
     print("\nGenerating a sample report...")
-    report = agent.generate_report(updated_state)
-    print(f"\nSample report:\n{report}")
+    if agent.remote_email:
+        report = agent.generate_report(updated_state)
+        print(f"\nSample report (sent to {agent.remote_email}):\n{report}")
+    else:
+        print("\nCannot generate report: No external email address configured.")
+        print("Please set REMOTE_USER_EMAIL environment variable or use --email parameter.")
     
     return agent
 
@@ -179,7 +194,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Example of using the UserFeedbackAgent")
     
-    parser.add_argument("--email", type=str, help="Email address to communicate with (overrides LOCAL_USER_EMAIL)")
+    parser.add_argument("--email", type=str, help="Email address to communicate with (overrides REMOTE_USER_EMAIL)")
     parser.add_argument("--frequency", type=int, default=1, help="How often to send reports (1 = every iteration)")
     parser.add_argument("--max-steps", type=int, default=4, help="Maximum number of steps for the agent")
     parser.add_argument("--model", type=str, default="gemini/gemini-2.0-flash", help="The model ID to use")

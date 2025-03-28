@@ -109,12 +109,14 @@ sudo usermod -a -G mail your_username
 Add the following to your `.env` file:
 
 ```
-# User email for receiving feedback reports
-LOCAL_USER_EMAIL=your_email@example.com
+# LOCAL_USER_EMAIL is used for the local mailbox configuration
+LOCAL_USER_EMAIL=fb_agent@botlab.dev
 
-# External email that will be sending commands
-REMOTE_USER_EMAIL=external_user@example.com
+# REMOTE_USER_EMAIL is the external user's email address for sending reports and receiving commands
+REMOTE_USER_EMAIL=your_actual_email@example.com
 ```
+
+IMPORTANT: Make sure to set REMOTE_USER_EMAIL to your actual external email address where you want to receive agent updates and from which you'll send commands.
 
 ### 5. Test the Setup
 
@@ -128,3 +130,18 @@ The output should show that:
 - The fb_agent user exists
 - The mailbox exists and is accessible
 - Your user has at least read access to the mailbox
+- Your REMOTE_USER_EMAIL is properly configured
+
+### 6. Email Workflow
+
+With this setup:
+1. You can send an email to fb_agent@botlab.dev with commands in the body
+2. The UserFeedbackAgent will check for emails from your REMOTE_USER_EMAIL address
+3. Progress reports will be sent to your REMOTE_USER_EMAIL address
+
+Example commands in emails:
+```
+FREQUENCY: 2
+FEEDBACK: Looking good, but please include more details on X
+FOCUS: research
+```

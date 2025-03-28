@@ -186,10 +186,10 @@ class AgentLoop:
             "qaqc_description": "Quality assurance specialist with focus on comparing outputs and selecting the best one",
             "qaqc_prompt": "Compare outputs based on quality, accuracy, completeness, and relevance to the original query. Select the best output and explain your reasoning.",
             
-            "user_email": "rob@botlab.dev",
+            "user_email": os.getenv("REMOTE_USER_EMAIL", "example@example.com"),  # External user email for feedback
             "report_frequency": 1,
             "user_feedback_description": f"User feedback agent that uses the {FB_AGENT_USER} system user for email communication",
-            "user_feedback_prompt": f"You are a user feedback agent that communicates with users via email. You use the {FB_AGENT_USER} system user to send and receive emails. Your goal is to keep users informed about the progress of agent loops and to process their feedback and commands."
+            "user_feedback_prompt": f"You are a user feedback agent that communicates with users via email. You use the {FB_AGENT_USER} system user to send and receive emails. You send reports to REMOTE_USER_EMAIL and check for incoming emails from the same address. Your goal is to keep users informed about the progress of agent loops and to process their feedback and commands."
         }
     
     def _initialize_agents(self):
@@ -252,21 +252,23 @@ class AgentLoop:
                     
                     elif agent_type.lower() == 'user_feedback':
                         # Get user email from environment or config
-                        user_email = os.getenv("LOCAL_USER_EMAIL") or self.agent_configs.get('user_email')
+                        remote_email = os.getenv("REMOTE_USER_EMAIL") or self.agent_configs.get('user_email')
                         report_frequency = self.agent_configs.get('report_frequency', 1)
                         
                         agent_instance = UserFeedbackAgent(
                             max_steps=max_steps,
-                            user_email=user_email,
+                            user_email=remote_email,  # This is the external email
                             report_frequency=report_frequency,
                             agent_description=self.agent_configs.get('user_feedback_description'),
                             agent_prompt=self.agent_configs.get('user_feedback_prompt')
                         )
                         
                         # Log the feedback agent configuration
-                        print(f"Initialized UserFeedbackAgent with email: {user_email}")
-                        print(f"Using feedback agent system user: {FB_AGENT_USER}")
-                        print(f"Report frequency: Every {report_frequency} iterations")
+                        print(f"Initialized UserFeedbackAgent:")
+                        print(f"- External email (sending to): {agent_instance.remote_email or 'Not configured'}")
+                        print(f"- Local mailbox: {agent_instance.local_email or 'Not configured'}")
+                        print(f"- Feedback agent system user: {FB_AGENT_USER}")
+                        print(f"- Report frequency: Every {report_frequency} iterations")
                         
                         self.agents[agent_type] = agent_instance
                     
@@ -523,8 +525,12 @@ class AgentLoop:
                             
                             # Get the result (this will be the report or feedback processing summary)
                             if agent_instance.should_report():
-                                result = agent_instance.generate_report(feedback_state)
-                                print(f"User feedback report sent via {FB_AGENT_USER}: {result[:200]}...")
+                                if agent_instance.remote_email:
+                                    result = agent_instance.generate_report(feedback_state)
+                                    print(f"User feedback report sent to {agent_instance.remote_email} via {FB_AGENT_USER}: {result[:200]}...")
+                                else:
+                                    result = "Cannot send report: No external email configured. Set REMOTE_USER_EMAIL environment variable."
+                                    print(result)
                             else:
                                 result = f"Checked for user feedback (reporting every {agent_instance.report_frequency} iterations)"
                                 print(result)

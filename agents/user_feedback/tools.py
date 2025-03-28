@@ -46,18 +46,27 @@ def send_mail(subject: str, body: str) -> str:
         Status message indicating success or failure
     """
     try:
+        # Get the recipient email from environment
+        recipient = os.getenv("REMOTE_USER_EMAIL")
+        sender = os.getenv("LOCAL_USER_EMAIL") or "fb_agent@botlab.dev"
+        
+        if not recipient:
+            error_msg = "REMOTE_USER_EMAIL environment variable is not set. Cannot send email."
+            logger.error(error_msg)
+            return error_msg
+        
         # Escape single quotes in the body and subject
         body_escaped = body.replace("'", "'\\''")
         subject_escaped = subject.replace("'", "'\\''")
         
-        # Use direct mail command without sudo - assumes proper permissions are set up
-        cmd = f"echo '{body_escaped}' | mail -s '{subject_escaped}' {os.getenv('LOCAL_USER_EMAIL')}"
+        # Use the -r flag to set the sender/return address to fb_agent@botlab.dev
+        cmd = f"echo '{body_escaped}' | mail -s '{subject_escaped}' -r '{sender}' {recipient}"
         
         # Execute the command
         result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
         
-        logger.info(f"Email sent to user with subject: {subject}")
-        return f"Email sent successfully to user"
+        logger.info(f"Email sent from {sender} to {recipient} with subject: {subject}")
+        return f"Email sent successfully from {sender} to {recipient}"
     
     except subprocess.CalledProcessError as e:
         error_msg = f"Failed to send email: {e.stderr}"

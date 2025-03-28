@@ -5,7 +5,16 @@ from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from typing import Optional, Dict, Any, List
 import os
 import time
+import logging
 
+# Set up logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 class UserFeedbackAgent:
     """A wrapper class for the user feedback agent that handles communication with users via email."""
@@ -28,7 +37,7 @@ class UserFeedbackAgent:
         Args:
             model: Optional RateLimitedLiteLLMModel to use. If not provided, one will be created.
             max_steps: Maximum number of steps for the agent
-            user_email: Email address of the user to communicate with
+            user_email: Email address to override the REMOTE_USER_EMAIL environment variable
             report_frequency: How often to send reports (1 = every iteration)
             agent_description: Optional additional description to append to the base description
             agent_prompt: Optional custom system prompt to use instead of the default
@@ -49,17 +58,28 @@ class UserFeedbackAgent:
             self.model = model
             
         self.max_steps = max_steps
-        self.user_email = user_email or os.getenv("LOCAL_USER_EMAIL")
+        
+        # LOCAL_USER_EMAIL is the email of the system user (used in mailbox)
+        # REMOTE_USER_EMAIL is the external user's email for sending/receiving
+        self.local_email = os.getenv("LOCAL_USER_EMAIL")
+        self.remote_email = user_email or os.getenv("REMOTE_USER_EMAIL")
+        
         self.report_frequency = report_frequency
         self.iteration_count = 0
         self.feedback_agent_user = FB_AGENT_USER
         
         # Check if environment variables are properly set up
-        if not self.user_email:
-            print("LOCAL_USER_EMAIL environment variable is not set. Email sending will not work.")
+        if not self.local_email:
+            logger.warning("LOCAL_USER_EMAIL environment variable is not set. This may affect mailbox functionality.")
         
-        if not os.getenv("REMOTE_USER_EMAIL"):
-            print("REMOTE_USER_EMAIL environment variable is not set. Email checking will not work.")
+        if not self.remote_email:
+            logger.warning("REMOTE_USER_EMAIL environment variable is not set and no user_email provided. Email sending and checking will not work.")
+            
+        # Override environment variable if user_email was provided
+        if user_email and user_email != os.getenv("REMOTE_USER_EMAIL"):
+            # Temporarily set the environment variable for tools to use
+            os.environ["REMOTE_USER_EMAIL"] = user_email
+            logger.info(f"Overriding REMOTE_USER_EMAIL with provided value: {user_email}")
         
         # Verify mailbox access
         mailbox_path = f"/var/mail/{self.feedback_agent_user}"
@@ -71,11 +91,11 @@ class UserFeedbackAgent:
             self.has_write_access = os.access(mailbox_path, os.W_OK)
             
             if not self.has_read_access:
-                print(f"No read access to {mailbox_path}. Email checking will not work.")
+                logger.warning(f"No read access to {mailbox_path}. Email checking will not work.")
             if not self.has_write_access:
-                print(f"No write access to {mailbox_path}. Emails can be read but not marked as read.")
+                logger.warning(f"No write access to {mailbox_path}. Emails can be read but not marked as read.")
         else:
-            print(f"Mailbox {mailbox_path} doesn't exist. Email functionality will be limited.")
+            logger.warning(f"Mailbox {mailbox_path} doesn't exist. Email functionality will be limited.")
         
         # Create the agent
         base_description = f"""This agent handles communication with users via email using the dedicated {self.feedback_agent_user} user. It can check for new emails from users, parse commands and feedback, and send progress reports and updates to users. Use this agent to maintain communication with users during long-running agent processes."""
@@ -118,16 +138,25 @@ class UserFeedbackAgent:
         
         # Skip email checking if we don't have proper access
         email_instructions = ""
-        if self.has_read_access:
+        if self.has_read_access and self.remote_email:
             email_instructions = f"""
             1. Check for new emails and extract any commands or feedback
-               - Use check_mail() to check for unread emails from REMOTE_USER_EMAIL in the {self.feedback_agent_user} mailbox
+               - Use check_mail() to check for unread emails from {self.remote_email} in the {self.feedback_agent_user} mailbox
             2. Update the state based on user feedback if any
             """
         else:
-            email_instructions = """
-            Note: Email checking is disabled due to insufficient permissions.
-            """
+            if not self.has_read_access:
+                email_instructions = """
+                Note: Email checking is disabled due to insufficient mailbox permissions.
+                """
+            elif not self.remote_email:
+                email_instructions = """
+                Note: Email checking is disabled because REMOTE_USER_EMAIL is not set.
+                """
+            else:
+                email_instructions = """
+                Note: Email checking is disabled due to configuration issues.
+                """
         
         # Check for new emails and process commands
         prompt = f"""
@@ -135,7 +164,8 @@ class UserFeedbackAgent:
         
         Current iteration: {self.iteration_count}
         Report frequency: Every {self.report_frequency} iterations
-        User email: {self.user_email}
+        External user email: {self.remote_email or "Not configured"}
+        System mailbox: {self.local_email or "Not configured"}
         Feedback agent user: {self.feedback_agent_user}
         
         First, check for new emails from the user that might contain feedback or commands.
@@ -156,7 +186,7 @@ class UserFeedbackAgent:
             state["user_commands"] = {}
             
         # Look for command processing in the result
-        if self.has_read_access and ("commands found" in result.lower() or "processed command" in result.lower()):
+        if self.has_read_access and self.remote_email and ("commands found" in result.lower() or "processed command" in result.lower()):
             # Check if we received any emails
             emails = check_mail()
             if emails and "body" in emails:
@@ -166,6 +196,7 @@ class UserFeedbackAgent:
                     state["user_commands"].update(commands)
                     
                     # Log the commands we found
+                    logger.info(f"Extracted user commands: {commands}")
                     print(f"Extracted user commands: {commands}")
         
         # Save the result to the agent's data directory
