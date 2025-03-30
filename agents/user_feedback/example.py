@@ -109,16 +109,34 @@ def setup_basic_environment():
         
     # Check if current user is in the mail group
     try:
-        current_user = os.getlogin()
-        mail_group = grp.getgrnam('mail')
-        if current_user in mail_group.gr_mem:
-            print(f"✓ Current user ({current_user}) is in the mail group")
+        # Use effective UID/GID which is more reliable than os.getlogin()
+        current_uid = os.geteuid()
+        current_user = pwd.getpwuid(current_uid).pw_name
+        user_groups = [g.gr_name for g in grp.getgrall() if current_user in g.gr_mem]
+        primary_group_gid = pwd.getpwuid(current_uid).pw_gid
+        primary_group_name = grp.getgrgid(primary_group_gid).gr_name
+        all_groups = set(user_groups + [primary_group_name])
+        
+        is_in_mail_group = 'mail' in all_groups
+        
+        if is_in_mail_group:
+            print(f"✓ Current user ({current_user}, uid={current_uid}) is effectively in the 'mail' group")
         else:
-            print(f"! WARNING: Current user ({current_user}) is not in the mail group")
-            print("  Consider adding the user to the mail group for better permission handling:")
+            print(f"! WARNING: Current user ({current_user}, uid={current_uid}) is NOT effectively in the 'mail' group")
+            print("  Maildir reading might fail. Add the user to the mail group:")
             print(f"  sudo usermod -a -G mail {current_user}")
     except Exception as e:
-        print(f"! Could not check mail group membership: {e}")
+        print(f"! Could not reliably check mail group membership: {e}")
+        print("  Attempting less reliable check...")
+        try:
+             current_user_login = os.getlogin() # Fallback for logging
+             mail_group = grp.getgrnam('mail')
+             if current_user_login in mail_group.gr_mem:
+                 print(f"✓ Fallback check: User {current_user_login} found in mail group members.")
+             else:
+                 print(f"! Fallback check: User {current_user_login} NOT found in mail group members.")
+        except Exception as fallback_e:
+             print(f"! Fallback check also failed: {fallback_e}")
 
 def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash", 
                 model_info_path="agents/utils/gemini/gem_llm_info.json",
