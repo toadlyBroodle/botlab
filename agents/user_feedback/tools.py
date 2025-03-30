@@ -36,7 +36,7 @@ COMMAND_PATTERNS = {
 
 @tool
 def send_mail(subject: str, body: str) -> str:
-    """Send an email using the mail command.
+    """Send an email using the sendmail command with explicit headers.
     
     Args:
         subject: Subject line of the email
@@ -46,49 +46,67 @@ def send_mail(subject: str, body: str) -> str:
         Status message indicating success or failure
     """
     try:
-        # Get the recipient email from environment
         recipient = os.getenv("REMOTE_USER_EMAIL")
-        # Ensure LOCAL_USER_EMAIL is set to fb_agent@botlab.dev in .env
         sender = os.getenv("LOCAL_USER_EMAIL", "fb_agent@botlab.dev")
         
         if not recipient:
             error_msg = "REMOTE_USER_EMAIL environment variable is not set. Cannot send email."
             logger.error(error_msg)
             return error_msg
+            
+        # Format the current time for the Date header (RFC 5322 format)
+        timestamp = datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
+        # Append timezone offset if not fully provided by %z (common issue)
+        if not timestamp.endswith(("+0000", "-0000")) and len(timestamp.split()) == 5:
+             offset_seconds = time.timezone if (time.localtime().tm_isdst == 0) else time.altzone
+             offset_hours = abs(offset_seconds) // 3600
+             offset_minutes = (abs(offset_seconds) % 3600) // 60
+             offset_sign = "-" if offset_seconds > 0 else "+" # time.timezone is seconds WEST of UTC
+             timestamp += f" {offset_sign}{offset_hours:02d}{offset_minutes:02d}" 
+
+        # Construct the email message with RFC 5322 headers
+        email_content_lines = [
+            f"From: {sender}",
+            f"To: {recipient}",
+            f"Subject: {subject}", 
+            f"Date: {timestamp}",
+            f"User-Agent: BotLab Feedback Agent", 
+            "", # Blank line separating headers from body
+            body
+        ]
+        email_content = '\n'.join(email_content_lines)
         
-        # Escape single quotes for the shell command string
-        # This is crucial for shell=True safety
-        subject_escaped = subject.replace("'", "'\\''") 
-        body_escaped = body.replace("'", "'\\''")
+        logger.debug(f"--- Email Content ---\n{email_content}\n---------------------")
         
-        # Construct the exact command that worked manually
-        cmd = f"echo '{body_escaped}' | mail -s '{subject_escaped}' -r '{sender}' {recipient}"
+        # Use sendmail -t : Reads headers from the message text via stdin
+        logger.info(f"Attempting to send email via sendmail -t from {sender} to {recipient}")
+        process = subprocess.Popen(["/usr/sbin/sendmail", "-t"], 
+                                   stdin=subprocess.PIPE, 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE, 
+                                   text=True, 
+                                   encoding='utf-8') # Specify encoding
+                                   
+        stdout, stderr = process.communicate(input=email_content)
+        return_code = process.returncode
         
-        logger.info(f"Attempting to execute mail command: [{cmd}]")
-        
-        # Execute the command, capture output, don't check return code immediately
-        result = subprocess.run(cmd, shell=True, check=False, capture_output=True, text=True)
-        
-        # Log detailed results from the subprocess call
-        logger.info(f"Mail command execution finished.")
-        logger.info(f"Return Code: {result.returncode}")
-        # Log stdout/stderr only if they contain data to avoid clutter
-        if result.stdout:
-            logger.info(f"Stdout: {result.stdout.strip()}")
-        if result.stderr:
-            logger.warning(f"Stderr: {result.stderr.strip()}") # Log stderr as warning
-        
-        # Check return code AFTER logging
-        if result.returncode == 0:
-             # Note: Successful command execution doesn't guarantee final delivery.
-             # Mail server logs are the ultimate source of truth.
-             logger.info(f"Email command executed successfully (check mail server logs for final status). Assumed sent from {sender} to {recipient}.")
-             return f"Email command executed successfully for recipient {recipient}."
+        # Log results
+        logger.info(f"sendmail execution finished.")
+        logger.info(f"Return Code: {return_code}")
+        if stdout:
+            logger.info(f"sendmail stdout: {stdout.strip()}")
+        if stderr:
+            logger.warning(f"sendmail stderr: {stderr.strip()}")
+            
+        # Check return code
+        if return_code == 0:
+            logger.info(f"Email command via sendmail -t executed successfully. Assumed sent from {sender} to {recipient}.")
+            return f"Email sent successfully to {recipient}."
         else:
-             error_msg = f"Mail command failed with code {result.returncode}. Stderr: {result.stderr.strip() if result.stderr else 'N/A'}"
-             logger.error(error_msg)
-             return error_msg
-    
+            error_msg = f"sendmail command failed with code {return_code}. Stderr: {stderr.strip() if stderr else 'N/A'}"
+            logger.error(error_msg)
+            return error_msg
+
     except Exception as e:
         error_msg = f"Unexpected Python error in send_mail: {str(e)}"
         logger.exception(error_msg) # Log full exception traceback
