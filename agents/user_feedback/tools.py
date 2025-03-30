@@ -36,7 +36,7 @@ COMMAND_PATTERNS = {
 
 @tool
 def send_mail(subject: str, body: str) -> str:
-    """Send an email using the sendmail command with explicit headers.
+    """Send an email using the mail command.
     
     Args:
         subject: Subject line of the email
@@ -48,34 +48,29 @@ def send_mail(subject: str, body: str) -> str:
     try:
         # Get the recipient email from environment
         recipient = os.getenv("REMOTE_USER_EMAIL")
-        sender = os.getenv("LOCAL_USER_EMAIL") or "fb_agent@botlab.dev"
+        sender = os.getenv("LOCAL_USER_EMAIL", "fb_agent@botlab.dev")
         
         if not recipient:
             error_msg = "REMOTE_USER_EMAIL environment variable is not set. Cannot send email."
             logger.error(error_msg)
             return error_msg
         
-        # Escape special characters that might cause issues with the shell command
-        subject_escaped = subject.replace('"', '\\"').replace("'", "\\'").replace('`', '\\`')
-        body_escaped = body.replace('"', '\\"').replace("'", "\\'").replace('`', '\\`')
+        # Simple escape for quotes in the subject and body
+        subject_escaped = subject.replace('"', '\\"').replace("'", "\\'") 
+        body_escaped = body.replace('"', '\\"').replace("'", "\\'")
         
-        # Create a timestamp for the Date header
-        timestamp = datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
-        
-        # Create email with explicit headers
-        email_content = f'From: {sender}\nTo: {recipient}\nSubject: {subject_escaped}\nDate: {timestamp}\n\n{body_escaped}'
-        
-        # Use sendmail with explicit headers
-        cmd = f"echo -e '{email_content}' | sendmail -t"
-        logger.info(f"Executing command: {cmd}")
+        # Use the direct mail command with -r flag to set sender - KNOWN TO WORK
+        cmd = f"echo '{body_escaped}' | mail -s '{subject_escaped}' -r '{sender}' {recipient}"
+        logger.info(f"Executing mail command: {cmd}")
         
         # Execute the command
         result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
         
         if result.stderr:
-            logger.warning(f"Sendmail produced warnings: {result.stderr}")
+            logger.warning(f"Mail command produced warnings: {result.stderr}")
         
-        logger.info(f"Email sent from {sender} to {recipient} with subject: {subject}")
+        # Log success
+        logger.info(f"Email sent successfully from {sender} to {recipient}")
         return f"Email sent successfully from {sender} to {recipient}"
     
     except subprocess.CalledProcessError as e:
