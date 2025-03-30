@@ -112,7 +112,7 @@ ls -la /home/fb_agent/var/mail/
 Add the following to your `.env` file:
 
 ```
-# LOCAL_USER_EMAIL is used for the local mailbox configuration
+# LOCAL_USER_EMAIL is used as the sender address in outgoing emails
 LOCAL_USER_EMAIL=fb_agent@botlab.dev
 
 # REMOTE_USER_EMAIL is the external user's email address for sending reports and receiving commands
@@ -131,9 +131,19 @@ python -m agents.user_feedback.example
 
 The output should show that:
 - The fb_agent user exists
-- The mailbox exists and is accessible
+- The maildir exists and is accessible
 - Your user has at least read access to the mailbox
 - Your REMOTE_USER_EMAIL is properly configured
+
+To test email sending directly:
+
+```bash
+# Send a test email using the mail command
+echo "Test email body" | mail -s "Test Email Subject" -r "fb_agent@botlab.dev" your_actual_email@example.com
+
+# Check the mail logs to see if it was sent
+tail /var/log/mail.log
+```
 
 ### 6. Email Workflow
 

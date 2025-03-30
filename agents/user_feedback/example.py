@@ -165,7 +165,7 @@ def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash"
         "iteration": 1,
         "current_agent": "researcher",
         "progress": {
-            "researcher": "Completed initial search on topic",
+            "researcher": "Not started",
             "writer": "Not started",
             "editor": "Not started",
             "qaqc": "Not started"

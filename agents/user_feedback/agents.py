@@ -195,11 +195,26 @@ class UserFeedbackAgent:
         3. Determine if a progress report should be sent
         4. If needed, generate and send a concise progress report using send_mail()
            - The report should be sent TO: {self.remote_email}
-           - Be sure to include a descriptive subject line
+           - Be sure to include a descriptive subject line that mentions the iteration number
         """
         
         result = self._agent(prompt)
         logger.info(f"UserFeedbackAgent processed feedback for iteration {self.iteration_count}")
+        
+        # Check if we need to send a report and the LLM hasn't done it
+        should_send_report = self.should_report() and self.remote_email
+        if should_send_report and "Email sent successfully" not in result and "successfully sent" not in result.lower():
+            logger.info(f"Report frequency check indicates we should send a report (iteration {self.iteration_count})")
+            
+            # Only send a report if it wasn't already sent
+            if "generate_report" not in result.lower() and "generating report" not in result.lower():
+                logger.info("No indication that a report was generated or sent by the LLM. Generating and sending directly.")
+                try:
+                    # Generate and send report directly
+                    report = self.generate_report(state)
+                    logger.info(f"Direct report generated and sent, length: {len(report)} chars")
+                except Exception as e:
+                    logger.error(f"Error generating and sending report directly: {str(e)}")
         
         # Extract user commands from the result
         if "user_commands" not in state:
@@ -249,6 +264,9 @@ class UserFeedbackAgent:
         
         logger.info(f"Generating report for iteration {self.iteration_count}")
         
+        # Create a base subject line we can reuse if we need to send directly
+        subject = f"Agent Progress Report - Iteration {self.iteration_count}"
+        
         prompt = f"""
         Generate a concise progress report for the user based on the current state.
         Focus on high-level achievements, changes, and next steps.
@@ -257,7 +275,7 @@ class UserFeedbackAgent:
         Email will be sent FROM: {self.local_email}
         Email will be sent TO: {self.remote_email}
         
-        The subject line should include the progress status and iteration number.
+        Use this exact subject line: "{subject}"
         
         Current state:
         {state}
@@ -271,8 +289,17 @@ class UserFeedbackAgent:
         # Check if send_mail was called in the result
         if "Email sent successfully" not in result and "successfully sent" not in result.lower():
             logger.warning("Report generated but no indication that email was sent. Sending directly.")
-            email_subject = f"Agent Progress Report - Iteration {self.iteration_count}"
-            send_result = send_mail(email_subject, result)
-            logger.info(f"Manual email sending result: {send_result}")
+            
+            # Extract the report content - typically the LLM generates some intro text before the actual report
+            # We'll try to extract just the report part if possible
+            report_lines = result.strip().split('\n')
+            report_content = '\n'.join(report_lines)
+            
+            # Send the email directly
+            try:
+                send_result = send_mail(subject, report_content)
+                logger.info(f"Manual email sending result: {send_result}")
+            except Exception as e:
+                logger.error(f"Error sending email directly: {str(e)}")
         
         return result 
