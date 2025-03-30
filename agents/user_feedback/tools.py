@@ -36,7 +36,7 @@ COMMAND_PATTERNS = {
 
 @tool
 def send_mail(subject: str, body: str) -> str:
-    """Send an email using the sendmail command with explicit headers.
+    """Send an email using the sendmail command with explicit headers and envelope sender.
     
     Args:
         subject: Subject line of the email
@@ -54,14 +54,13 @@ def send_mail(subject: str, body: str) -> str:
             logger.error(error_msg)
             return error_msg
             
-        # Format the current time for the Date header (RFC 5322 format)
+        # Format the current time for the Date header
         timestamp = datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
-        # Append timezone offset if not fully provided by %z (common issue)
         if not timestamp.endswith(("+0000", "-0000")) and len(timestamp.split()) == 5:
              offset_seconds = time.timezone if (time.localtime().tm_isdst == 0) else time.altzone
              offset_hours = abs(offset_seconds) // 3600
              offset_minutes = (abs(offset_seconds) % 3600) // 60
-             offset_sign = "-" if offset_seconds > 0 else "+" # time.timezone is seconds WEST of UTC
+             offset_sign = "-" if offset_seconds > 0 else "+"
              timestamp += f" {offset_sign}{offset_hours:02d}{offset_minutes:02d}" 
 
         # Construct the email message with RFC 5322 headers
@@ -78,14 +77,21 @@ def send_mail(subject: str, body: str) -> str:
         
         logger.debug(f"--- Email Content ---\n{email_content}\n---------------------")
         
-        # Use sendmail -t : Reads headers from the message text via stdin
-        logger.info(f"Attempting to send email via sendmail -t from {sender} to {recipient}")
-        process = subprocess.Popen(["/usr/sbin/sendmail", "-t"], 
+        # Use sendmail -t (read headers) and -f (set envelope sender)
+        sendmail_command = ["/usr/sbin/sendmail", "-t", "-f", sender]
+        logger.info(f"Attempting to send email via command: {sendmail_command}")
+
+        # Prepare a minimal environment, keeping only PATH
+        minimal_env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")}
+        logger.debug(f"Using minimal environment: {minimal_env}")
+
+        process = subprocess.Popen(sendmail_command, 
                                    stdin=subprocess.PIPE, 
                                    stdout=subprocess.PIPE, 
                                    stderr=subprocess.PIPE, 
                                    text=True, 
-                                   encoding='utf-8') # Specify encoding
+                                   encoding='utf-8',
+                                   env=minimal_env) # Pass the minimal environment
                                    
         stdout, stderr = process.communicate(input=email_content)
         return_code = process.returncode
@@ -96,16 +102,21 @@ def send_mail(subject: str, body: str) -> str:
         if stdout:
             logger.info(f"sendmail stdout: {stdout.strip()}")
         if stderr:
-            logger.warning(f"sendmail stderr: {stderr.strip()}")
+            # Log stderr as warning unless return code is non-zero
+            if return_code != 0:
+                logger.error(f"sendmail stderr: {stderr.strip()}")
+            else:
+                 logger.warning(f"sendmail stderr: {stderr.strip()}")
             
         # Check return code
         if return_code == 0:
-            logger.info(f"Email command via sendmail -t executed successfully. Assumed sent from {sender} to {recipient}.")
+            logger.info(f"Email command via sendmail -t -f executed successfully. Assumed sent from {sender} to {recipient}.")
             return f"Email sent successfully to {recipient}."
         else:
             error_msg = f"sendmail command failed with code {return_code}. Stderr: {stderr.strip() if stderr else 'N/A'}"
             logger.error(error_msg)
-            return error_msg
+            # Also return the error message to the caller
+            return error_msg 
 
     except Exception as e:
         error_msg = f"Unexpected Python error in send_mail: {str(e)}"
