@@ -23,7 +23,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 # Constants
-DEFAULT_MAILBOX_PATH = "/home/fb_agent/var/mail"
+DEFAULT_MAILBOX_PATH = "/home/fb_agent/var/mail"  # Corrected Maildir path
 FB_AGENT_USER = "fb_agent"  # Dedicated user for feedback
 COMMAND_PATTERNS = {
     "frequency": r"FREQUENCY:\s*(\d+)",
@@ -48,6 +48,7 @@ def send_mail(subject: str, body: str) -> str:
     try:
         # Get the recipient email from environment
         recipient = os.getenv("REMOTE_USER_EMAIL")
+        # Ensure LOCAL_USER_EMAIL is set to fb_agent@botlab.dev in .env
         sender = os.getenv("LOCAL_USER_EMAIL", "fb_agent@botlab.dev")
         
         if not recipient:
@@ -55,40 +56,50 @@ def send_mail(subject: str, body: str) -> str:
             logger.error(error_msg)
             return error_msg
         
-        # Simple escape for quotes in the subject and body
-        subject_escaped = subject.replace('"', '\\"').replace("'", "\\'") 
-        body_escaped = body.replace('"', '\\"').replace("'", "\\'")
+        # Escape single quotes for the shell command string
+        # This is crucial for shell=True safety
+        subject_escaped = subject.replace("'", "'\\''") 
+        body_escaped = body.replace("'", "'\\''")
         
-        # Use the direct mail command with -r flag to set sender - KNOWN TO WORK
+        # Construct the exact command that worked manually
         cmd = f"echo '{body_escaped}' | mail -s '{subject_escaped}' -r '{sender}' {recipient}"
-        logger.info(f"Executing mail command: {cmd}")
         
-        # Execute the command
-        result = subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+        logger.info(f"Attempting to execute mail command: [{cmd}]")
         
+        # Execute the command, capture output, don't check return code immediately
+        result = subprocess.run(cmd, shell=True, check=False, capture_output=True, text=True)
+        
+        # Log detailed results from the subprocess call
+        logger.info(f"Mail command execution finished.")
+        logger.info(f"Return Code: {result.returncode}")
+        # Log stdout/stderr only if they contain data to avoid clutter
+        if result.stdout:
+            logger.info(f"Stdout: {result.stdout.strip()}")
         if result.stderr:
-            logger.warning(f"Mail command produced warnings: {result.stderr}")
+            logger.warning(f"Stderr: {result.stderr.strip()}") # Log stderr as warning
         
-        # Log success
-        logger.info(f"Email sent successfully from {sender} to {recipient}")
-        return f"Email sent successfully from {sender} to {recipient}"
-    
-    except subprocess.CalledProcessError as e:
-        error_msg = f"Failed to send email: {e.stderr}"
-        logger.error(error_msg)
-        return error_msg
+        # Check return code AFTER logging
+        if result.returncode == 0:
+             # Note: Successful command execution doesn't guarantee final delivery.
+             # Mail server logs are the ultimate source of truth.
+             logger.info(f"Email command executed successfully (check mail server logs for final status). Assumed sent from {sender} to {recipient}.")
+             return f"Email command executed successfully for recipient {recipient}."
+        else:
+             error_msg = f"Mail command failed with code {result.returncode}. Stderr: {result.stderr.strip() if result.stderr else 'N/A'}"
+             logger.error(error_msg)
+             return error_msg
     
     except Exception as e:
-        error_msg = f"Unexpected error sending email: {str(e)}"
-        logger.error(error_msg)
+        error_msg = f"Unexpected Python error in send_mail: {str(e)}"
+        logger.exception(error_msg) # Log full exception traceback
         return error_msg
 
 @tool
 def check_mail() -> Dict[str, Any]:
-    """Check for the most recent unread email from REMOTE_USER_EMAIL in the fb_agent user's mailbox.
+    """Check for the most recent unread email from REMOTE_USER_EMAIL in the fb_agent user's maildir.
     This function checks a Maildir-format mailbox in /home/fb_agent/var/mail/
     
-    This function assumes the main application user has read access to fb_agent's mailbox.
+    This function assumes the main application user has read access to fb_agent's maildir.
         
     Returns:
         Dictionary containing the most recent unread message details or empty dict if no unread messages
@@ -118,7 +129,7 @@ def check_mail() -> Dict[str, Any]:
         mail_files = [f for f in os.listdir(new_mail_dir) if os.path.isfile(os.path.join(new_mail_dir, f))]
         
         if not mail_files:
-            logger.info("No new mail files found")
+            logger.info("No new mail files found in Maildir")
             return {}
         
         # Sort mail files by modification time (newest first)
@@ -167,6 +178,7 @@ def check_mail() -> Dict[str, Any]:
                 }
                 
                 most_recent_file = file_path
+                logger.info(f"Found matching email: {file_path}")
                 break  # Stop after finding the first matching email
                 
             except Exception as e:
@@ -175,7 +187,9 @@ def check_mail() -> Dict[str, Any]:
         
         # Check if we have write access to move the file to 'cur' to mark as read
         cur_mail_dir = os.path.join(maildir_path, "cur")
-        can_mark_as_read = os.access(new_mail_dir, os.W_OK) and os.path.exists(cur_mail_dir) and os.access(cur_mail_dir, os.W_OK)
+        can_mark_as_read = False
+        if os.path.exists(cur_mail_dir):
+             can_mark_as_read = os.access(new_mail_dir, os.W_OK) and os.access(cur_mail_dir, os.W_OK)
         
         # Mark the message as read by moving it from 'new' to 'cur'
         if most_recent_file is not None and most_recent_message is not None and can_mark_as_read:
@@ -191,8 +205,11 @@ def check_mail() -> Dict[str, Any]:
                 logger.warning(f"Could not mark email as read: {e}. The email was still read successfully.")
         
         elif most_recent_message is not None and not can_mark_as_read:
-            logger.warning(f"Email found but could not be marked as read: No write access to maildir")
+            logger.warning(f"Email found but could not be marked as read: No write access to Maildir ({cur_mail_dir})")
         
+        if not most_recent_message:
+            logger.info("No relevant emails found after checking files.")
+
         return most_recent_message or {}
     
     except Exception as e:
