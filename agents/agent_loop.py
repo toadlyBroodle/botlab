@@ -31,7 +31,7 @@ class AgentLoop:
         max_steps_per_agent: Union[int, str] = 5,
         max_retries: int = 3,
         model_id: str = "gemini/gemini-2.0-flash",
-        model_info_path: str = "utils/gemini/gem_llm_info.json",
+        model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         use_custom_prompts: bool = False,
         enable_telemetry: bool = False,
         state_file: Optional[str] = None,
@@ -711,13 +711,13 @@ def parse_args():
                         help="Maximum retries for rate limiting")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", 
                         help="The model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="utils/gemini/gem_llm_info.json", 
+    parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", 
                         help="Path to model info JSON file")
     parser.add_argument("--use-custom-prompts", action="store_true", 
                         help="Whether to use custom agent descriptions and prompts")
     parser.add_argument("--enable-telemetry", action="store_true", 
                         help="Whether to enable OpenTelemetry tracing")
-    parser.add_argument("--state-file", type=str, default="logs/agent_loop_state.json", 
+    parser.add_argument("--state-file", type=str, default="agents/logs/agent_loop_state.json", 
                         help="Path to a file for persisting state between runs")
     parser.add_argument("--load-state", action="store_true", 
                         help="Whether to load state from state_file if it exists (default: False)")

@@ -15,7 +15,7 @@ class FactCheckerAgent:
         system_prompt: Optional[str] = None,
         max_steps: int = 30,
         model_id: str = "gemini/gemini-2.0-flash",
-        model_info_path: str = "utils/gemini/gem_llm_info.json",
+        model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
         max_retries: int = 3
     ):
@@ -130,7 +130,7 @@ class EditorAgent:
         system_prompt: Optional[str] = None,
         max_steps: int = 50,
         model_id: str = "gemini/gemini-2.0-flash",
-        model_info_path: str = "utils/gemini/gem_llm_info.json",
+        model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
         max_retries: int = 3,
         fact_checker_description: Optional[str] = None,

@@ -36,10 +36,10 @@ class GeminiAPI:
         # Load environment variables from .env file
         load_dotenv()
 
-        api_key = os.environ.get("GOOGLE_AI_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
-            self.logger.error("GOOGLE_AI_API_KEY environment variable is not set")
-            raise ValueError("GOOGLE_AI_API_KEY environment variable is not set")
+            self.logger.error("GEMINI_API_KEY environment variable is not set")
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
         
         # Initialize the Gemini client
         self.client = genai.Client(api_key=api_key)

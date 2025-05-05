@@ -189,7 +189,7 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
     # Initialize the Gemini client
     client = _initialize_gemini_client()
     if client is None:
-        return "Error: Gemini search unavailable. GOOGLE_API_KEY may not be set."
+        return "Error: Gemini search unavailable. GEMINI_API_KEY may not be set."
     
     try:
         # Create the search tool
