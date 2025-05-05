@@ -286,6 +286,9 @@ class UserFeedbackAgent:
         # Log the report generation
         logger.info(f"Generated report for {self.remote_email}, length: {len(result)} chars")
         
+        # Log the full result before checking
+        logger.debug(f"Full result from agent before sending check: {result}")
+
         # Check if send_mail was called in the result
         if "Email sent successfully" not in result and "successfully sent" not in result.lower():
             logger.warning("Report generated but no indication that email was sent. Sending directly.")

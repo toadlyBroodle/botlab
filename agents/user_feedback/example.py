@@ -138,7 +138,7 @@ def setup_basic_environment():
         except Exception as fallback_e:
              print(f"! Fallback check also failed: {fallback_e}")
 
-def run_example(user_email=None, max_steps=4, model_id="gemini/gemini-2.0-flash", 
+def run_example(user_email=None, max_steps=3, model_id="gemini/gemini-2.0-flash", 
                 model_info_path="agents/utils/gemini/gem_llm_info.json",
                 base_wait_time=2.0, max_retries=3,
                 report_frequency=1,
@@ -226,7 +226,7 @@ def parse_arguments():
     
     parser.add_argument("--email", type=str, help="Email address to communicate with (overrides REMOTE_USER_EMAIL)")
     parser.add_argument("--frequency", type=int, default=1, help="How often to send reports (1 = every iteration)")
-    parser.add_argument("--max-steps", type=int, default=4, help="Maximum number of steps for the agent")
+    parser.add_argument("--max-steps", type=int, default=3, help="Maximum number of steps for the agent")
     parser.add_argument("--model", type=str, default="gemini/gemini-2.0-flash", help="The model ID to use")
     
     return parser.parse_args()
