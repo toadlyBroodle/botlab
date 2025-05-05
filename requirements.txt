@@ -18,5 +18,9 @@ arxiv>=2.1.0
 pymupdf4llm>=0.0.17
 uuid>=1.30
 
+# Youtube, video, translation dependencies
+#yt-dlp>=2025.03.31
+# sudo apt install mpv # >= 0.32.0
+
 # Swarm dependencies - GitHub reference commented out as pip needs package from PyPI
 # swarm @ git+ssh://git@github.com/openai/swarm.git 

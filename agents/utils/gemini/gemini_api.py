@@ -12,8 +12,7 @@ from dotenv import load_dotenv
 from collections import deque
 from datetime import datetime
 from ...utils.logger_config import setup_logger
-from constants import GEMINI_MODELS
-from ...utils.gemini_tools import register_tools, ensure_meme_templates
+from .model_config import GEMINI_MODELS
 
 # Maximum number of characters in a prompt
 MAX_PROMPT_CHARS = 30000
@@ -45,9 +44,6 @@ class GeminiAPI:
         # Initialize the Gemini client
         self.client = genai.Client(api_key=api_key)
         
-        # Ensure meme templates are available
-        ensure_meme_templates()
-        
         # Add safety settings
         self.safety_settings = [
             types.SafetySetting(
@@ -78,9 +74,6 @@ class GeminiAPI:
         
         # Initialize tools list with code execution
         self.tools = [self.code_execution_tool]
-        
-        # Register default tools (time and calculator)
-        register_tools(self)
         
         # Rate limiting settings
         self.MAX_RETRIES = 3
