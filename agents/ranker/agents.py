@@ -547,6 +547,118 @@ Always be fair and consistent in your evaluations.
         print(f"Warning: Artifact ID {artifact_id} not found in metadata.")
         return None
     
+    def compare_files(self, file_path_a: str, file_path_b: str, goal: Optional[str] = None) -> Tuple[str, str]:
+        """Compares two files and returns the winner and rationale.
+        
+        Args:
+            file_path_a: Path to the first file
+            file_path_b: Path to the second file
+            goal: Optional goal for the comparison. If None, uses the default goal.
+            
+        Returns:
+            Tuple of (winner, rationale) where winner is 'A', 'B', or 'Equal'
+        """
+        print(f"Comparing files:\nA: {file_path_a}\nB: {file_path_b}")
+        
+        # Read the file contents
+        try:
+            with open(file_path_a, 'r', encoding='utf-8') as f:
+                content_a = f.read()
+        except Exception as e:
+            error_msg = f"Error reading file A ({file_path_a}): {e}"
+            print(error_msg)
+            return "Error", error_msg
+            
+        try:
+            with open(file_path_b, 'r', encoding='utf-8') as f:
+                content_b = f.read()
+        except Exception as e:
+            error_msg = f"Error reading file B ({file_path_b}): {e}"
+            print(error_msg)
+            return "Error", error_msg
+        
+        # Use default goal if none provided
+        if goal is None:
+            goal = f"Improve the {self.logical_artifact_id}"
+        
+        # Use the existing llm_judge function to compare
+        start_time = time.time()
+        winner, rationale = llm_judge(content_a, content_b, goal, self.model)
+        end_time = time.time()
+        
+        print(f"Comparison completed in {end_time - start_time:.2f}s")
+        print(f"Winner: {'File A' if winner == 'A' else 'File B' if winner == 'B' else 'Equal'}")
+        print(f"Rationale: {rationale[:200]}...")  # Print truncated rationale
+        
+        # Record comparison in parent loop state if available
+        if self.parent_loop:
+            comparison_record = {
+                "timestamp": time.time(),
+                "comparison_type": "direct_file_comparison",
+                "file_a": file_path_a,
+                "file_b": file_path_b,
+                "winner": winner,
+                "rationale": rationale,
+                "goal": goal
+            }
+            self.parent_loop.update_ranking_status(new_comparison=comparison_record)
+        
+        return winner, rationale
+    
     def __del__(self):
         """Clean up resources when the agent is garbage collected."""
         self.stop_background_ranking() 
+
+def main():
+    """Command-line interface for comparing two files directly."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Compare two files and rank them.')
+    parser.add_argument('file_a', type=str, help='Path to the first file')
+    parser.add_argument('file_b', type=str, help='Path to the second file')
+    parser.add_argument('--goal', type=str, default=None, help='Goal for comparison')
+    parser.add_argument('--model', type=str, default="gemini/gemini-1.5-flash", help='Model ID to use')
+    parser.add_argument('--model-info-path', type=str, default="agents/utils/gemini/gem_llm_info.json", help='Path to model info JSON')
+    parser.add_argument('--output', type=str, default=None, help='Optional file to write full output to')
+    
+    args = parser.parse_args()
+    
+    # Create a standalone ranking agent
+    from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+    
+    model = RateLimitedLiteLLMModel(
+        model_id=args.model,
+        model_info_path=args.model_info_path,
+        base_wait_time=2.0,
+        max_retries=3
+    )
+    
+    ranking_agent = RankingAgent(model=model)
+    
+    # Compare the files
+    winner, rationale = ranking_agent.compare_files(args.file_a, args.file_b, args.goal)
+    
+    # Print the result
+    print("\n" + "="*80)
+    print(f"WINNER: {'File A' if winner == 'A' else 'File B' if winner == 'B' else 'Equal'}")
+    print("="*80)
+    print("RATIONALE:")
+    print(rationale)
+    print("="*80)
+    
+    # Write to output file if specified
+    if args.output:
+        try:
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(f"File A: {args.file_a}\n")
+                f.write(f"File B: {args.file_b}\n")
+                f.write(f"Goal: {args.goal or 'Default'}\n")
+                f.write(f"Winner: {'File A' if winner == 'A' else 'File B' if winner == 'B' else 'Equal'}\n\n")
+                f.write("Rationale:\n")
+                f.write(rationale)
+            print(f"Full results written to {args.output}")
+        except Exception as e:
+            print(f"Error writing to output file: {e}")
+
+if __name__ == "__main__":
+    main() 
