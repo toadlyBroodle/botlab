@@ -45,7 +45,7 @@ from agents.translator.agents import TranslatorAgent
 # Constants
 DOWNLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "videos")
 SUBTITLE_FORMATS = ["vtt", "srt"]
-DEFAULT_SUBTITLE_LANG = "en"  # Default subtitle language to try to download
+DEFAULT_SUBTITLE_LANGS = "en"  # Default: download English subtitles
 GEMINI_MODEL = "gemini-2.0-flash"  # Default Gemini model to use
 
 # Ensure the Google API key is set
@@ -184,53 +184,21 @@ def get_language_code(language_name: str) -> str:
         "french": "fr",
         "german": "de",
         "italian": "it",
-        "portuguese": "pt",
-        "russian": "ru",
         "japanese": "ja",
-        "chinese": "zh",
-        "korean": "ko",
-        "arabic": "ar",
-        "hindi": "hi",
-        "turkish": "tr",
-        "dutch": "nl",
-        "swedish": "sv",
-        "polish": "pl",
-        "ukrainian": "uk",
-        "vietnamese": "vi",
-        "thai": "th",
-        "indonesian": "id",
-        "malaysian": "ms",
-        "norwegian": "no",
-        "danish": "da",
-        "finnish": "fi",
-        "hebrew": "he",
-        "greek": "el",
-        "czech": "cs",
-        "slovak": "sk",
-        "hungarian": "hu",
-        "romanian": "ro",
-        "bulgarian": "bg",
-        "croatian": "hr",
-        "serbian": "sr",
-        "slovenian": "sl",
-        "lithuanian": "lt",
-        "latvian": "lv",
-        "estonian": "et",
-        "icelandic": "is",
         "auto": "auto"
     }
     
     return language_codes.get(language_name.lower(), language_name.lower())
 
 
-def download_video(url: str, output_dir: str, subtitle_lang: str = "all", force_download: bool = False) -> Tuple[Optional[str], List[str]]:
+def download_video(url: str, output_dir: str, subtitle_lang: str = DEFAULT_SUBTITLE_LANGS, force_download: bool = False) -> Tuple[Optional[str], List[str]]:
     """
     Download video and subtitles using yt-dlp.
     
     Args:
         url: YouTube URL
         output_dir: Directory to save the downloaded files
-        subtitle_lang: Language code for subtitles to download ("all" for all available languages)
+        subtitle_lang: Language code(s) for subtitles to download (comma-separated, or "all" for all available languages)
         force_download: Force download even if video already exists
         
     Returns:
@@ -259,9 +227,19 @@ def download_video(url: str, output_dir: str, subtitle_lang: str = "all", force_
             if subtitle_paths:
                 print(f"Found existing subtitle files: {', '.join(os.path.basename(p) for p in subtitle_paths)}")
                 
-                # If we want to download specific subtitles that don't exist yet, proceed with subtitle download
-                if subtitle_lang != "all" and not any(f".{subtitle_lang}." in p for p in subtitle_paths):
-                    print(f"No subtitle file found for language '{subtitle_lang}'. Will download subtitles only.")
+                # Check if we already have the requested subtitle languages
+                requested_langs = subtitle_lang.split(",") if subtitle_lang != "all" else []
+                missing_langs = []
+                
+                if subtitle_lang != "all" and requested_langs:
+                    for lang in requested_langs:
+                        if not any(f".{lang}." in os.path.basename(p).lower() for p in subtitle_paths):
+                            missing_langs.append(lang)
+                    
+                    if missing_langs:
+                        print(f"Missing subtitle files for languages: {', '.join(missing_langs)}. Will download additional subtitles.")
+                    else:
+                        return existing_video, subtitle_paths
                 else:
                     return existing_video, subtitle_paths
             else:
@@ -272,7 +250,7 @@ def download_video(url: str, output_dir: str, subtitle_lang: str = "all", force_
     output_template = os.path.join(output_dir, f"%(title)s_vid_{video_id}_{timestamp}.%(ext)s")
     
     # Set subtitle languages to download
-    sub_langs = "all" if subtitle_lang == "all" else f"{subtitle_lang},en,auto"
+    sub_langs = subtitle_lang
     
     # Download command with subtitle extraction
     cmd = [
@@ -297,7 +275,6 @@ def download_video(url: str, output_dir: str, subtitle_lang: str = "all", force_
         cmd.extend([
             "--output-na-placeholder", "",  # Don't add placeholders to filenames
             "--paths", os.path.dirname(existing_video),  # Save to the same directory
-            "--sub-paths", os.path.dirname(existing_video),  # Save subtitles to the same directory
             "--output", os.path.splitext(os.path.basename(existing_video))[0],  # Use existing filename base
         ])
     else:
@@ -907,8 +884,8 @@ if __name__ == "__main__":
     parser.add_argument("url", help="YouTube video URL")
     parser.add_argument("--source-lang", default="auto", 
                        help="Source language code or name (default: auto-detect, will prompt if multiple subtitle files found)")
-    parser.add_argument("--sub-lang", default="all", 
-                       help=f"Subtitle language to download (default: all available subtitles)")
+    parser.add_argument("--sub-lang", default=DEFAULT_SUBTITLE_LANGS, 
+                       help=f"Subtitle language(s) to download (default: {DEFAULT_SUBTITLE_LANGS}, use 'all' for all available)")
     parser.add_argument("--output-dir", default=DOWNLOAD_DIR, 
                        help=f"Output directory (default: {os.path.relpath(DOWNLOAD_DIR)})")
     parser.add_argument("--play", action="store_true", 

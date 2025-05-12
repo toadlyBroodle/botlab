@@ -699,28 +699,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run a loop of agent calls with state management")
     
     parser.add_argument("--query", type=str, required=True, help="The query to process")
-    parser.add_argument("--agent-sequence", type=str, default="researcher,writer,editor,qaqc", 
-                        help="Comma-separated list of agent types to call in sequence")
-    parser.add_argument("--max-iterations", type=int, default=3, 
-                        help="Maximum number of iterations through the entire sequence")
-    parser.add_argument("--max-steps-per-agent", type=str, default="3,3,9,1", 
-                        help="Maximum steps for each agent. Can be either: "
-                             "- An integer (same value for all agents) "
-                             "- A comma-separated string (e.g., '3,3,9,1' for different values per agent)")
-    parser.add_argument("--max-retries", type=int, default=3, 
-                        help="Maximum retries for rate limiting")
-    parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", 
-                        help="The model ID to use")
-    parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", 
-                        help="Path to model info JSON file")
-    parser.add_argument("--use-custom-prompts", action="store_true", 
-                        help="Whether to use custom agent descriptions and prompts")
-    parser.add_argument("--enable-telemetry", action="store_true", 
-                        help="Whether to enable OpenTelemetry tracing")
-    parser.add_argument("--state-file", type=str, default="agents/logs/agent_loop_state.json", 
-                        help="Path to a file for persisting state between runs")
-    parser.add_argument("--load-state", action="store_true", 
-                        help="Whether to load state from state_file if it exists (default: False)")
+    parser.add_argument("--agent-sequence", type=str, default="researcher,writer,editor,qaqc", help="Comma-separated list of agent types to call in sequence")
+    parser.add_argument("--max-iterations", type=int, default=3, help="Maximum number of iterations through the entire sequence")
+    parser.add_argument("--max-steps-per-agent", type=str, default="3,3,9,1", help="Maximum steps for each agent. Can be either: An integer (same value for all agents) or a comma-separated string (e.g., '3,3,9,1' for different values per agent)")
+    parser.add_argument("--max-retries", type=int, default=3, help="Maximum retries for rate limiting")
+    parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="The model ID to use")
+    parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
+    parser.add_argument("--use-custom-prompts", action="store_true", help="Whether to use custom agent descriptions and prompts")
+    parser.add_argument("--enable-telemetry", action="store_true", help="Whether to enable OpenTelemetry tracing")
+    parser.add_argument("--state-file", type=str, default="agents/logs/agent_loop_state.json", help="Path to a file for persisting state between runs")
+    parser.add_argument("--load-state", action="store_true", help="Whether to load state from state_file if it exists (default: False)")
     
     return parser.parse_args()
 

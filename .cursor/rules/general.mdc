@@ -45,6 +45,16 @@ alwaysApply: false
   - Methods for primary functionality (e.g., run_query, edit_content, compare_outputs)
   - Internal CodeAgent or ToolCallingAgent instance accessible via the `agent` property
 
+## Main cli arguments
+- Always add parse arguments at very bottom of files in the main guard and pass them into main()
+- Always keep help parameters on same line as other parameters
+Example:
+if __name__ == "__main__":
+    """Main function to parse arguments."""
+    parser = argparse.ArgumentParser(description="...")
+    parser.add_argument("--arg1", type=int, help="...")
+    main(parser.parse_args())
+
 ## Documentation
 - Write clear docstrings for functions and classes
   - @tool docstrings are automatically added to agent system_prompts
