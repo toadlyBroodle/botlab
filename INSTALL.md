@@ -58,7 +58,8 @@ pip install -e ./agents
 #pip install -e ./swarms
 ``` 
 
-If you prefer to use Poetry you may use the `poetry.toml` file or `install_dependencies.sh` script.
+In case of dependency issues, you can use Poetry to install dependencies with the `pyproject.toml` file or `install_dependencies.sh` script, 
+which will also export the dependencies to `requirements.txt` if you still want to use pip.
 
 ## Setting Up User Feedback Agent
 
