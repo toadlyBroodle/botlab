@@ -19,7 +19,6 @@ from .writer_critic.agents import WriterAgent, CriticAgent
 from .editor.agents import EditorAgent, FactCheckerAgent
 from .qaqc.agents import QAQCAgent
 from .user_feedback.agents import UserFeedbackAgent
-from .user_feedback.tools import FB_AGENT_USER
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""
@@ -188,8 +187,8 @@ class AgentLoop:
             
             "user_email": os.getenv("REMOTE_USER_EMAIL", "example@example.com"),  # External user email for feedback
             "report_frequency": 1,
-            "user_feedback_description": f"User feedback agent that uses the {FB_AGENT_USER} system user for email communication",
-            "user_feedback_prompt": f"You are a user feedback agent that communicates with users via email. You use the {FB_AGENT_USER} system user to send and receive emails. You send reports to REMOTE_USER_EMAIL and check for incoming emails from the same address. Your goal is to keep users informed about the progress of agent loops and to process their feedback and commands."
+            "user_feedback_agent_description": "Generates concise progress reports based on provided state.",
+            "user_feedback_agent_prompt": "You are an assistant that writes brief, informative progress reports based on the current state of an automated process. Focus on key achievements, changes, and next steps. Do not include salutations or closings."
         }
     
     def _initialize_agents(self):
@@ -257,18 +256,17 @@ class AgentLoop:
                         
                         agent_instance = UserFeedbackAgent(
                             max_steps=max_steps,
-                            user_email=remote_email,  # This is the external email
+                            user_email=remote_email,
                             report_frequency=report_frequency,
-                            agent_description=self.agent_configs.get('user_feedback_description'),
-                            agent_prompt=self.agent_configs.get('user_feedback_prompt')
+                            agent_description=self.agent_configs.get('user_feedback_agent_description'),
+                            agent_prompt=self.agent_configs.get('user_feedback_agent_prompt')
                         )
                         
                         # Log the feedback agent configuration
                         print(f"Initialized UserFeedbackAgent:")
-                        print(f"- External email (sending to): {agent_instance.remote_email or 'Not configured'}")
-                        print(f"- Local mailbox: {agent_instance.local_email or 'Not configured'}")
-                        print(f"- Feedback agent system user: {FB_AGENT_USER}")
-                        print(f"- Report frequency: Every {report_frequency} iterations")
+                        print(f"- External email (sending to/receiving from): {agent_instance.remote_email or 'Not configured'}")
+                        print(f"- Local email (sending from): {agent_instance.local_email or 'Not configured'}")
+                        print(f"- Report frequency (initial): Every {report_frequency} iterations (can be changed by email command)")
                         
                         self.agents[agent_type] = agent_instance
                     
@@ -511,48 +509,40 @@ class AgentLoop:
                         # Special handling for UserFeedbackAgent
                         elif agent_type == "user_feedback":
                             # Create a state dictionary to pass to the UserFeedbackAgent
-                            feedback_state = {
+                            feedback_state_input = {
                                 "iteration": iteration + 1,
-                                "current_agent": agent_type,
+                                "current_agent_loop_agent": agent_type,
                                 "query": query,
-                                "results": previous_results,
+                                "loop_results": previous_results.copy(),
                                 "agent_sequence": self.agent_sequence,
-                                "feedback_agent_user": FB_AGENT_USER  # Add the feedback agent user to the state
+                                "paused": self.state.get("paused", False)
                             }
                             
-                            # Process feedback and update state
-                            updated_state = agent_instance.process_feedback(feedback_state)
+                            updated_feedback_state = agent_instance.process_feedback(feedback_state_input)
                             
-                            # Get the result (this will be the report or feedback processing summary)
-                            if agent_instance.should_report():
-                                if agent_instance.remote_email:
-                                    result = agent_instance.generate_report(feedback_state)
-                                    print(f"User feedback report sent to {agent_instance.remote_email} via {FB_AGENT_USER}: {result[:200]}...")
-                                else:
-                                    result = "Cannot send report: No external email configured. Set REMOTE_USER_EMAIL environment variable."
-                                    print(result)
-                            else:
-                                result = f"Checked for user feedback (reporting every {agent_instance.report_frequency} iterations)"
-                                print(result)
+                            if "paused" in updated_feedback_state:
+                                self.state["paused"] = updated_feedback_state["paused"]
+                                print(f"Loop pause state updated by UserFeedbackAgent to: {self.state['paused']}")
+
+                            if "user_commands" in updated_feedback_state and updated_feedback_state["user_commands"]:
+                                if "user_feedback_commands_log" not in self.state:
+                                    self.state["user_feedback_commands_log"] = []
+                                self.state["user_feedback_commands_log"].append({
+                                    "iteration": iteration + 1,
+                                    "time": time.time(),
+                                    "commands": updated_feedback_state["user_commands"]
+                                })
+                                print(f"User commands processed by UserFeedbackAgent: {updated_feedback_state['user_commands']}")
+
+                            result = f"UserFeedbackAgent cycle {iteration + 1}: Checked mail. "
+                            if agent_instance.should_report() and not self.state.get("paused", False) and agent_instance.remote_email:
+                                result += "Attempted to send report. "
+                            if updated_feedback_state.get("user_commands"):
+                                result += f"Processed commands: {updated_feedback_state['user_commands']}. "
+                            if self.state.get("paused", False):
+                                result += "Loop is PAUSED. "
                             
-                            # Update the state with any user commands
-                            if updated_state.get("user_commands"):
-                                print(f"Received user commands: {updated_state['user_commands']}")
-                                # Apply user commands to the state
-                                for cmd, value in updated_state.get("user_commands", {}).items():
-                                    if cmd == "frequency" and hasattr(agent_instance, "report_frequency"):
-                                        agent_instance.report_frequency = value
-                                        print(f"Updated report frequency to {value}")
-                                    elif cmd == "feedback":
-                                        print(f"User feedback: {value}")
-                                        # Store the feedback in the state
-                                        if "user_feedback" not in self.state:
-                                            self.state["user_feedback"] = []
-                                        self.state["user_feedback"].append({
-                                            "iteration": iteration + 1,
-                                            "time": time.time(),
-                                            "feedback": value
-                                        })
+                            print(result)
                         
                         else:
                             # Standard agent execution

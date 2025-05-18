@@ -1,5 +1,5 @@
 from smolagents import CodeAgent
-from .tools import send_mail, check_mail, parse_commands, FB_AGENT_USER, DEFAULT_MAILBOX_PATH
+from ..utils.agents.tools import send_mail, check_mail, parse_email_commands, DEFAULT_MAILBOX_PATH
 from ..utils.agents.tools import save_final_answer, apply_custom_agent_prompts
 from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from typing import Optional, Dict, Any, List
@@ -17,16 +17,16 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 class UserFeedbackAgent:
-    """A wrapper class for the user feedback agent that handles communication with users via email."""
+    """A class that handles automated user communication via email, including checking for commands and sending progress reports."""
     
     def __init__(
         self,
         model: Optional[RateLimitedLiteLLMModel] = None,
-        max_steps: int = 5,
+        max_steps: int = 1, # Max steps for report generation agent
         user_email: Optional[str] = None,
         report_frequency: int = 1,
-        agent_description: Optional[str] = None,
-        agent_prompt: Optional[str] = None,
+        agent_description: Optional[str] = None, # Description for the report generating agent
+        agent_prompt: Optional[str] = None, # System prompt for the report generating agent
         model_id: str = "gemini/gemini-2.0-flash",
         model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
@@ -36,17 +36,16 @@ class UserFeedbackAgent:
         
         Args:
             model: Optional RateLimitedLiteLLMModel to use. If not provided, one will be created.
-            max_steps: Maximum number of steps for the agent
-            user_email: Email address to override the REMOTE_USER_EMAIL environment variable
-            report_frequency: How often to send reports (1 = every iteration)
-            agent_description: Optional additional description to append to the base description
-            agent_prompt: Optional custom system prompt to use instead of the default
-            model_id: The model ID to use if creating a new model
-            model_info_path: Path to the model info JSON file if creating a new model
-            base_wait_time: Base wait time for rate limiting if creating a new model
-            max_retries: Maximum retries for rate limiting if creating a new model
+            max_steps: Maximum number of steps for the internal report-generating agent.
+            user_email: Email address to override the REMOTE_USER_EMAIL environment variable.
+            report_frequency: How often to send reports (1 = every iteration).
+            agent_description: Optional additional description for the report-generating agent.
+            agent_prompt: Optional custom system prompt for the report-generating agent.
+            model_id: The model ID to use if creating a new model.
+            model_info_path: Path to the model info JSON file if creating a new model.
+            base_wait_time: Base wait time for rate limiting if creating a new model.
+            max_retries: Maximum retries for rate limiting if creating a new model.
         """
-        # Create a model if one wasn't provided
         if model is None:
             self.model = RateLimitedLiteLLMModel(
                 model_id=model_id,
@@ -57,252 +56,216 @@ class UserFeedbackAgent:
         else:
             self.model = model
             
-        self.max_steps = max_steps
+        self.max_steps = max_steps # For the internal agent
         
-        # LOCAL_USER_EMAIL is the email of the system user (used in mailbox)
-        # REMOTE_USER_EMAIL is the external user's email for sending/receiving
         self.local_email = os.getenv("LOCAL_USER_EMAIL", "fb_agent@botlab.dev")
         self.remote_email = user_email or os.getenv("REMOTE_USER_EMAIL")
         
         self.report_frequency = report_frequency
         self.iteration_count = 0
-        self.feedback_agent_user = FB_AGENT_USER
-        self.maildir_path = DEFAULT_MAILBOX_PATH
+        self.maildir_path = DEFAULT_MAILBOX_PATH # Used for initial access checks
         
-        # Log important configuration
         logger.info(f"UserFeedbackAgent initialized with:")
-        logger.info(f"- LOCAL_USER_EMAIL: {self.local_email}")
-        logger.info(f"- REMOTE_USER_EMAIL: {self.remote_email}")
-        logger.info(f"- Maildir path: {self.maildir_path}")
+        logger.info(f"- LOCAL_USER_EMAIL (sending FROM): {self.local_email}")
+        logger.info(f"- REMOTE_USER_EMAIL (sending TO, checking FROM): {self.remote_email}")
+        logger.info(f"- Maildir path for checks: {self.maildir_path}")
         
-        # Check if environment variables are properly set up
         if not self.local_email:
             logger.warning("LOCAL_USER_EMAIL environment variable is not set. Using default fb_agent@botlab.dev.")
         
         if not self.remote_email:
             logger.warning("REMOTE_USER_EMAIL environment variable is not set and no user_email provided. Email sending and checking will not work.")
-            
-        # Override environment variable if user_email was provided
+        
         if user_email and user_email != os.getenv("REMOTE_USER_EMAIL"):
-            # Temporarily set the environment variable for tools to use
             os.environ["REMOTE_USER_EMAIL"] = user_email
             logger.info(f"Overriding REMOTE_USER_EMAIL with provided value: {user_email}")
         
-        # Verify mailbox access
-        new_mail_dir = os.path.join(self.maildir_path, "new")
+        # Perform initial maildir access checks
         self.has_read_access = False
-        self.has_write_access = False
-        
-        if os.path.exists(new_mail_dir):
+        self.can_mark_as_read = False # Determined by check_mail's ability to move files
+        new_mail_dir = os.path.join(self.maildir_path, "new")
+        cur_mail_dir = os.path.join(self.maildir_path, "cur")
+
+        if os.path.exists(new_mail_dir) and os.path.isdir(new_mail_dir):
             self.has_read_access = os.access(new_mail_dir, os.R_OK)
-            self.has_write_access = os.access(new_mail_dir, os.W_OK)
-            
+            if os.path.exists(cur_mail_dir) and os.path.isdir(cur_mail_dir):
+                 self.can_mark_as_read = os.access(new_mail_dir, os.W_OK) and os.access(cur_mail_dir, os.W_OK)
+
             if not self.has_read_access:
                 logger.warning(f"No read access to {new_mail_dir}. Email checking will not work.")
-            if not self.has_write_access:
-                logger.warning(f"No write access to {new_mail_dir}. Emails can be read but not marked as read.")
+            if not self.can_mark_as_read:
+                 logger.warning(f"No write access to maildir ({new_mail_dir} or {cur_mail_dir}). Emails can be read but may not be marked as read by check_mail.")
         else:
             logger.warning(f"Maildir {new_mail_dir} doesn't exist. Email functionality will be limited.")
         
-        # Create the agent
-        base_description = f"""This agent handles communication with users via email using the dedicated {self.feedback_agent_user} user. It can check for new emails from users, parse commands and feedback, and send progress reports and updates to users. Use this agent to maintain communication with users during long-running agent processes."""
+        # Create the internal agent for report generation ONLY
+        base_description = "This agent is an expert at generating concise and informative progress reports based on provided state information."
         
-        # Append additional description if provided
-        if agent_description:
-            description = f"{base_description} {agent_description}"
-        else:
-            description = base_description
+        current_agent_description = agent_description if agent_description else base_description
             
-        # Create the agent with either the default or custom prompt
-        self._agent = CodeAgent(
-            tools=[send_mail, check_mail, parse_commands],
+        self._report_generator_agent = CodeAgent(
+            tools=[], # No tools for the report generator
             model=self.model,
-            name='user_feedback_agent',
-            description=description,
-            max_steps=self.max_steps,
-            additional_authorized_imports=["json", "time", "re"]
+            name='report_generator_agent',
+            description=current_agent_description,
+            max_steps=self.max_steps, # Typically 1 for just generation
+            additional_authorized_imports=[] # No complex imports needed for report generation
         )
         
-        # Set custom prompt if provided
         if agent_prompt:
-            self._agent.system_prompt = agent_prompt
-    
+            self._report_generator_agent.system_prompt = agent_prompt
+        else:
+            # Apply default smolagent prompts if no custom one is given
+            # These might need adjustment if they imply tool use.
+            # For now, we assume agent_prompt or a simple default is sufficient.
+            try:
+                apply_custom_agent_prompts(self._report_generator_agent) 
+            except Exception as e:
+                logger.warning(f"Could not apply default smolagent prompts to report generator: {e}. Using basic system prompt.")
+                self._report_generator_agent.system_prompt = "You generate progress reports."
+
     @property
     def agent(self):
-        """Get the underlying CodeAgent instance."""
-        return self._agent
+        """Get the underlying report-generating CodeAgent instance."""
+        return self._report_generator_agent
     
     def process_feedback(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Process user feedback and update the state accordingly.
+        """
+        Checks for user email commands, updates state, generates a progress report,
+        and sends it to the user.
         
         Args:
-            state: The current state of the agent loop
+            state: The current state of the agent loop.
             
         Returns:
-            Updated state with user feedback incorporated
+            Updated state with user feedback incorporated.
         """
         self.iteration_count += 1
-        
-        # Create an explanation of the email setup for the agent
-        email_explanation = f"""
-        Email Configuration:
-        - The agent's local email address is: {self.local_email}
-        - Reports are sent TO: {self.remote_email or 'Not configured'}
-        - Replies are expected FROM: {self.remote_email or 'Not configured'}
-        - Emails are stored in Maildir format at: {self.maildir_path}
-        """
-        
-        # Skip email checking if we don't have proper access
-        email_instructions = ""
-        if self.has_read_access and self.remote_email:
-            email_instructions = f"""
-            1. First, check for new emails containing feedback or commands:
-               - Use check_mail() to check for unread emails from {self.remote_email}
-               - New emails will be in the 'new' folder of the maildir: {os.path.join(self.maildir_path, 'new')}
-               - If you find an email, parse any commands using parse_commands() on the email body
-            2. Update the state based on user feedback if any
-            """
-        else:
-            if not self.has_read_access:
-                email_instructions = """
-                Note: Email checking is disabled due to insufficient maildir permissions.
-                """
-            elif not self.remote_email:
-                email_instructions = """
-                Note: Email checking is disabled because REMOTE_USER_EMAIL is not set.
-                """
-            else:
-                email_instructions = """
-                Note: Email checking is disabled due to configuration issues.
-                """
-        
-        # Check for new emails and process commands
-        prompt = f"""
-        You are the UserFeedbackAgent responsible for communicating with the user via email.
-        
-        {email_explanation}
-        
-        Current iteration: {self.iteration_count}
-        Report frequency: Every {self.report_frequency} iterations
-        
-        First, check for new emails from the user that might contain feedback or commands.
-        Then, determine if you should send a progress report based on the current iteration and report frequency.
-        
-        Current state:
-        {state}
-        
-        {email_instructions}
-        3. Determine if a progress report should be sent
-        4. If needed, generate and send a concise progress report using send_mail()
-           - The report should be sent TO: {self.remote_email}
-           - Be sure to include a descriptive subject line that mentions the iteration number
-        """
-        
-        result = self._agent(prompt)
-        logger.info(f"UserFeedbackAgent processed feedback for iteration {self.iteration_count}")
-        
-        # Check if we need to send a report and the LLM hasn't done it
-        should_send_report = self.should_report() and self.remote_email
-        if should_send_report and "Email sent successfully" not in result and "successfully sent" not in result.lower():
-            logger.info(f"Report frequency check indicates we should send a report (iteration {self.iteration_count})")
-            
-            # Only send a report if it wasn't already sent
-            if "generate_report" not in result.lower() and "generating report" not in result.lower():
-                logger.info("No indication that a report was generated or sent by the LLM. Generating and sending directly.")
-                try:
-                    # Generate and send report directly
-                    report = self.generate_report(state)
-                    logger.info(f"Direct report generated and sent, length: {len(report)} chars")
-                except Exception as e:
-                    logger.error(f"Error generating and sending report directly: {str(e)}")
-        
-        # Extract user commands from the result
+        logger.info(f"UserFeedbackAgent - Iteration {self.iteration_count}")
+
         if "user_commands" not in state:
             state["user_commands"] = {}
+        
+        # 1. Check for new emails and parse commands
+        if self.has_read_access and self.remote_email:
+            logger.info(f"Checking for emails from {self.remote_email}...")
+            email_data = check_mail() # This function now handles its own logging for found/not found
             
-        # Look for command processing in the result
-        if self.has_read_access and self.remote_email and ("commands found" in result.lower() or "processed command" in result.lower()):
-            # Check if we received any emails
-            logger.info("Detected possible commands, checking mail directly")
-            emails = check_mail()
-            if emails and "body" in emails:
-                # Parse commands from the email body
-                logger.info(f"Found email with subject: {emails.get('subject', 'No subject')}")
-                commands = parse_commands(emails["body"])
-                if commands and isinstance(commands, dict) and not "status" in commands:
-                    state["user_commands"].update(commands)
+            if email_data and isinstance(email_data, dict) and "error" not in email_data:
+                if email_data.get("body"):
+                    logger.info(f"Found email with subject: '{email_data.get('subject', 'No Subject')}' from {email_data.get('from')}. Parsing commands...")
+                    commands = parse_email_commands(email_data["body"])
                     
-                    # Log the commands we found
-                    logger.info(f"Extracted user commands: {commands}")
-                    print(f"Extracted user commands: {commands}")
+                    if commands and isinstance(commands, dict) and "status" not in commands:
+                        logger.info(f"Parsed commands: {commands}")
+                        state["user_commands"].update(commands)
+                        
+                        # Handle specific commands directly
+                        if "frequency" in commands and isinstance(commands["frequency"], int):
+                            self.report_frequency = commands["frequency"]
+                            logger.info(f"Report frequency updated to: {self.report_frequency}")
+                        if "pause" in commands:
+                            state["paused"] = commands["pause"]
+                            logger.info(f"Pause state updated to: {state['paused']}")
+                        if "resume" in commands: # resume is effectively pause = False
+                            state["paused"] = not commands["resume"]
+                            logger.info(f"Pause state updated (via resume) to: {state['paused']}")
+                        # Other commands like 'detail', 'focus', 'feedback' are stored in state['user_commands']
+                        # for other agents to potentially use.
+                    elif commands and "status" in commands:
+                        logger.info(f"Command parsing status: {commands['status']}")
+                    else:
+                        logger.info("No commands found in email body or empty commands dict returned.")
                 else:
-                    logger.info("No commands found in email body or only status returned")
+                    logger.info("No new email body found from relevant sender.")
+            elif email_data and "error" in email_data:
+                logger.error(f"Error checking mail: {email_data['error']}")
+            # If email_data is empty dict, check_mail already logged "No new mail files found" or "No relevant emails"
+            
+        else:
+            if not self.remote_email:
+                logger.info("Email checking and sending skipped: REMOTE_USER_EMAIL not configured.")
+            elif not self.has_read_access:
+                logger.info("Email checking skipped: No read access to maildir.")
+
+        # 2. Determine if a progress report should be sent
+        is_paused = state.get("paused", False)
+        if self.should_report() and self.remote_email and not is_paused:
+            logger.info(f"Generating and sending progress report for iteration {self.iteration_count}.")
+            
+            # 3. Generate report content using the internal LLM agent
+            report_content_body = self.generate_report_content(state)
+            
+            if report_content_body:
+                # 4. Send the report
+                subject = f"Agent Progress Report - Iteration {self.iteration_count}"
+                send_status = send_mail(subject, report_content_body)
+                logger.info(f"Report sending status to {self.remote_email}: {send_status}")
+                # Save the generated report for record-keeping if needed
+                save_final_answer(self._report_generator_agent, report_content_body, f"Iteration {self.iteration_count} report to user", "user_feedback_report")
             else:
-                logger.info("No relevant emails found or error checking mail")
-        
-        # Save the result to the agent's data directory
-        save_final_answer(self._agent, result, "user_feedback")
-        
+                logger.warning("Report content generation failed or returned empty. Report not sent.")
+        elif is_paused:
+            logger.info(f"Report sending skipped for iteration {self.iteration_count}: System is PAUSED.")
+        elif not self.remote_email:
+            logger.info(f"Report sending skipped: REMOTE_USER_EMAIL not configured.")
+
+        # For general logging of this cycle's outcome, independent of LLM result
+        # save_final_answer(self._report_generator_agent, f"Process feedback cycle {self.iteration_count} complete.", "user_feedback_cycle_log")
+        # Decided to save only actual reports for now.
+
         return state
     
     def should_report(self) -> bool:
         """Determine if a report should be sent based on the current iteration and frequency."""
         return self.iteration_count % self.report_frequency == 0
     
-    def generate_report(self, state: Dict[str, Any]) -> str:
-        """Generate a concise progress report based on the current state.
+    def generate_report_content(self, state: Dict[str, Any]) -> Optional[str]:
+        """Generate a concise progress report body using the internal LLM agent.
         
         Args:
-            state: The current state of the agent loop
+            state: The current state of the agent loop.
             
         Returns:
-            A formatted progress report
+            The generated report string, or None if generation fails.
         """
-        if not self.remote_email:
-            logger.warning("Cannot generate report: No external email address configured")
-            return "Cannot generate report: No external email address configured. Set REMOTE_USER_EMAIL environment variable."
+        if not self.remote_email: # Should be caught by caller, but good to double check
+            logger.warning("Cannot generate report content: No external email address configured.")
+            return None
         
-        logger.info(f"Generating report for iteration {self.iteration_count}")
+        logger.info(f"Generating report content for iteration {self.iteration_count} to be sent to {self.remote_email}")
         
-        # Create a base subject line we can reuse if we need to send directly
-        subject = f"Agent Progress Report - Iteration {self.iteration_count}"
-        
+        # Construct a prompt for the report-generating agent
+        # The system prompt of _report_generator_agent already guides its role.
+        # Here, we provide the context (current state).
         prompt = f"""
-        Generate a concise progress report for the user based on the current state.
-        Focus on high-level achievements, changes, and next steps.
-        Keep it brief but informative.
+        Based on the following current state of the automated process, please generate a concise and informative progress report body.
+        The report will be sent to a user. Focus on high-level achievements, significant changes, any issues encountered, and planned next steps.
+        Keep it brief, like a short email update. Do not include salutations like "Dear User" or closings like "Sincerely", just the body.
+
+        Current Iteration: {self.iteration_count}
+        Overall Query/Goal: {state.get("query", "N/A")}
+        Current Agent/Task: {state.get("current_agent", "N/A")}
+        Progress Details:
+        {state.get("loop_results", {})}
         
-        Email will be sent FROM: {self.local_email}
-        Email will be sent TO: {self.remote_email}
+        Any User Commands Received This Cycle:
+        {state.get("user_commands", {})}
+
+        Current System Status (e.g., paused):
+        Paused: {state.get("paused", False)}
         
-        Use this exact subject line: "{subject}"
-        
-        Current state:
-        {state}
+        Please provide only the report body text.
         """
         
-        result = self._agent(prompt)
-        
-        # Log the report generation
-        logger.info(f"Generated report for {self.remote_email}, length: {len(result)} chars")
-        
-        # Log the full result before checking
-        logger.debug(f"Full result from agent before sending check: {result}")
-
-        # Check if send_mail was called in the result
-        if "Email sent successfully" not in result and "successfully sent" not in result.lower():
-            logger.warning("Report generated but no indication that email was sent. Sending directly.")
-            
-            # Extract the report content - typically the LLM generates some intro text before the actual report
-            # We'll try to extract just the report part if possible
-            report_lines = result.strip().split('\n')
-            report_content = '\n'.join(report_lines)
-            
-            # Send the email directly
-            try:
-                send_result = send_mail(subject, report_content)
-                logger.info(f"Manual email sending result: {send_result}")
-            except Exception as e:
-                logger.error(f"Error sending email directly: {str(e)}")
-        
-        return result 
+        try:
+            report_body = self._report_generator_agent(prompt)
+            if report_body and isinstance(report_body, str) and report_body.strip():
+                logger.info(f"Report content generated successfully, length: {len(report_body)} chars.")
+                return report_body.strip()
+            else:
+                logger.warning(f"Report generator agent returned empty or invalid content: {report_body}")
+                return None
+        except Exception as e:
+            logger.error(f"Error during report content generation by LLM agent: {str(e)}")
+            return None 
