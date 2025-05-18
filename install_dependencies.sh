@@ -45,14 +45,30 @@ if ! command -v poetry &> /dev/null; then
         echo "Installing Poetry using the official installer..."
         curl -sSL https://install.python-poetry.org | python3.13 -
         
-        # Check if PATH is already in .bashrc
+        # Ensure Poetry's bin directory is in PATH for the current script session
+        echo "Ensuring $HOME/.local/bin is in PATH for this script session."
+        export PATH="$HOME/.local/bin:$PATH"
+        
+        # Check if PATH is already in .bashrc and add if not (for future sessions)
         if grep -q "PATH=\"\$HOME/.local/bin:\$PATH\"" ~/.bashrc; then
-            echo "Poetry PATH already in .bashrc"
+            echo "Poetry PATH entry already found in .bashrc."
         else
-            echo "Adding Poetry to PATH in .bashrc"
+            echo "Adding Poetry to PATH in .bashrc for future sessions."
+            echo '' >> ~/.bashrc # Add a newline for separation
+            echo '# Add Poetry to PATH' >> ~/.bashrc
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-            export PATH="$HOME/.local/bin:$PATH"
-            source ~/.bashrc
+            echo "Poetry PATH added to ~/.bashrc. Please source it or open a new terminal for it to take effect in other sessions."
+        fi
+
+        # Verify poetry command is now available
+        if ! command -v poetry &> /dev/null; then
+            echo "Error: 'poetry' command still not found after attempting to update PATH for current session."
+            echo "Current PATH: $PATH"
+            echo "Poetry is expected to be in $HOME/.local/bin."
+            echo "Please check your Poetry installation and the script's output."
+            exit 1
+        else
+            echo "Poetry command is now available in the current session."
         fi
     else
         echo "Poetry installation skipped. Please install Poetry manually and run this script again."
