@@ -54,10 +54,25 @@ fi
 
 # Check if poetry is installed
 if ! command -v poetry &> /dev/null; then
-    echo "Error: poetry command not found. Please install poetry first."
-    echo "You can typically install it with: pip install poetry"
-    echo "Or see the official documentation: https://python-poetry.org/docs/#installation"
-    exit 1
+    echo "Poetry not found. Do you want to install it? (y/n)"
+    read -r install_poetry
+    if [[ "$install_poetry" =~ ^[Yy]$ ]]; then
+        echo "Installing Poetry using the official installer..."
+        curl -sSL https://install.python-poetry.org | python3 -
+        
+        # Check if PATH is already in .bashrc
+        if grep -q "PATH=\"\$HOME/.local/bin:\$PATH\"" ~/.bashrc; then
+            echo "Poetry PATH already in .bashrc"
+        else
+            echo "Adding Poetry to PATH in .bashrc"
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+            export PATH="$HOME/.local/bin:$PATH"
+            source ~/.bashrc
+        fi
+    else
+        echo "Poetry installation skipped. Please install Poetry manually and run this script again."
+        exit 1
+    fi
 fi
 
 echo "Poetry found. Proceeding with operations using pyproject.toml in $SCRIPT_DIR."
@@ -74,6 +89,7 @@ fi
 
 # Export dependencies to requirements.txt
 echo "Exporting dependencies to requirements.txt..."
+poetry self add poetry-plugin-export
 # The output file "requirements.txt" will be created in the current directory ($SCRIPT_DIR)
 # The $VERBOSE_POETRY_FLAG will add verbosity if enabled
 if poetry export -f requirements.txt --output "requirements.txt" --without-hashes $VERBOSE_POETRY_FLAG; then
