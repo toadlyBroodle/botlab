@@ -87,7 +87,17 @@ sudo postmap /etc/postfix/virtual
 # Create proper Maildir structure for fb_agent
 sudo mkdir -p /home/fb_agent/var/mail/{new,cur,tmp}
 sudo chown -R fb_agent:mail /home/fb_agent/var/mail
-sudo chmod -R 750 /home/fb_agent/var/mail
+
+# Set permissions for the Maildir and its contents
+# fb_agent user has full control, 'mail' group has read/write/execute
+sudo find /home/fb_agent/var/mail -type d -exec chmod 770 {} \;
+sudo find /home/fb_agent/var/mail -type f -exec chmod 660 {} \;
+
+# Set the setgid bit on Maildir directories to ensure new files inherit the 'mail' group
+sudo chmod g+s /home/fb_agent/var/mail
+sudo chmod g+s /home/fb_agent/var/mail/new
+sudo chmod g+s /home/fb_agent/var/mail/cur
+sudo chmod g+s /home/fb_agent/var/mail/tmp
 
 # Update Postfix configuration if needed
 sudo postconf -e "home_mailbox = var/mail/"

@@ -11,7 +11,7 @@ echo "Setting up virtual environment in root directory..."
 
 # Create virtual environment if it doesn't exist
 if [ ! -d ".venv" ]; then
-    python3 -m venv .venv
+    python3.13 -m venv .venv
     echo "Created new virtual environment in .venv"
 else
     echo "Virtual environment already exists in .venv"
