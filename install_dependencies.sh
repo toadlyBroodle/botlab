@@ -27,21 +27,6 @@ done
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR" # Ensure we are in the project root
 
-# Check if python3.13 installed and configure Poetry to use it
-if ! command -v python3.13 &> /dev/null; then
-    echo "Error: python3.13 could not be found. Please install it first."
-    exit 1
-else
-    echo "Python 3.13 found. Attempting to configure Poetry to use it..."
-    if poetry env use python3.13 $VERBOSE_POETRY_FLAG; then
-        echo "Poetry successfully configured to use python3.13."
-    else
-        echo "Error: 'poetry env use python3.13' failed."
-        echo "Please check Poetry's output above for details. Make sure python3.13 is a functional installation that Poetry can use."
-        exit 1
-    fi
-fi
-
 echo "Running in directory: $SCRIPT_DIR"
 echo "Looking for pyproject.toml in this directory..."
 
@@ -58,7 +43,7 @@ if ! command -v poetry &> /dev/null; then
     read -r install_poetry
     if [[ "$install_poetry" =~ ^[Yy]$ ]]; then
         echo "Installing Poetry using the official installer..."
-        curl -sSL https://install.python-poetry.org | python3 -
+        curl -sSL https://install.python-poetry.org | python3.13 -
         
         # Check if PATH is already in .bashrc
         if grep -q "PATH=\"\$HOME/.local/bin:\$PATH\"" ~/.bashrc; then
@@ -75,7 +60,22 @@ if ! command -v poetry &> /dev/null; then
     fi
 fi
 
-echo "Poetry found. Proceeding with operations using pyproject.toml in $SCRIPT_DIR."
+# Check if python3.13 installed and configure Poetry to use it
+if ! command -v python3.13 &> /dev/null; then
+    echo "Error: python3.13 could not be found. Please install it first."
+    exit 1
+else
+    echo "Python 3.13 found. Attempting to configure Poetry to use it..."
+    if poetry env use python3.13 $VERBOSE_POETRY_FLAG; then
+        echo "Poetry successfully configured to use python3.13."
+    else
+        echo "Error: 'poetry env use python3.13' failed."
+        echo "Please check Poetry's output above for details. Make sure python3.13 is a functional installation that Poetry can use."
+        exit 1
+    fi
+fi
+
+echo "Poetry found and configured to use python3.13. Proceeding with operations using pyproject.toml in $SCRIPT_DIR."
 
 # Install dependencies using Poetry
 echo "Installing dependencies from pyproject.toml using 'poetry install'..."
