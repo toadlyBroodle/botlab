@@ -23,11 +23,16 @@ alwaysApply: false
 
 ## Virtual Environment
 - A shared `.venv` virtual environment is created at the project root
-- All Python scripts should be run with the virtual environment activated
-- Example: 
+- Python scripts should be run with the virtual environment activated
+- Example 1: 
   ```bash
   source .venv/bin/activate
   python -m agents.researcher.example
+  ```
+- If poetry is installed, python scripts may also be run with:
+- Example 2:
+  ```bash
+  poetry run python -m agents.ranked_agent_loop_example
   ```
 - Working directory is always the project root
 
