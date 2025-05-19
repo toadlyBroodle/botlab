@@ -75,7 +75,7 @@ def rank_files_pairwise(
                 f"  - Rationale: {rationale}"
             )
             comparison_logs.append(log_entry)
-            print(f"    -> Winner: {winner}, Rationale: {rationale[:100].strip().replace(os.linesep, ' ')}...")
+            print(f"    -> Winner: {winner}, Rationale: {rationale.strip().replace(os.linesep, ' ')}...")
 
             if winner == 'A': # New file is better
                 # If new file is better than ranked_list[j], and j is 0, it's the new best.
@@ -178,10 +178,10 @@ def main():
         if args.output:
             try:
                 with open(args.output, 'w', encoding='utf-8') as f:
-                    f.write(f"Input Arguments: {args.inputs}\\n")
-                    f.write(f"Resolved File (1): {actual_files_to_rank[0]}\\n")
-                    f.write("Goal: Not applicable (single file)\\n\\n")
-                    f.write("Ranking: Only one file, no ranking performed.\\n")
+                    f.write(f"Input Arguments: {args.inputs}\n")
+                    f.write(f"Resolved File (1): {actual_files_to_rank[0]}\n")
+                    f.write("Goal: Not applicable (single file)\n\n")
+                    f.write("Ranking: Only one file, no ranking performed.\n")
                 print(f"Output written to {args.output}")
             except Exception as e:
                 print(f"Error writing to output file: {e}")
@@ -218,13 +218,13 @@ def main():
         print(f"Goal: \"{effective_goal}\"")
     
     # Rank the files
-    print("\\nStarting pairwise ranking process...")
+    print("\nStarting pairwise ranking process...")
     ranked_files, comparison_logs = rank_files_pairwise(
         actual_files_to_rank, ranking_agent, effective_goal
     )
     
     # Print the result
-    print("\\n" + "="*80)
+    print("\n" + "="*80)
     print("FINAL RANKING (BEST TO WORST):")
     for i, file_path in enumerate(ranked_files):
         print(f"{i+1}. {os.path.basename(file_path)} ({file_path})")
@@ -234,20 +234,20 @@ def main():
     if args.output:
         try:
             with open(args.output, 'w', encoding='utf-8') as f:
-                f.write(f"Input Arguments: {args.inputs}\\n") # Log original user inputs
-                f.write(f"Resolved Files To Rank ({len(actual_files_to_rank)}):\\n")
+                f.write(f"Input Arguments: {args.inputs}\n") # Log original user inputs
+                f.write(f"Resolved Files To Rank ({len(actual_files_to_rank)}):\n")
                 for file_path in actual_files_to_rank: # Log resolved files
-                    f.write(f"- {file_path}\\n")
-                f.write(f"Goal: {effective_goal}\\n\\n")
+                    f.write(f"- {file_path}\n")
+                f.write(f"Goal: {effective_goal}\n\n")
                 
-                f.write("Final Ranking (Best to Worst):\\n")
+                f.write("Final Ranking (Best to Worst):\n")
                 for i, file_path in enumerate(ranked_files):
-                    f.write(f"{i+1}. {os.path.basename(file_path)} ({file_path})\\n")
-                f.write("\\n" + "="*80 + "\\n")
-                f.write("Comparison Logs:\\n")
+                    f.write(f"{i+1}. {os.path.basename(file_path)} ({file_path})\n")
+                f.write("\n" + "="*80 + "\n")
+                f.write("Comparison Logs:\n")
                 for log_entry in comparison_logs:
-                    f.write(f"\\n{log_entry}\\n")
-                f.write("="*80 + "\\n")
+                    f.write(f"\n{log_entry}\n")
+                f.write("="*80 + "\n")
 
             print(f"Full results written to {args.output}")
         except Exception as e:
