@@ -33,19 +33,20 @@ import traceback
 logger = logging.getLogger(__name__)
 
 # Set conservative buffer factor - operate at 90% of actual limits
-SAFETY_BUFFER_FACTOR = 0.9
+SAFETY_BUFFER_FACTOR = 1.5 #0.9
 # Default minimum delay between API calls if model-specific delay can't be calculated
 DEFAULT_MIN_DELAY_BETWEEN_CALLS = 4.0  # seconds
 # Default cooldown period after hitting limits
 DEFAULT_COOLDOWN_PERIOD = 60.0  # seconds
 
 # Define fallback model chains for different model families
-GEMINI_FALLBACK_CHAIN = {
-    "gemini-2.5-pro-preview-03-25": ["gemini-2.0-flash", "gemini-2.0-flash-lite"],
-    "gemini-2.0-flash": ["gemini-2.0-flash-lite", "gemini-1.5-flash"],
-    "gemini-2.0-flash-lite": ["gemini-1.5-flash"],
-    "gemini-1.5-flash": []  # No fallbacks for the lowest tier
-}
+GEMINI_FALLBACK_CHAIN: List[str] = [
+    #"gemini/gemini-2.5-pro-preview",  # Highest preference, currently unavailable in free tier
+    #"gemini/gemini-2.5-flash-preview", # Currently unavailable in free tier
+    "gemini/gemini-2.0-flash",
+    "gemini/gemini-2.0-flash-lite",
+    "gemini/gemini-1.5-flash"
+]
 
 class SharedRateLimitTracker:
     """Singleton class to track rate limits across all model instances.
@@ -472,10 +473,21 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         self.shared_tracker = SharedRateLimitTracker()
         self.shared_tracker.initialize_model(self.model_id, self.rpm_limit, self.tpm_limit, self.rpd_limit)
         
-        if self.enable_fallback and 'gemini' in self.original_model_id.lower():
-            model_base = self.original_model_id.split('/')[-1]
-            fallback_options = GEMINI_FALLBACK_CHAIN.get(model_base, [])
-            logger.info(f"Model fallback for {self.original_model_id} {'enabled: ' + model_base + ' -> ' + ' -> '.join(fallback_options) if fallback_options else 'enabled but no fallbacks defined'}")
+        if self.enable_fallback:
+            # For Gemini models, log the global fallback chain and check if original_model_id is in it.
+            if 'gemini' in self.original_model_id.lower() and hasattr(litellm, 'GEMINI_FALLBACK_CHAIN') and isinstance(GEMINI_FALLBACK_CHAIN, list):
+                chain_display = ' -> '.join(GEMINI_FALLBACK_CHAIN) if GEMINI_FALLBACK_CHAIN else "No fallbacks defined"
+                logger.info(f"Model fallback for {self.original_model_id} enabled. Global GEMINI_FALLBACK_CHAIN: [{chain_display}]")
+                if self.original_model_id not in GEMINI_FALLBACK_CHAIN:
+                    # This is only a warning; the model might be used as a starting point even if not in the predefined chain.
+                    logger.warning(f"Original model {self.original_model_id} is not in the defined GEMINI_FALLBACK_CHAIN. Fallback will proceed from it if it fails.")
+            elif 'gemini' not in self.original_model_id.lower():
+                 logger.info(f"Model fallback enabled for non-Gemini model {self.original_model_id}. GEMINI_FALLBACK_CHAIN will be used if applicable.")
+            else: # Gemini model but GEMINI_FALLBACK_CHAIN might not be set up as expected
+                logger.info(f"Model fallback for {self.original_model_id} enabled, but GEMINI_FALLBACK_CHAIN might not be correctly defined as a list in litellm module.")
+
+        else:
+            logger.info(f"Model fallback disabled for {self.original_model_id}.")
 
         self.last_api_call_time = 0 
         self.last_wait_time = 0
@@ -483,42 +495,47 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         self.last_wait_type = "None" # For logging which limit caused wait in _apply_rate_limit
         
     def _get_fallback_model(self, current_model_id_for_fallback: str) -> Optional[str]:
-        """Determines the next available fallback model from a predefined chain.
+        """Determines the next available fallback model from the global `GEMINI_FALLBACK_CHAIN` list.
 
         This method is called when `enable_fallback` is True and the `current_model_id_for_fallback`
-        encounters a rate limit. It consults `GEMINI_FALLBACK_CHAIN` for potential
-        fallback options. A fallback model is considered "available" if it's not in
-        cooldown and its RPM/TPM usage is below 85% of its safe limits, as checked by
+        encounters a rate limit. It iterates through `GEMINI_FALLBACK_CHAIN` starting from
+        the model after `current_model_id_for_fallback`. A fallback model is considered "available"
+        if it's not in cooldown and its usage is below a threshold, checked by
         `shared_tracker.check_model_availability`.
 
         Args:
             current_model_id_for_fallback (str): The model ID that just encountered an issue
-                                                 and needs a fallback.
+                                                 and needs a fallback (e.g., "gemini/gemini-2.0-flash").
 
         Returns:
-            Optional[str]: The model ID of the next suitable and available fallback model.
-                           Returns None if no fallback chain is defined for the current model,
-                           if the chain is exhausted, or if no defined fallbacks are currently available.
+            Optional[str]: The model ID of the next suitable and available fallback model from the list.
+                           Returns None if `current_model_id_for_fallback` is not in the chain,
+                           if the end of the chain is reached, or if no subsequent fallbacks are currently available.
         """
-        if not self.enable_fallback: return None
-        provider_prefix = current_model_id_for_fallback.split("/")[0] + "/" if "/" in current_model_id_for_fallback else ""
-        model_base_for_fallback = current_model_id_for_fallback.split("/")[-1] if "/" in current_model_id_for_fallback else current_model_id_for_fallback
+        if not self.enable_fallback:
+            return None
 
-        if model_base_for_fallback not in GEMINI_FALLBACK_CHAIN:
-            logger.info(f"No fallback chain defined for base model {model_base_for_fallback}")
+        try:
+            # Find the index of the current model in the global fallback chain.
+            # The chain should contain full model IDs like "gemini/gemini-2.0-flash".
+            current_index = GEMINI_FALLBACK_CHAIN.index(current_model_id_for_fallback)
+        except ValueError:
+            logger.warning(f"Model {current_model_id_for_fallback} not found in GEMINI_FALLBACK_CHAIN. Cannot determine next fallback.")
             return None
-        fallback_chain = GEMINI_FALLBACK_CHAIN[model_base_for_fallback]
-        if not fallback_chain:
-            logger.info(f"No fallback models available in chain for {model_base_for_fallback}")
-            return None
-            
-        for next_fallback_base in fallback_chain:
-            next_fallback_id = f"{provider_prefix}{next_fallback_base}"
+
+        # Start searching for an available model from the *next* index.
+        for i in range(current_index + 1, len(GEMINI_FALLBACK_CHAIN)):
+            next_fallback_id = GEMINI_FALLBACK_CHAIN[i]
             if self.shared_tracker.check_model_availability(next_fallback_id, threshold=0.85):
-                logger.info(f"Selected available fallback model: {next_fallback_id}")
+                logger.info(f"Selected available fallback model: {next_fallback_id} (previous: {current_model_id_for_fallback})")
+                # Update current_fallback_level or a similar tracker if needed here or in __call__
+                # For now, _get_fallback_model just finds the next candidate.
+                # The caller (__call__) will update self.model_id and related state.
                 return next_fallback_id
-            else: logger.info(f"Fallback model {next_fallback_id} is unavailable (usage > 85% or cooldown)")
-        logger.warning(f"All fallback models for {model_base_for_fallback} are currently unavailable.")
+            else:
+                logger.info(f"Fallback model {next_fallback_id} is unavailable (usage > 85% or cooldown).")
+        
+        logger.warning(f"All subsequent fallback models for {current_model_id_for_fallback} in GEMINI_FALLBACK_CHAIN are currently unavailable or end of chain reached.")
         return None
         
     def reset_to_original_model(self) -> bool:
@@ -664,13 +681,15 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             Exception: If the API call ultimately fails after all retries and fallback attempts,
                        or if a non-retryable, non-rate-limit error occurs.
         """
-        if self.current_fallback_level > 0 and self.api_call_count % 5 == 0: 
-            self.reset_to_original_model()
+        # Attempt to reset to original model only if currently on a fallback and fallback is enabled
+        if self.enable_fallback and self.model_id != self.original_model_id and self.api_call_count > 0: 
+            self.reset_to_original_model() # This will change self.model_id if successful
             
         estimated_input_tokens = min(sum(len(m.get("content", "")) for m in messages) // 4, self.input_token_limit)
         
-        # self.model_id reflects the current primary model for this instance (original or a stabilized fallback)
+        # self.model_id reflects the current model for this attempt (original or a stabilized fallback)
         # _apply_rate_limit will check against this model_id's limits in the shared_tracker.
+        # It's important that self.model_id is up-to-date before this call if reset_to_original_model changed it.
         waited, wait_time = self._apply_rate_limit(self.model_id, estimated_input_tokens)
         if waited:
             logger.info(f"Waited {wait_time:.2f}s before API call for {self.model_id} due to rate limit ({self.last_wait_type})")
@@ -680,71 +699,119 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         current_call_kwargs = kwargs.copy()
         if "timeout" not in current_call_kwargs: current_call_kwargs["timeout"] = 120
         
-        active_model_for_this_attempt = self.model_id # Start with the instance's current primary model
+        # active_model_for_this_attempt will be self.model_id, which can change due to fallback.
+        # No need for a separate variable if self.model_id is consistently updated.
 
         while True:
             try:
-                # current_call_kwargs['model'] = active_model_for_this_attempt # Ensure litellm uses this model
+                # The model used by super().__call__ is self.model_id from the smolagents.LiteLLMModel parent.
                 response = super().__call__(messages=messages, **current_call_kwargs)
                 
                 token_counts = self.get_token_counts()
                 input_tokens, output_tokens = token_counts.get('input_token_count', estimated_input_tokens), token_counts.get('output_token_count', 0)
-                self.shared_tracker.update_tracking(active_model_for_this_attempt, input_tokens, output_tokens)
+                self.shared_tracker.update_tracking(self.model_id, input_tokens, output_tokens) # Track for the successful model
                 
-                if active_model_for_this_attempt != self.original_model_id and active_model_for_this_attempt == self.model_id:
-                    self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, active_model_for_this_attempt, "success_stabilized"))
+                if self.model_id != self.original_model_id: # Log if success was on a fallback
+                    self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, self.model_id, "success_on_fallback"))
                 
                 self.api_call_count += 1
                 if self.api_call_count % 3 == 0: self.print_rate_limit_status(use_logger=True)
-                logger.info(f"API call successful with model {active_model_for_this_attempt}. Tokens: {input_tokens+output_tokens}")
+                logger.info(f"API call successful with model {self.model_id}. Tokens: {input_tokens+output_tokens}")
                 return response
                 
             except Exception as e:
                 self.last_error = e
-                logger.debug(f"API call error with model {active_model_for_this_attempt}: {type(e).__name__}: {str(e)[:500]}")
+                logger.debug(f"API call error with model {self.model_id}: {type(e).__name__}: {str(e)[:500]}")
                 is_rl_error = self._is_rate_limit_error(e)
+
                 if is_rl_error:
-                    self.shared_tracker.record_error(active_model_for_this_attempt, is_rate_limit=True)
+                    self.shared_tracker.record_error(self.model_id, is_rate_limit=True) # Record error for the model that failed
+                    
+                    attempted_fallback_and_switched = False
                     if self.enable_fallback:
-                        new_fallback_candidate = self._get_fallback_model(active_model_for_this_attempt)
-                        if new_fallback_candidate and new_fallback_candidate != active_model_for_this_attempt:
-                            logger.warning(f"Rate limit for {active_model_for_this_attempt}. Switching to fallback: {new_fallback_candidate}")
-                            self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, active_model_for_this_attempt, f"failed_switching_to_{new_fallback_candidate}"))
-                            self.model_id = new_fallback_candidate # Update instance's primary model ID
-                            active_model_for_this_attempt = new_fallback_candidate # Use new fallback for next attempt in loop
+                        new_fallback_candidate = self._get_fallback_model(self.model_id) # Pass current failing model
+                        
+                        if new_fallback_candidate and new_fallback_candidate != self.model_id:
+                            logger.warning(f"Rate limit for {self.model_id}. Attempting to switch to fallback: {new_fallback_candidate}")
+                            self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, self.model_id, f"attempt_switch_to_{new_fallback_candidate}"))
+                            
+                            previous_model_id_before_switch = self.model_id # For potential revert
+                            
                             try:
+                                # Load info for the new fallback candidate
                                 with open(self.model_info_path_for_fallback, 'r') as f_info: fb_model_info_json = json.load(f_info)
-                                fb_model_key = new_fallback_candidate.split('/')[-1]
+                                fb_model_key_parts = new_fallback_candidate.split('/')
+                                fb_model_key = fb_model_key_parts[-1] if len(fb_model_key_parts) > 0 else new_fallback_candidate
+                                
                                 fb_model_data = fb_model_info_json.get(fb_model_key, fb_model_info_json.get("default",{}))
                                 if not isinstance(fb_model_data, dict): fb_model_data = {}
-                                fb_rpm, fb_tpm, fb_rpd = fb_model_data.get("rpm_limit",15), fb_model_data.get("tpm_limit",1000000), fb_model_data.get("rpd_limit",1500)
-                                if 'gemini' in new_fallback_candidate.lower():
+                                
+                                fb_rpm = fb_model_data.get("rpm_limit", self.rpm_limit) # Default to current if not found
+                                fb_tpm = fb_model_data.get("tpm_limit", self.tpm_limit)
+                                fb_rpd = fb_model_data.get("rpd_limit", self.rpd_limit)
+                                new_input_token_limit = fb_model_data.get("input_token_limit", self.input_token_limit)
+
+                                if 'gemini' in new_fallback_candidate.lower(): # Apply specific Gemini RPMs
                                     if fb_model_key == "gemini-2.0-flash" or fb_model_key == "gemini-1.5-flash": fb_rpm=min(fb_rpm,15)
                                     elif fb_model_key == "gemini-2.0-flash-lite": fb_rpm=min(fb_rpm,30)
                                     elif fb_model_key == "gemini-2.5-pro-preview-03-25": fb_rpm=min(fb_rpm,15)
+                                
+                                # Update current instance's limits and model_id
+                                self.rpm_limit, self.tpm_limit, self.rpd_limit = fb_rpm, fb_tpm, fb_rpd
+                                self.input_token_limit = new_input_token_limit
+                                self.model_id = new_fallback_candidate # CRITICAL: Update self.model_id for next attempt
+                                
                                 self.shared_tracker.initialize_model(new_fallback_candidate, fb_rpm, fb_tpm, fb_rpd)
-                            except Exception as init_e: logger.error(f"Failed to re-initialize tracker for new fallback {new_fallback_candidate}: {init_e}")
-                            self.current_fallback_level += 1
-                            retries, backoff_time = 0, self.base_wait_time
-                            waited_fb, wait_time_fb = self._apply_rate_limit(active_model_for_this_attempt, estimated_input_tokens)
-                            if waited_fb: logger.info(f"Waited {wait_time_fb:.2f}s for new fallback {active_model_for_this_attempt} due to its rate limits ({self.last_wait_type})")
-                            continue 
+                                logger.info(f"Successfully switched to model {new_fallback_candidate}. RPM: {fb_rpm}, TPM: {fb_tpm}, RPD: {fb_rpd}, InputTokenLimit: {new_input_token_limit}")
+                                
+                                self.current_fallback_level += 1 
+                                retries = 0 # Reset retries for the new model
+                                backoff_time = self.base_wait_time
+                                attempted_fallback_and_switched = True
+                                
+                            except Exception as init_e: 
+                                logger.error(f"Failed to initialize or update limits for fallback {new_fallback_candidate}: {init_e}")
+                                self.model_id = previous_model_id_before_switch # Revert on error
+                                # Restore previous limits (best effort, might need more sophisticated state management if this path is common)
+                                # For now, just reverting model_id means retry logic will use old model's (possibly outdated) limits.
+                                # This is complex; the original limits of previous_model_id_before_switch should be restored if possible.
+                                # Let's assume for now that self.rpm_limit etc. are not critical if we revert self.model_id
+                                # as the tracker has the correct limits for previous_model_id_before_switch.
+                                logger.warning(f"Reverted active model to {self.model_id} due to fallback initialization error.")
+                                # Fallback failed, do not set attempted_fallback_and_switched = True
+                        else: # No new fallback candidate found or it's the same model
+                            logger.info(f"No new fallback model available or candidate is same as current ({self.model_id}). Proceeding with retries for current model.")
+
+                    if attempted_fallback_and_switched:
+                        # Apply rate limit for the NEW model before continuing the loop
+                        waited_fb, wait_time_fb = self._apply_rate_limit(self.model_id, estimated_input_tokens)
+                        if waited_fb: logger.info(f"Waited {wait_time_fb:.2f}s for new fallback {self.model_id} due to its rate limits ({self.last_wait_type})")
+                        continue # Continue to the next iteration of the while loop with the new (fallback) model
+                    
+                    # If not switched to fallback (or attempt failed), proceed with retry logic for the current self.model_id
                     retries += 1
                     if retries > self.max_retries:
-                        logger.error(f"Max retries ({self.max_retries}) exceeded for {active_model_for_this_attempt} after rate limit error: {str(e)[:500]}")
-                        raise
+                        logger.error(f"Max retries ({self.max_retries}) exceeded for {self.model_id} after rate limit error: {str(e)[:500]}")
+                        raise # Re-raise the last rate limit error
+                    
                     jitter = self.jitter_factor * backoff_time * (2 * random.random() - 1)
                     current_wait_time = backoff_time + jitter
-                    if 'gemini' in active_model_for_this_attempt.lower(): current_wait_time = max(current_wait_time, 5.0 * (1.5 ** (retries -1)))
-                    logger.warning(f"Rate limit error for {active_model_for_this_attempt}. Retry {retries}/{self.max_retries} after {current_wait_time:.2f}s. Error: {str(e)[:200]}")
+                    # Specific handling for Gemini might still be useful, or make it more general
+                    if 'gemini' in self.model_id.lower(): current_wait_time = max(current_wait_time, DEFAULT_MIN_DELAY_BETWEEN_CALLS * (1.5 ** (retries -1)))
+
+                    logger.warning(f"Rate limit error for {self.model_id}. Retry {retries}/{self.max_retries} after {current_wait_time:.2f}s. Error: {str(e)[:200]}")
                     logger.debug(f"Full error traceback: {traceback.format_exc()}")
                     time.sleep(current_wait_time)
                     backoff_time *= 1.5 
-                    waited_retry, wait_time_retry = self._apply_rate_limit(active_model_for_this_attempt, estimated_input_tokens)
-                    if waited_retry: logger.info(f"Additional wait of {wait_time_retry:.2f}s for {active_model_for_this_attempt} after backoff ({self.last_wait_type})")
-                else: 
-                    logger.error(f"API call failed with non-rate-limit error for {active_model_for_this_attempt}: {str(e)[:500]}")
-                    raise
+                    
+                    # Apply rate limit for the CURRENT model again before retrying
+                    waited_retry, wait_time_retry = self._apply_rate_limit(self.model_id, estimated_input_tokens)
+                    if waited_retry: logger.info(f"Additional wait of {wait_time_retry:.2f}s for {self.model_id} after backoff ({self.last_wait_type})")
+                    # Loop continues, will retry self.model_id
+                
+                else: # Not a rate-limit error
+                    logger.error(f"API call failed with non-rate-limit error for {self.model_id}: {str(e)[:500]} Traceback: {traceback.format_exc()}")
+                    raise # Re-raise the original non-rate-limit error
     
     def _apply_rate_limit(self, model_id_to_check: str, estimated_tokens: int = 0) -> Tuple[bool, float]:
         """Checks rate limits via `SharedRateLimitTracker` and sleeps if necessary.
