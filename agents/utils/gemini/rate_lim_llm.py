@@ -32,8 +32,8 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
-# Set conservative buffer factor - operate at 90% of actual limits
-SAFETY_BUFFER_FACTOR = 1.5 #0.9
+# Set conservative buffer factor - operate at 93% of actual limits
+SAFETY_BUFFER_FACTOR = 0.93
 # Default minimum delay between API calls if model-specific delay can't be calculated
 DEFAULT_MIN_DELAY_BETWEEN_CALLS = 4.0  # seconds
 # Default cooldown period after hitting limits
@@ -120,7 +120,7 @@ class SharedRateLimitTracker:
         with self._lock:
             safe_rpm = max(1, int(rpm_limit * SAFETY_BUFFER_FACTOR))
             safe_tpm = max(1, int(tpm_limit * SAFETY_BUFFER_FACTOR))
-            safe_rpd = max(1, int(rpd_limit * SAFETY_BUFFER_FACTOR))
+            safe_rpd = max(1, int(rpd_limit)) # No buffer for RPD
             
             model_min_delay = (60.0 / rpm_limit) if rpm_limit > 0 else DEFAULT_MIN_DELAY_BETWEEN_CALLS
             
@@ -880,9 +880,6 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         if cooldown_info.get('active', False):
             status_lines.append(f"  ⚠️ Cooldown period active for {self.model_id}: {cooldown_info.get('remaining', 0):.1f}s remaining")
             status_lines.append(f"  Consecutive errors for {self.model_id}: {cooldown_info.get('consecutive_errors',0)}")
-        if status['rpm']['percentage'] > 85: status_lines.append(f"  ⚠️ RPM usage for {self.model_id} is high!")
-        if status['tpm']['percentage'] > 85: status_lines.append(f"  ⚠️ TPM usage for {self.model_id} is high!")
-        if status['rpd']['percentage'] > 85: status_lines.append(f"  ⚠️ RPD usage for {self.model_id} is high!")
         output_func = logger.info if use_logger else print
         output_func("\n".join(status_lines))
             
