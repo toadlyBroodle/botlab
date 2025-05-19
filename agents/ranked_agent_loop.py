@@ -21,7 +21,6 @@ from .writer_critic.agents import WriterAgent, CriticAgent
 from .editor.agents import EditorAgent, FactCheckerAgent
 from .qaqc.agents import QAQCAgent
 from .user_feedback.agents import UserFeedbackAgent
-from .user_feedback.tools import FB_AGENT_USER
 from .ranker.agents import RankingAgent
 from .ranker.tools import llm_judge
 
@@ -292,8 +291,10 @@ class RankedAgentLoop:
             
             "user_email": os.getenv("REMOTE_USER_EMAIL", "example@example.com"),  # External user email for feedback
             "report_frequency": 1,
-            "user_feedback_description": f"User feedback agent that uses the {FB_AGENT_USER} system user for email communication",
-            "user_feedback_prompt": f"You are a user feedback agent that communicates with users via email. You use the {FB_AGENT_USER} system user to send and receive emails. You send reports to REMOTE_USER_EMAIL and check for incoming emails from the same address. Your goal is to keep users informed about the progress of agent loops and to process their feedback and commands."
+            # Description for UserFeedbackAgent's internal report-generating LLM
+            "user_feedback_agent_description": "Generates concise progress reports based on provided state.",
+            # Prompt for UserFeedbackAgent's internal report-generating LLM
+            "user_feedback_agent_prompt": "You are an assistant that writes brief, informative progress reports based on the current state of an automated loop of agents working on a task. Focus on key achievements, changes, problems, errors, etc. that occurred during this iteration. Do not include anything else but the progress report."
         }
     
     def _initialize_agents(self):
@@ -365,19 +366,19 @@ class RankedAgentLoop:
                         
                         agent_instance = UserFeedbackAgent(
                             model=self.main_llm_model,
-                            max_steps=max_steps,
-                            user_email=remote_email,  # This is the external email
+                            max_steps=max_steps, # Max steps for the internal report_generator_agent
+                            user_email=remote_email,
                             report_frequency=report_frequency,
-                            agent_description=self.agent_configs.get('user_feedback_description'),
-                            agent_prompt=self.agent_configs.get('user_feedback_prompt')
+                            agent_description=self.agent_configs.get('user_feedback_agent_description'), # For the report_generator_agent
+                            agent_prompt=self.agent_configs.get('user_feedback_agent_prompt') # For the report_generator_agent
                         )
                         
                         # Log the feedback agent configuration
                         print(f"Initialized UserFeedbackAgent:")
-                        print(f"- External email (sending to): {agent_instance.remote_email or 'Not configured'}")
-                        print(f"- Local mailbox: {agent_instance.local_email or 'Not configured'}")
-                        print(f"- Feedback agent system user: {FB_AGENT_USER}")
-                        print(f"- Report frequency: Every {report_frequency} iterations")
+                        print(f"- External email (sending to/receiving from): {agent_instance.remote_email or 'Not configured'}")
+                        print(f"- Local email (sending from): {agent_instance.local_email or 'Not configured'}")
+                        # FB_AGENT_USER is an internal detail of the tools used by UserFeedbackAgent
+                        print(f"- Report frequency (initial): Every {report_frequency} iterations (can be changed by email command)")
                         
                         self.agents[agent_type] = agent_instance
                     
@@ -615,33 +616,50 @@ class RankedAgentLoop:
                         elif agent_type.lower() == 'editor':
                             agent_result_content = agent_instance.edit_content(formatted_prompt)
                         elif agent_type.lower() == 'user_feedback':
-                            # UserFeedbackAgent might operate differently, e.g., process emails,
-                            # and might not produce a new version of primary_logical_artifact_id.
-                            # For now, let it run and its result might be a status or report.
-                            # It could also provide feedback that influences the next iteration's query/goal for an agent.
-                            # Create a state dictionary to pass to the UserFeedbackAgent
-                            feedback_state = {
-                                "iteration": iteration_num + 1,
-                                "current_agent": agent_type, # Actual agent, not index
+                            # UserFeedbackAgent now handles its email cycle internally.
+                            # It takes the loop's current state for context to generate reports
+                            # and can update the loop's state (e.g., 'paused').
+                            feedback_state_input = {
+                                "iteration": iteration_num + 1, 
+                                "current_agent_loop_agent": agent_type, 
                                 "query": self.state["query"],
-                                "results": self.state["results"], # intra-cycle results
+                                "loop_results": {k: v for k, v in self.state["results"].items() if f"_iter{iteration_num}" in k or not "_iter" in k}, # Pass current iter results or general results
                                 "agent_sequence": self.agent_sequence,
-                                "feedback_agent_user": FB_AGENT_USER 
+                                "paused": self.state.get("paused", False)
                             }
-                            # Process feedback and update state
-                            updated_state_from_feedback = agent_instance.process_feedback(feedback_state) # Assuming this method exists
                             
-                            if agent_instance.should_report(): # Assuming this method exists
-                                if agent_instance.remote_email:
-                                    agent_result_content = agent_instance.generate_report(feedback_state) # Assuming this method exists
-                                    print(f"User feedback report: {agent_result_content[:100]}...")
-                                else:
-                                    agent_result_content = "UserFeedback: Cannot send report, no remote_email."
-                            else:
-                                agent_result_content = f"UserFeedback: Checked for feedback (reporting every {agent_instance.report_frequency} iterations)"
-                            # User feedback doesn't typically update the primary artifact directly in this model
-                            # So, we don't save its output as a new version of primary_logical_artifact_id.
-                            # We'll store its output in self.state['results'] for logging.
+                            # process_feedback now returns the updated state, including any parsed commands
+                            # and potentially a 'paused' status.
+                            updated_feedback_state = agent_instance.process_feedback(feedback_state_input)
+                            
+                            # Update the main loop's state based on feedback (e.g., pause)
+                            if "paused" in updated_feedback_state:
+                                self.state["paused"] = updated_feedback_state["paused"]
+                                print(f"Loop pause state updated by UserFeedbackAgent to: {self.state['paused']}")
+
+                            # Log processed commands
+                            if "user_commands" in updated_feedback_state and updated_feedback_state["user_commands"]:
+                                if "user_feedback_commands_log" not in self.state:
+                                    self.state["user_feedback_commands_log"] = []
+                                self.state["user_feedback_commands_log"].append({
+                                    "iteration": iteration_num + 1,
+                                    "time": time.time(),
+                                    "commands": updated_feedback_state["user_commands"]
+                                })
+                                print(f"User commands processed by UserFeedbackAgent: {updated_feedback_state['user_commands']}")
+
+                            # The "result" of the UserFeedbackAgent's turn is a summary of its actions.
+                            agent_result_content = f"UserFeedbackAgent cycle {iteration_num + 1}: Checked mail. "
+                            if agent_instance.should_report() and not self.state.get("paused", False) and agent_instance.remote_email:
+                                agent_result_content += "Attempted to send report. "
+                            if updated_feedback_state.get("user_commands"):
+                                agent_result_content += f"Processed commands: {updated_feedback_state['user_commands']}. "
+                            if self.state.get("paused", False):
+                                agent_result_content += "Loop is PAUSED. "
+                            
+                            print(agent_result_content) # Print the summary
+                            # The UserFeedbackAgent does not produce a new version of the primary_logical_artifact_id.
+                            # Its output (summary string) will be stored in self.state["results"] by the generic logic below.
                         else:
                             # Generic call for other agent types
                             agent_result_content = agent_instance(formatted_prompt) 

@@ -188,7 +188,7 @@ class AgentLoop:
             "user_email": os.getenv("REMOTE_USER_EMAIL", "example@example.com"),  # External user email for feedback
             "report_frequency": 1,
             "user_feedback_agent_description": "Generates concise progress reports based on provided state.",
-            "user_feedback_agent_prompt": "You are an assistant that writes brief, informative progress reports based on the current state of an automated process. Focus on key achievements, changes, and next steps. Do not include salutations or closings."
+            "user_feedback_agent_prompt": "You are an assistant that writes brief, informative progress reports based on the current state of an automated loop of agents working on a task. Focus on key achievements, changes, problems, errors, etc. that occurred during this iteration. Do not include anything else but the progress report."
         }
     
     def _initialize_agents(self):

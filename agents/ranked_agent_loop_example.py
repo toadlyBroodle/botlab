@@ -38,23 +38,33 @@ def main():
     print(f"Run Data Base Dir: {args.run_data_base_dir}")
 
     if args.user_email:
-        print(f"User Email (for UserFeedbackAgent if used): {args.user_email}")
+        # This will be picked up by UserFeedbackAgent if it's in the sequence
+        # and no specific 'user_email' is passed via agent_configs to RankedAgentLoop
+        os.environ["REMOTE_USER_EMAIL"] = args.user_email
+        print(f"User Email (set as REMOTE_USER_EMAIL env var): {args.user_email}")
+    print(f"Report Frequency (initial for UserFeedbackAgent): {args.report_frequency}")
     print()
     
     agent_sequence = [agent_type.strip() for agent_type in args.agent_sequence.split(",")]
     
-    if args.user_email:
-        os.environ["REMOTE_USER_EMAIL"] = args.user_email # UserFeedbackAgent uses REMOTE_USER_EMAIL
+    # Agent configs (e.g., for UserFeedbackAgent if used)
+    agent_configs = {}
+    if "user_feedback" in agent_sequence:
+        # RankedAgentLoop's _get_default_agent_configs will provide defaults
+        # for user_feedback_agent_description and user_feedback_agent_prompt.
+        # We only need to override specific things like report_frequency or user_email if desired.
+        agent_configs["report_frequency"] = args.report_frequency
+        if args.user_email: # If CLI arg provided, ensure it's used
+            agent_configs["user_email"] = args.user_email
 
     # Initialize the ranked agent loop parameters
     ranked_agent_loop_params = {
         "agent_sequence": agent_sequence,
         "max_iterations": args.max_iterations,
-        "max_retries": args.max_retries, # Added from original logic
-        "model_id": args.model_id, # For main agents
+        "max_retries": args.max_retries, 
+        "model_id": args.model_id, 
         "use_custom_prompts": args.use_custom_prompts,
         "enable_telemetry": args.enable_telemetry,
-        # Ranking params
         "ranking_llm_model_id": args.ranking_llm_model_id,
         "max_ranklist_size": args.max_ranklist_size,
         "poll_interval": args.poll_interval,
@@ -62,20 +72,12 @@ def main():
         "run_data_base_dir": args.run_data_base_dir,
         "run_id": args.run_id,
         "load_run_state": args.load_run_state,
+        "agent_configs": agent_configs if agent_configs else None # Pass if not empty
     }
     
     if args.max_steps_per_agent is not None:
         ranked_agent_loop_params["max_steps_per_agent"] = args.max_steps_per_agent
     
-    # Agent configs (e.g., for UserFeedbackAgent if used)
-    agent_configs = {}
-    if "user_feedback" in agent_sequence:
-        agent_configs["report_frequency"] = args.report_frequency 
-        # user_email is handled by REMOTE_USER_EMAIL env var in RankedAgentLoop
-    
-    if agent_configs: # Only add if not empty
-        ranked_agent_loop_params["agent_configs"] = agent_configs
-
     # Initialize the RankedAgentLoop
     agent_loop = RankedAgentLoop(**ranked_agent_loop_params)
     
@@ -123,6 +125,15 @@ def main():
                     print(f"Error reading or displaying final ranklist: {e}")
             else:
                 print(f"Final ranklist file not found: {ranklist_path}")
+
+        # Display UserFeedbackAgent command log if it exists
+        if "user_feedback_commands_log" in final_state and final_state["user_feedback_commands_log"]:
+            print("\n=== User Feedback Command Log ===")
+            for log_entry in final_state["user_feedback_commands_log"]:
+                print(f"- Iteration {log_entry['iteration']}: Commands {log_entry['commands']}")
+        elif "user_feedback" in agent_sequence: # If UFA was in sequence but no commands logged
+            print("\nNo commands were logged from UserFeedbackAgent during this run.")
+
     else:
         print("\nLoop did not return a final state (e.g. due to early exit or critical error during init).")
 
@@ -131,16 +142,16 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Example of using the RankedAgentLoop class with artifact ranking.")
     
     parser.add_argument("--query", type=str, default="Write a brief report on recent (2025) advances in AI agents", help="The query or goal for the primary artifact")
-    parser.add_argument("--agent-sequence", type=str, default="writer", help="Comma-separated list of agent types to call in sequence")
+    parser.add_argument("--agent-sequence", type=str, default="writer,user_feedback", help="Comma-separated list of agent types to call in sequence") # Added user_feedback for testing
     parser.add_argument("--max-iterations", type=int, default=4, help="Maximum number of iterations through the entire sequence")
-    parser.add_argument("--max-steps-per-agent", type=str, default="2,2", help="Maximum steps for each agent. Can be either: An integer (same value for all agents) or a comma-separated string (e.g., '5,4,9,3,1' for different values per agent)")
+    parser.add_argument("--max-steps-per-agent", type=str, default="2,1", help="Maximum steps for each agent. Example: '2,1' for [writer,user_feedback]")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID for the main agents (researcher, writer, editor, etc.)")
     parser.add_argument("--use-custom-prompts", action="store_true", help="Whether to use custom agent descriptions and prompts loaded by AgentLoop")
     parser.add_argument("--enable-telemetry", action="store_true", help="Whether to enable OpenTelemetry tracing")
     
     # Args for UserFeedbackAgent (if included in sequence)
     parser.add_argument("--user-email", type=str, default=os.getenv("REMOTE_USER_EMAIL"), help="Email address for user feedback (UserFeedbackAgent). Uses REMOTE_USER_EMAIL env var if not set.")
-    parser.add_argument("--report-frequency", type=int, default=1, help="How often UserFeedbackAgent sends reports (1 = every iteration it runs)")
+    parser.add_argument("--report-frequency", type=int, default=1, help="Initial report frequency for UserFeedbackAgent (1 = every iteration it runs)")
 
     # New arguments for ranking and run management
     parser.add_argument("--ranking-llm-model-id", type=str, default="gemini/gemini-1.5-flash", help="Model ID for the LLM judge in the ranking agent")
@@ -150,12 +161,11 @@ def parse_args():
     parser.add_argument("--run-data-base-dir", type=str, default="run_data", help="Base directory where all run-specific subdirectories will be created")
     parser.add_argument("--run-id", type=str, default=None, help="Specific run ID to use. If None, a new one is generated. Useful for resuming or analyzing a specific run.")
     parser.add_argument("--load-run-state", action="store_true", help="If --run-id is provided, attempt to load its state and resume the loop.")
-    parser.add_argument("--max-retries", type=int, default=3, help="Max retries for LLM calls") # Added to match __init__
+    parser.add_argument("--max-retries", type=int, default=3, help="Max retries for LLM calls")
 
     return parser.parse_args()
 
 if __name__ == "__main__":
-    # It's good practice to load .env here if GEMINI_API_KEY might be in it
     from dotenv import load_dotenv
     load_dotenv()
     main() 
