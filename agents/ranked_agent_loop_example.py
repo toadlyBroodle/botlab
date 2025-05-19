@@ -154,7 +154,7 @@ def parse_args():
     parser.add_argument("--report-frequency", type=int, default=1, help="Initial report frequency for UserFeedbackAgent (1 = every iteration it runs)")
 
     # New arguments for ranking and run management
-    parser.add_argument("--ranking-llm-model-id", type=str, default="gemini/gemini-1.5-flash", help="Model ID for the LLM judge in the ranking agent")
+    parser.add_argument("--ranking-llm-model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID for the LLM judge in the ranking agent")
     parser.add_argument("--max-ranklist-size", type=int, default=5, help="Maximum number of artifact IDs to retain in each ranked list")
     parser.add_argument("--poll-interval", type=float, default=10, help="Ranking agent poll interval for new metadata (seconds)")
     parser.add_argument("--primary-logical-artifact-id", type=str, default="collaboration_protocol_draft", help="Identifier for the main conceptual artifact being evolved by the loop")

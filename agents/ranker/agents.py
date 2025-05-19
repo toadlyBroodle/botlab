@@ -24,7 +24,7 @@ class RankingAgent:
         agent_description: Optional[str] = None,
         system_prompt: Optional[str] = None,
         max_steps: int = 3,
-        model_id: str = "gemini/gemini-1.5-flash",
+        model_id: str = "gemini/gemini-2.0-flash",
         model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
         max_retries: int = 3,
@@ -617,7 +617,7 @@ def main():
     parser.add_argument('file_a', type=str, help='Path to the first file')
     parser.add_argument('file_b', type=str, help='Path to the second file')
     parser.add_argument('--goal', type=str, default=None, help='Goal for comparison')
-    parser.add_argument('--model', type=str, default="gemini/gemini-1.5-flash", help='Model ID to use')
+    parser.add_argument('--model', type=str, default="gemini/gemini-2.0-flash", help='Model ID to use')
     parser.add_argument('--model-info-path', type=str, default="agents/utils/gemini/gem_llm_info.json", help='Path to model info JSON')
     parser.add_argument('--output', type=str, default=None, help='Optional file to write full output to')
     
