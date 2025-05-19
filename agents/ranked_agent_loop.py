@@ -71,8 +71,26 @@ class RankedAgentLoop:
             run_id: Specific ID for the run. If None, a new one is generated.
             load_run_state: If True and run_id is provided, attempts to load state for that run.
         """
+        # Process agent_sequence first to remove 'ranker'
+        # as it's handled separately and not part of the sequential execution loop.
+        actual_agent_sequence_to_run = []
+        ranker_was_in_sequence = False
+        for agent_name in agent_sequence: # Iterate over the user-provided sequence
+            if agent_name.lower() == "ranker":
+                ranker_was_in_sequence = True
+            else:
+                actual_agent_sequence_to_run.append(agent_name)
+
+        if ranker_was_in_sequence:
+            print(
+                "Warning: 'ranker' was found in the agent_sequence and has been removed. "
+                "The RankingAgent is managed separately and is not part of the sequential agent execution loop. "
+                "If you provided specific max_steps_per_agent for 'ranker', those steps will be ignored."
+            )
+        
+        self.agent_sequence = actual_agent_sequence_to_run # This is now the cleaned sequence for the loop
+        
         # Store basic configuration first
-        self.agent_sequence = agent_sequence
         self.max_iterations = max_iterations
         self.max_retries = max_retries
         self.model_id = model_id
@@ -111,8 +129,8 @@ class RankedAgentLoop:
             steps_list = [int(steps.strip()) for steps in max_steps_per_agent.split(",")]
             self.max_steps_per_agent_dict = {}
             
-            # Map steps to agents
-            for i, agent_type in enumerate(agent_sequence):
+            # Map steps to agents in the cleaned self.agent_sequence
+            for i, agent_type in enumerate(self.agent_sequence):
                 if i < len(steps_list):
                     self.max_steps_per_agent_dict[agent_type] = steps_list[i]
                 else:
@@ -124,7 +142,7 @@ class RankedAgentLoop:
         else:
             # Use the same value for all agents
             self.max_steps_per_agent = int(max_steps_per_agent)
-            self.max_steps_per_agent_dict = {agent_type: self.max_steps_per_agent for agent_type in agent_sequence}
+            self.max_steps_per_agent_dict = {agent_type: self.max_steps_per_agent for agent_type in self.agent_sequence}
         
         # Initialize state
         self.state = {
