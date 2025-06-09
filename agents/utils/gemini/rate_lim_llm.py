@@ -41,8 +41,7 @@ DEFAULT_COOLDOWN_PERIOD = 60.0  # seconds
 
 # Define fallback model chains for different model families
 GEMINI_FALLBACK_CHAIN: List[str] = [
-    #"gemini/gemini-2.5-pro-preview",  # Highest preference, currently unavailable in free tier
-    #"gemini/gemini-2.5-flash-preview", # Currently unavailable in free tier
+    "gemini/gemini-2.0-flash-thinking-exp",
     "gemini/gemini-2.0-flash",
     "gemini/gemini-2.0-flash-lite",
     "gemini/gemini-1.5-flash"
@@ -401,16 +400,18 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
     - Enhanced error detection for various rate-limit related exceptions.
     """
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    gem_llm_info_path = os.path.join(current_dir, "gem_llm_info.json")
+    gem_rate_lims_path = os.path.join(current_dir, "gem_rate_lims.json")
 
     def __init__(
         self,
         model_id: str,
-        model_info_path: str = gem_llm_info_path,
+        model_info_path: str = gem_rate_lims_path,
         base_wait_time: float = 2.0,
         max_retries: int = 5,
         jitter_factor: float = 0.2,
         enable_fallback: bool = False,
+        enable_fallback_on_long_wait: bool = False,
+        long_wait_fallback_threshold: float = 60.0,
         **kwargs
     ):
         """Initializes the rate-limited LiteLLM model wrapper.
@@ -424,17 +425,25 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             model_id (str): The primary model identifier for LiteLLM (e.g., "gemini/gemini-1.5-flash").
                             This will be the `original_model_id`.
             model_info_path (str): Path to the JSON file containing model rate limit configurations.
-                                   Defaults to "gem_llm_info.json" in the same directory.
+                                   Defaults to "gem_rate_lims.json" in the same directory.
             base_wait_time (float): Base wait time in seconds for exponential backoff on retries.
             max_retries (int): Maximum number of retries for rate limit errors or designated retryable errors.
             jitter_factor (float): Factor for adding random jitter to wait times (0 to 1 range typical).
                                    Jitter is calculated as `jitter_factor * backoff_time * random_value_in_[-1,1]`.
             enable_fallback (bool): If True, enables automatic fallback to lower-tier models
                                     (defined in `GEMINI_FALLBACK_CHAIN`) upon persistent rate limits.
+            enable_fallback_on_long_wait (bool): If True, enables proactive fallback if initial wait time
+                                                 exceeds `long_wait_fallback_threshold`.
+            long_wait_fallback_threshold (float): The wait time in seconds that triggers proactive fallback
+                                                  if `enable_fallback_on_long_wait` is True.
             **kwargs: Additional arguments passed to the underlying `LiteLLMModel` constructor.
         """
         litellm.utils.logging_enabled = False
         self.original_model_id = model_id
+        
+        self.enable_fallback_on_long_wait = enable_fallback_on_long_wait
+        self.long_wait_fallback_threshold = long_wait_fallback_threshold
+        
         super().__init__(model_id=model_id, **kwargs)
         self.model_id = model_id 
         self.base_wait_time = base_wait_time
@@ -461,11 +470,6 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             self.tpm_limit = model_data.get("tpm_limit", 1000000)
             self.rpd_limit = model_data.get("rpd_limit", 1500)
             self.input_token_limit = model_data.get("input_token_limit", 32000)
-            if 'gemini' in model_id.lower():
-                logger.info(f"Applying Gemini-specific RPM considerations for {model_id}")
-                if model_key == "gemini-2.0-flash" or model_key == "gemini-1.5-flash": self.rpm_limit = min(self.rpm_limit, 15) 
-                elif model_key == "gemini-2.0-flash-lite": self.rpm_limit = min(self.rpm_limit, 30) 
-                elif model_key == "gemini-2.5-pro-preview-03-25": self.rpm_limit = min(self.rpm_limit, 15)
         except Exception as e:
             logger.error(f"Error loading model info from {model_info_path}: {e}. Using fallback default limits.")
             self.rpm_limit, self.tpm_limit, self.rpd_limit, self.input_token_limit = 15, 1000000, 1500, 32000
@@ -494,6 +498,54 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         self.last_error = None
         self.last_wait_type = "None" # For logging which limit caused wait in _apply_rate_limit
         
+    def _perform_model_switch(self, new_fallback_candidate: str, reason: str) -> bool:
+        """Switches the active model to the new_fallback_candidate and updates associated limits.
+
+        Args:
+            new_fallback_candidate (str): The model ID of the new fallback model.
+            reason (str): A string describing why the fallback is happening, for logging.
+
+        Returns:
+            bool: True if the switch was successful, False otherwise.
+        """
+        logger.warning(f"Attempting to switch from {self.model_id} to fallback {new_fallback_candidate} due to: {reason}")
+        self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, self.model_id, f"attempt_switch_to_{new_fallback_candidate}_reason_{reason}"))
+        
+        previous_model_id_before_switch = self.model_id
+        previous_rpm_limit, previous_tpm_limit, previous_rpd_limit, previous_input_token_limit = self.rpm_limit, self.tpm_limit, self.rpd_limit, self.input_token_limit
+        
+        try:
+            with open(self.model_info_path_for_fallback, 'r') as f_info: fb_model_info_json = json.load(f_info)
+            fb_model_key_parts = new_fallback_candidate.split('/')
+            fb_model_key = fb_model_key_parts[-1] if len(fb_model_key_parts) > 0 else new_fallback_candidate
+            
+            fb_model_data = fb_model_info_json.get(fb_model_key, fb_model_info_json.get("default",{}))
+            if not isinstance(fb_model_data, dict): fb_model_data = {}
+            
+            fb_rpm = fb_model_data.get("rpm_limit", self.rpm_limit) # Default to current if not found for safety
+            fb_tpm = fb_model_data.get("tpm_limit", self.tpm_limit)
+            fb_rpd = fb_model_data.get("rpd_limit", self.rpd_limit)
+            new_input_token_limit = fb_model_data.get("input_token_limit", self.input_token_limit)
+
+            # Update current instance's limits and model_id
+            self.rpm_limit, self.tpm_limit, self.rpd_limit = fb_rpm, fb_tpm, fb_rpd
+            self.input_token_limit = new_input_token_limit
+            self.model_id = new_fallback_candidate # CRITICAL: Update self.model_id
+            
+            self.shared_tracker.initialize_model(new_fallback_candidate, fb_rpm, fb_tpm, fb_rpd)
+            logger.info(f"Successfully switched to model {new_fallback_candidate}. RPM: {fb_rpm}, TPM: {fb_tpm}, RPD: {fb_rpd}, InputTokenLimit: {new_input_token_limit}")
+            
+            self.current_fallback_level += 1 
+            return True
+            
+        except Exception as init_e: 
+            logger.error(f"Failed to initialize or update limits for fallback {new_fallback_candidate} (reason: {reason}): {init_e}")
+            # Revert changes on error
+            self.model_id = previous_model_id_before_switch
+            self.rpm_limit, self.tpm_limit, self.rpd_limit, self.input_token_limit = previous_rpm_limit, previous_tpm_limit, previous_rpd_limit, previous_input_token_limit
+            logger.warning(f"Reverted active model to {self.model_id} due to fallback initialization error.")
+            return False
+
     def _get_fallback_model(self, current_model_id_for_fallback: str) -> Optional[str]:
         """Determines the next available fallback model from the global `GEMINI_FALLBACK_CHAIN` list.
 
@@ -565,10 +617,6 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                 original_rpm = model_data.get("rpm_limit", 15)
                 original_tpm = model_data.get("tpm_limit", 1000000)
                 original_rpd = model_data.get("rpd_limit", 1500)
-                if 'gemini' in self.original_model_id.lower(): # Re-apply gemini specific overrides for original
-                    if model_key == "gemini-2.0-flash" or model_key == "gemini-1.5-flash": original_rpm = min(original_rpm, 15)
-                    elif model_key == "gemini-2.0-flash-lite": original_rpm = min(original_rpm, 30)
-                    elif model_key == "gemini-2.5-pro-preview-03-25": original_rpm = min(original_rpm, 15)
                 self.shared_tracker.initialize_model(self.model_id, original_rpm, original_tpm, original_rpd)
             except Exception as e: logger.error(f"Error re-initializing original model limits for {self.original_model_id}: {e}")
             self.current_fallback_level = 0
@@ -699,6 +747,24 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         current_call_kwargs = kwargs.copy()
         if "timeout" not in current_call_kwargs: current_call_kwargs["timeout"] = 120
         
+        # Proactive fallback on long initial wait
+        if self.enable_fallback and self.enable_fallback_on_long_wait and waited and wait_time > self.long_wait_fallback_threshold:
+            fallback_reason = f"long_wait_trigger (type: {self.last_wait_type}, wait: {wait_time:.2f}s)"
+            logger.warning(f"Initial wait time {wait_time:.2f}s for {self.model_id} (type: {self.last_wait_type}) exceeds threshold {self.long_wait_fallback_threshold}s. Attempting proactive fallback.")
+            new_fallback_candidate = self._get_fallback_model(self.model_id)
+            if new_fallback_candidate and new_fallback_candidate != self.model_id:
+                if self._perform_model_switch(new_fallback_candidate, fallback_reason):
+                    # Successfully switched, re-check limits for the new model
+                    waited, wait_time = self._apply_rate_limit(self.model_id, estimated_input_tokens)
+                    if waited:
+                        logger.info(f"Waited {wait_time:.2f}s for new fallback model {self.model_id} after proactive switch ({self.last_wait_type})")
+                    # Retries and backoff_time for the main loop will be initialized shortly,
+                    # effectively resetting them for this new model context.
+                else:
+                    logger.info(f"Proactive fallback due to long wait for {self.model_id} failed (switch error). Continuing with current model.")
+            else:
+                logger.info(f"Proactive fallback due to long wait for {self.model_id} not attempted: no suitable/different fallback model found.")
+        
         # active_model_for_this_attempt will be self.model_id, which can change due to fallback.
         # No need for a separate variable if self.model_id is consistently updated.
 
@@ -733,52 +799,10 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                         
                         if new_fallback_candidate and new_fallback_candidate != self.model_id:
                             logger.warning(f"Rate limit for {self.model_id}. Attempting to switch to fallback: {new_fallback_candidate}")
-                            self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, self.model_id, f"attempt_switch_to_{new_fallback_candidate}"))
-                            
-                            previous_model_id_before_switch = self.model_id # For potential revert
-                            
-                            try:
-                                # Load info for the new fallback candidate
-                                with open(self.model_info_path_for_fallback, 'r') as f_info: fb_model_info_json = json.load(f_info)
-                                fb_model_key_parts = new_fallback_candidate.split('/')
-                                fb_model_key = fb_model_key_parts[-1] if len(fb_model_key_parts) > 0 else new_fallback_candidate
-                                
-                                fb_model_data = fb_model_info_json.get(fb_model_key, fb_model_info_json.get("default",{}))
-                                if not isinstance(fb_model_data, dict): fb_model_data = {}
-                                
-                                fb_rpm = fb_model_data.get("rpm_limit", self.rpm_limit) # Default to current if not found
-                                fb_tpm = fb_model_data.get("tpm_limit", self.tpm_limit)
-                                fb_rpd = fb_model_data.get("rpd_limit", self.rpd_limit)
-                                new_input_token_limit = fb_model_data.get("input_token_limit", self.input_token_limit)
-
-                                if 'gemini' in new_fallback_candidate.lower(): # Apply specific Gemini RPMs
-                                    if fb_model_key == "gemini-2.0-flash" or fb_model_key == "gemini-1.5-flash": fb_rpm=min(fb_rpm,15)
-                                    elif fb_model_key == "gemini-2.0-flash-lite": fb_rpm=min(fb_rpm,30)
-                                    elif fb_model_key == "gemini-2.5-pro-preview-03-25": fb_rpm=min(fb_rpm,15)
-                                
-                                # Update current instance's limits and model_id
-                                self.rpm_limit, self.tpm_limit, self.rpd_limit = fb_rpm, fb_tpm, fb_rpd
-                                self.input_token_limit = new_input_token_limit
-                                self.model_id = new_fallback_candidate # CRITICAL: Update self.model_id for next attempt
-                                
-                                self.shared_tracker.initialize_model(new_fallback_candidate, fb_rpm, fb_tpm, fb_rpd)
-                                logger.info(f"Successfully switched to model {new_fallback_candidate}. RPM: {fb_rpm}, TPM: {fb_tpm}, RPD: {fb_rpd}, InputTokenLimit: {new_input_token_limit}")
-                                
-                                self.current_fallback_level += 1 
+                            if self._perform_model_switch(new_fallback_candidate, f"rate_limit_error_on_{self.model_id}"):
                                 retries = 0 # Reset retries for the new model
                                 backoff_time = self.base_wait_time
                                 attempted_fallback_and_switched = True
-                                
-                            except Exception as init_e: 
-                                logger.error(f"Failed to initialize or update limits for fallback {new_fallback_candidate}: {init_e}")
-                                self.model_id = previous_model_id_before_switch # Revert on error
-                                # Restore previous limits (best effort, might need more sophisticated state management if this path is common)
-                                # For now, just reverting model_id means retry logic will use old model's (possibly outdated) limits.
-                                # This is complex; the original limits of previous_model_id_before_switch should be restored if possible.
-                                # Let's assume for now that self.rpm_limit etc. are not critical if we revert self.model_id
-                                # as the tracker has the correct limits for previous_model_id_before_switch.
-                                logger.warning(f"Reverted active model to {self.model_id} due to fallback initialization error.")
-                                # Fallback failed, do not set attempted_fallback_and_switched = True
                         else: # No new fallback candidate found or it's the same model
                             logger.info(f"No new fallback model available or candidate is same as current ({self.model_id}). Proceeding with retries for current model.")
 
