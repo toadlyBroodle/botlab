@@ -154,7 +154,7 @@ class WriterAgent:
             managed_agents=[self.critic_agent],  # Writer can call the critic
             name='writer_agent',
             description=description,
-            max_steps=max_steps,
+            max_steps=max_steps
         )
 
         # Default system prompt if none provided

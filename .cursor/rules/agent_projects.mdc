@@ -1,6 +1,6 @@
 ---
 description: Structure and organization guidelines for specialized agent projects
-globs: **/researcher/**, **/manager/**, **/editor/**, **/writer_critic/**, **/qaqc/**
+globs: **/researcher/**,**/researcher/**,**/translator/**,**/ranker/**,**/editor/**,**/manager/**,**/qaqc/**,**/writer_critic/**
 alwaysApply: false
 ---
 
