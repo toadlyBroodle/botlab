@@ -24,7 +24,8 @@ class ResearcherAgent:
         model_id: str = "gemini/gemini-2.0-flash",
         model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
-        max_retries: int = 3
+        max_retries: int = 3,
+        additional_tools: Optional[list] = None
     ):
         """Initialize the researcher agent.
         
@@ -37,6 +38,7 @@ class ResearcherAgent:
             model_info_path: Path to the model info JSON file if creating a new model
             base_wait_time: Base wait time for rate limiting if creating a new model
             max_retries: Maximum retries for rate limiting if creating a new model
+            additional_tools: Optional list of additional tools to include with the agent
         """
         # Create a model if one wasn't provided
         if model is None:
@@ -68,6 +70,10 @@ class ResearcherAgent:
             check_conversion_status,
             read_paper_markdown
         ]
+        
+        # Add any additional tools if provided
+        if additional_tools:
+            tools.extend(additional_tools)
         
         self.agent = CodeAgent(
             tools=tools,

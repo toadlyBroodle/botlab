@@ -334,11 +334,15 @@ class RankedAgentLoop:
                         if 'original_row' in agent_context:
                             self.original_row = agent_context.pop('original_row')
                         
+                        # Extract additional_tools if provided
+                        additional_tools = agent_context.get('additional_tools')
+                        
                         agent_instance = ResearcherAgent(
                             model=self.main_llm_model,
                             max_steps=max_steps,
                             researcher_description=self.agent_configs.get('researcher_description'),
-                            researcher_prompt=self.agent_configs.get('researcher_prompt')
+                            researcher_prompt=self.agent_configs.get('researcher_prompt'),
+                            additional_tools=additional_tools
                         )
                         self.agents[agent_type] = agent_instance
                         
