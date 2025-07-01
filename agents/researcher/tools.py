@@ -9,9 +9,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
-from ..utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR
+from ..utils.file_manager.file_manager import RESEARCHER_PAPERS_DIR, AGENT_DIRS
 from smolagents import tool
 from ..utils.agents.tools import get_timestamp
+
+# Directory constants for backward compatibility
+PAPERS_DIR = RESEARCHER_PAPERS_DIR
+REPORTS_DIR = AGENT_DIRS["researcher_agent"]
 
 # Set up logging
 import logging

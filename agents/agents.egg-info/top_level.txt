@@ -1,7 +1,9 @@
 editor
 manager
 qaqc
+ranker
 researcher
+translator
 user_feedback
 utils
 writer_critic
