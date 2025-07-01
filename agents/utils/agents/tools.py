@@ -116,7 +116,7 @@ def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     
     # Apply the custom system prompt if provided
     if custom_system_prompt:
-        agent.system_prompt = custom_system_prompt
+        agent.prompt_templates["system_prompt"] = custom_system_prompt
     
     # Determine agent type from the agent's class
     agent_class_name = agent.__class__.__name__
@@ -154,10 +154,11 @@ def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     
     # Append custom system prompt if provided
     if custom_system_prompt:
+        # append to base system prompt
         agent.prompt_templates["system_prompt"] += f"\n\n{custom_system_prompt}"
     
-    # Reinitialize the system prompt to apply the new template
-    agent.system_prompt = agent.initialize_system_prompt()
+    # Reinitialize the system prompt to apply the new template (this is a workaround for the read-only system_prompt property)
+    agent.prompt_templates["system_prompt"] = agent.initialize_system_prompt()
 
 def _initialize_gemini_client():
     """Initialize the Gemini client for search.
