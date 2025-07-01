@@ -298,7 +298,7 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
         return f"Error performing Gemini search: {str(e)}"
 
 @tool
-def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.0, max_retries: int = 3) -> str:
+def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.0, max_retries: int = 3, disable_duckduckgo: bool = False) -> str:
     """Performs a web search with intelligent rate limiting and fallback mechanisms.
     
     This tool primarily uses DuckDuckGo for web searches, but will temporarily switch to
@@ -321,12 +321,18 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
         max_results: Maximum number of results to return (default: 10)
         rate_limit_seconds: Minimum seconds to wait between searches (default: 5.0)
         max_retries: Maximum number of retry attempts when rate limited (default: 3, max allowed: 5)
+        disable_duckduckgo: If True, skip DuckDuckGo entirely and use Gemini search (default: False)
         
     Returns:
         Formatted search results as a markdown string with titles, URLs, and snippets
     """
     global _last_search_time, _consecutive_failures, _base_wait_time, _max_backoff_time, _current_rate_limit
     global _using_gemini_fallback, _gemini_fallback_until, _gemini_fallback_duration
+
+    # If DuckDuckGo is disabled, use Gemini search directly
+    if disable_duckduckgo:
+        logger.info("DuckDuckGo search disabled, using Gemini search directly")
+        return _perform_gemini_search(query, max_results)
 
     # Check if we should use Gemini fallback
     current_time = time.time()
@@ -405,7 +411,7 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
                     time.sleep(backoff_time)
                     continue
                 else:
-                    # Max retries exceeded - switch to Gemini fallback
+                    # Max retries exceeded - switch to Gemini search
                     logger.warning(f"DuckDuckGo search failed after {retries} retries. Switching to Gemini search fallback.")
                     _using_gemini_fallback = True
                     _gemini_fallback_until = time.time() + _gemini_fallback_duration
@@ -441,7 +447,7 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
                     logger.info(f"Rate limit detected. Retrying in {backoff_time:.2f} seconds (failure count: {_consecutive_failures})...")
                     time.sleep(backoff_time)
                 else:
-                    # Max retries exceeded - switch to Gemini fallback
+                    # Max retries exceeded - switch to Gemini search
                     logger.warning(f"DuckDuckGo search rate limited after {retries} retries. Switching to Gemini search fallback.")
                     _using_gemini_fallback = True
                     _gemini_fallback_until = time.time() + _gemini_fallback_duration

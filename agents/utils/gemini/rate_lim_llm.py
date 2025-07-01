@@ -10,6 +10,8 @@ from typing import List, Dict, Optional, Any, Tuple, Union
 import threading
 import logging
 import litellm
+import re
+from smolagents.utils import AgentGenerationError
 
 # Configure basic logging
 logging.basicConfig(
@@ -933,3 +935,135 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         logging.getLogger("litellm").setLevel(logging.ERROR if not enable_litellm_logging else logging.INFO)
         logger.info(f"Configured logging: HTTP libs to {logging.getLevelName(level)}, LiteLLM logging {'enabled' if enable_litellm_logging else 'disabled'}")
         return True
+
+def parse_retry_delay_from_error(error: Exception) -> Optional[float]:
+    """Parse the retryDelay value from an AgentGenerationError containing a LiteLLM RateLimitError.
+    
+    Args:
+        error: The exception, typically an AgentGenerationError containing LiteLLM error details
+        
+    Returns:
+        Optional[float]: The retry delay in seconds if found, None otherwise
+    """
+    try:
+        error_str = str(error)
+        
+        # Look for the retryDelay pattern in the error string
+        # The format is typically: "retryDelay": "52s"
+        retry_delay_pattern = r'"retryDelay":\s*"(\d+(?:\.\d+)?)s"'
+        match = re.search(retry_delay_pattern, error_str)
+        
+        if match:
+            delay_str = match.group(1)
+            delay_seconds = float(delay_str)
+            logger.info(f"Parsed retry delay from error: {delay_seconds}s")
+            return delay_seconds
+            
+        # Alternative pattern in case the format is different
+        # Look for retryDelay: 52s (without quotes)
+        alt_pattern = r'retryDelay:\s*(\d+(?:\.\d+)?)s'
+        alt_match = re.search(alt_pattern, error_str)
+        
+        if alt_match:
+            delay_str = alt_match.group(1)
+            delay_seconds = float(delay_str)
+            logger.info(f"Parsed retry delay from error (alt pattern): {delay_seconds}s")
+            return delay_seconds
+            
+        logger.debug(f"No retry delay found in error: {error_str[:200]}...")
+        return None
+        
+    except Exception as parse_error:
+        logger.warning(f"Error parsing retry delay from error: {parse_error}")
+        return None
+
+def run_agent_with_retry_delay_handling(
+    agent,
+    query: str,
+    max_retries: int = 3,
+    base_wait_time: float = 5.0,
+    **agent_kwargs
+) -> Any:
+    """Run an agent with intelligent retry handling that respects retryDelay from LiteLLM errors.
+    
+    This function wraps agent execution and catches AgentGenerationError exceptions that contain
+    LiteLLM RateLimitError details. If a retryDelay is found in the error message, it waits
+    for that specific amount before retrying. Otherwise, it uses exponential backoff.
+    
+    Args:
+        agent: The agent instance to run (must have a 'run' method or 'run_query' method)
+        query: The query string to pass to the agent
+        max_retries: Maximum number of retries (default: 3)
+        base_wait_time: Base wait time for exponential backoff if no retryDelay found (default: 5.0)
+        **agent_kwargs: Additional keyword arguments to pass to agent.run()
+        
+    Returns:
+        The result from the agent.run() call
+        
+    Raises:
+        AgentGenerationError: If all retries are exhausted
+    """
+    last_error = None
+    
+    # Determine which method to call on the agent
+    if hasattr(agent, 'run'):
+        agent_method = agent.run
+    elif hasattr(agent, 'run_query'):
+        agent_method = agent.run_query
+    else:
+        raise ValueError("Agent must have either a 'run' or 'run_query' method")
+    
+    for attempt in range(max_retries + 1):  # +1 for initial attempt
+        try:
+            logger.info(f"Running agent (attempt {attempt + 1}/{max_retries + 1})")
+            return agent_method(query, **agent_kwargs)
+            
+        except AgentGenerationError as e:
+            last_error = e
+            
+            # Check if this is a rate limit error that we should retry
+            error_str = str(e).lower()
+            is_rate_limit = any(keyword in error_str for keyword in [
+                "rate limit", "quota", "429", "resource_exhausted", 
+                "resource exhausted", "too many requests"
+            ])
+            
+            if not is_rate_limit:
+                logger.error(f"Non-rate-limit AgentGenerationError encountered: {str(e)[:200]}")
+                raise  # Re-raise non-rate-limit errors immediately
+                
+            if attempt >= max_retries:
+                logger.error(f"Max retries ({max_retries}) exceeded for agent execution")
+                raise  # Re-raise after max retries
+                
+            # Try to parse the retry delay from the error
+            retry_delay = parse_retry_delay_from_error(e)
+            
+            if retry_delay is not None:
+                # Use the specific retry delay from the API
+                wait_time = retry_delay
+                logger.warning(f"Rate limit error on attempt {attempt + 1}. "
+                             f"Waiting {wait_time}s as specified by API retryDelay")
+            else:
+                # Fall back to exponential backoff
+                wait_time = base_wait_time * (2 ** attempt)
+                logger.warning(f"Rate limit error on attempt {attempt + 1}. "
+                             f"No retryDelay found, using exponential backoff: {wait_time}s")
+            
+            # Add some jitter to avoid thundering herd
+            jitter = random.uniform(0.1, 0.3) * wait_time
+            total_wait_time = wait_time + jitter
+            
+            logger.info(f"Waiting {total_wait_time:.2f}s before retry...")
+            time.sleep(total_wait_time)
+            
+        except Exception as e:
+            # Handle other types of exceptions
+            logger.error(f"Non-AgentGenerationError encountered: {type(e).__name__}: {str(e)[:200]}")
+            raise  # Re-raise other exceptions immediately
+    
+    # This should not be reached due to the logic above, but just in case
+    if last_error:
+        raise last_error
+    else:
+        raise RuntimeError("Unexpected error in run_agent_with_retry_delay_handling")
