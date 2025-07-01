@@ -49,4 +49,22 @@ if [ -f "$SCRIPT_DIR/swarms/pyproject.toml.bak" ]; then
     mv "$SCRIPT_DIR/swarms/pyproject.toml.bak" "$SCRIPT_DIR/swarms/pyproject.toml"
 fi
 
+# Ask user if they want to fix smolagents code blob parsing
+echo ""
+read -p "Do you want to fix smolagents code blob parsing to handle python code blocks to fix the persistent code block parsing error (highly recommended)? (y/N): " -n 1 -r
+echo ""
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo "Fixing smolagents code blob parsing..."
+    SMOLAGENTS_UTILS=".venv/lib/python3.12/site-packages/smolagents/utils.py"
+    if [ -f "$SMOLAGENTS_UTILS" ]; then
+        # Replace the regex pattern for better code block parsing
+        sed -i 's/pattern = r"<code>(.*?)<\/code>"/pattern = r"Code:\\n*```(?:py|python)?\\n(.*?)\\n```<end_code>"/' "$SMOLAGENTS_UTILS"
+        echo "Successfully fixed smolagents code blob parsing pattern"
+    else
+        echo "Warning: smolagents utils.py not found at expected location"
+    fi
+else
+    echo "Skipping smolagents code blob parsing fix"
+fi
+
 echo "Setup complete! To activate the environment, run: source .venv/bin/activate" 
