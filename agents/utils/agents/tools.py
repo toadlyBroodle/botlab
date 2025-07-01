@@ -301,9 +301,9 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
 def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.0, max_retries: int = 3, disable_duckduckgo: bool = False) -> str:
     """Performs a web search with intelligent rate limiting and fallback mechanisms.
     
-    This tool primarily uses DuckDuckGo for web searches, but will temporarily switch to
-    Gemini Search if DuckDuckGo rate limits are encountered repeatedly. This provides
-    a robust search capability that can handle rate limiting gracefully.
+    This tool uses DuckDuckGo as the default search engine and falls back to Gemini Search
+    after exactly 3 failures. This provides a robust search capability that can handle
+    rate limiting gracefully.
     
     DuckDuckGo search operators:
     - Use quotes for exact phrases: "climate change solutions"
@@ -326,8 +326,12 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     Returns:
         Formatted search results as a markdown string with titles, URLs, and snippets
     """
-    global _last_search_time, _consecutive_failures, _base_wait_time, _max_backoff_time, _current_rate_limit
+    global _last_search_time, _base_wait_time, _max_backoff_time
     global _using_gemini_fallback, _gemini_fallback_until, _gemini_fallback_duration
+
+    # Debug logging to diagnose the issue
+    logger.info(f"web_search called with query: '{query}', disable_duckduckgo: {disable_duckduckgo}")
+    logger.info(f"Fallback state: _using_gemini_fallback={_using_gemini_fallback}, _gemini_fallback_until={_gemini_fallback_until}, current_time={time.time()}")
 
     # If DuckDuckGo is disabled, use Gemini search directly
     if disable_duckduckgo:
@@ -345,121 +349,73 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     # If fallback period has expired, reset the fallback flag
     if _using_gemini_fallback and current_time >= _gemini_fallback_until:
         _using_gemini_fallback = False
-        _consecutive_failures = 0  # Reset failures when coming out of fallback
         logger.info("Fallback period expired, switching back to DuckDuckGo search")
 
-    # Limit max_retries to 5 if a larger value is passed
+    # Ensure minimum rate limit and cap max retries
+    if rate_limit_seconds < 5.0:
+        rate_limit_seconds = 5.0
     if max_retries > 5:
         max_retries = 5
 
-    # Reset consecutive failures if it's already at or above the max_retries limit
-    # This prevents the function from carrying over too many failures from previous calls
-    if _consecutive_failures >= max_retries:
-        _consecutive_failures = 0
+    logger.info("Proceeding with DuckDuckGo search - no fallback conditions met")
 
-    if rate_limit_seconds < 5.0:
-        rate_limit_seconds = 5.0
-    
-    # Calculate current wait time with aggressive exponential backoff
-    current_wait_time = rate_limit_seconds * (3 ** _consecutive_failures)
-    
-    # Add jitter to avoid synchronized requests (±30%)
-    current_wait_time = current_wait_time * (0.7 + 0.6 * random.random())
-    
-    # Cap the wait time at the maximum backoff time
-    current_wait_time = min(current_wait_time, _max_backoff_time)
-    
-    # Store the current rate limit
-    _current_rate_limit = current_wait_time
-    
-    # Apply rate limiting
+    # Apply basic rate limiting
     current_time = time.time()
     time_since_last_search = current_time - _last_search_time
     
-    if time_since_last_search < current_wait_time:
-        # Wait the remaining time to respect the rate limit
-        sleep_time = current_wait_time - time_since_last_search
-        logger.info(f"Waiting {sleep_time:.2f} seconds to respect DDGS rate limits (failure count: {_consecutive_failures})")
+    if time_since_last_search < rate_limit_seconds:
+        sleep_time = rate_limit_seconds - time_since_last_search
+        logger.info(f"Waiting {sleep_time:.2f} seconds to respect DDGS rate limits")
         time.sleep(sleep_time)
     
     # Create a DuckDuckGoSearchTool instance
+    logger.info("Creating DuckDuckGoSearchTool instance")
     search_tool = DuckDuckGoSearchTool(max_results=max_results)
     
-    # Try to perform the search with retries
-    retries = 0
-    while retries <= max_retries:
+    # Try DuckDuckGo search with retries (exactly 3 attempts by default)
+    for attempt in range(max_retries + 1):  # 0, 1, 2, 3 (4 total attempts for max_retries=3)
         try:
+            logger.info(f"DuckDuckGo search attempt {attempt + 1}/{max_retries + 1}")
             result = search_tool.forward(query)
             
-            # Check if the result is empty or contains an error message
-            if not result or "Error" in result:
-                # This might be a rate limit that didn't raise an exception
-                _consecutive_failures += 1
-                retries += 1
+            # Check if the result is valid
+            if result and "Error" not in result and result.strip():
+                # Success - update last search time and return result
+                _last_search_time = time.time()
+                logger.info("DuckDuckGo search successful")
+                return result
+            else:
+                # Empty or error result
+                logger.warning(f"DuckDuckGo attempt {attempt + 1} returned empty/error result: {result}")
                 
-                if retries <= max_retries and _consecutive_failures <= max_retries:
-                    # Calculate backoff time with more aggressive multiplier
-                    backoff_time = _base_wait_time * (3 ** _consecutive_failures)
-                    # Add jitter (±30%)
-                    backoff_time = backoff_time * (0.7 + 0.6 * random.random())
-                    # Cap the backoff time
-                    backoff_time = min(backoff_time, _max_backoff_time)
-                    # Update current rate limit
-                    _current_rate_limit = backoff_time
-                    
-                    logger.info(f"Empty result or error detected: {result}.\n Retrying in {backoff_time:.2f} seconds (failure count: {_consecutive_failures})...")
-                    time.sleep(backoff_time)
-                    continue
-                else:
-                    # Max retries exceeded - switch to Gemini search
-                    logger.warning(f"DuckDuckGo search failed after {retries} retries. Switching to Gemini search fallback.")
-                    _using_gemini_fallback = True
-                    _gemini_fallback_until = time.time() + _gemini_fallback_duration
-                    return _perform_gemini_search(query, max_results)
-            
-            # Success - reset consecutive failures, rate limit, and update last search time
-            _consecutive_failures = 0
-            _current_rate_limit = _base_wait_time  # Reset rate limit back to base
-            _last_search_time = time.time()
-            
-            logger.info(f"Search successful. Rate limit reset to base value: {_base_wait_time} seconds.")
-            return result
-            
         except Exception as e:
             error_message = str(e)
-            _last_search_time = time.time()
+            logger.warning(f"DuckDuckGo attempt {attempt + 1} failed with exception: {error_message}")
             
-            # Check if it's a rate limit error - look for various indicators
-            if any(term in error_message.lower() for term in ["ratelimit", "rate limit", "429", "too many requests", "202", "blocked", "forbidden", "403"]):
-                _consecutive_failures += 1
-                retries += 1
-                
-                if retries <= max_retries and _consecutive_failures <= max_retries:
-                    # Calculate backoff time with increased base wait time and more aggressive multiplier
-                    backoff_time = _base_wait_time * (3 ** _consecutive_failures)
-                    # Add jitter (±30%)
-                    backoff_time = backoff_time * (0.7 + 0.6 * random.random())
-                    # Cap the backoff time
-                    backoff_time = min(backoff_time, _max_backoff_time)
-                    # Update current rate limit
-                    _current_rate_limit = backoff_time
-                    
-                    logger.info(f"Rate limit detected. Retrying in {backoff_time:.2f} seconds (failure count: {_consecutive_failures})...")
-                    time.sleep(backoff_time)
-                else:
-                    # Max retries exceeded - switch to Gemini search
-                    logger.warning(f"DuckDuckGo search rate limited after {retries} retries. Switching to Gemini search fallback.")
-                    _using_gemini_fallback = True
-                    _gemini_fallback_until = time.time() + _gemini_fallback_duration
-                    return _perform_gemini_search(query, max_results)
-            else:
-                # Not a rate limit error, just return the error
-                logger.error(f"Non-rate-limit error in search: {error_message}")
+            # Check if it's a non-rate-limit error that we shouldn't retry
+            if not any(term in error_message.lower() for term in 
+                      ["ratelimit", "rate limit", "429", "too many requests", "202", "blocked", "forbidden", "403"]):
+                # Non-rate-limit error, just return the error immediately
+                logger.error(f"Non-rate-limit error in DuckDuckGo search: {error_message}")
                 return f"Error performing search: {error_message}"
+        
+        # Update last search time after each attempt
+        _last_search_time = time.time()
+        
+        # If this wasn't the last attempt, wait before retrying
+        if attempt < max_retries:
+            # Calculate backoff time (exponential backoff: 5s, 15s, 45s)
+            backoff_time = rate_limit_seconds * (3 ** attempt)
+            # Add jitter (±30%)
+            backoff_time = backoff_time * (0.7 + 0.6 * random.random())
+            # Cap the backoff time
+            backoff_time = min(backoff_time, _max_backoff_time)
+            
+            logger.info(f"DuckDuckGo attempt {attempt + 1} failed. Retrying in {backoff_time:.2f} seconds...")
+            time.sleep(backoff_time)
     
-    # This should not be reached, but just in case
-    # Switch to Gemini fallback if we've had too many failures
-    logger.warning("Unable to complete search after multiple attempts. Switching to Gemini search fallback.")
+    # All DuckDuckGo attempts failed - switch to Gemini search fallback
+    logger.warning(f"DuckDuckGo search failed after {max_retries + 1} attempts. Switching to Gemini search fallback.")
     _using_gemini_fallback = True
     _gemini_fallback_until = time.time() + _gemini_fallback_duration
     return _perform_gemini_search(query, max_results)
