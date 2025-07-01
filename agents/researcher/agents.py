@@ -1,10 +1,15 @@
 from smolagents import CodeAgent
+from smolagents.utils import AgentGenerationError
 from .tools import arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown
 from ..utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
-from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error
 from typing import Optional
 import os
 import time
+import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ResearcherAgent:
@@ -175,33 +180,91 @@ The report should be well-structured and ready to be used as a standalone docume
         custom_prompt = researcher_prompt if researcher_prompt else default_system_prompt
         apply_custom_agent_prompts(self.agent, custom_prompt)
     
-    def run_query(self, query: str) -> str:
+    def run_query(self, query: str, max_retries: int = 3, base_wait_time: float = 5.0) -> str:
         """Run the agent with a research query and return the result.
         
         Args:
             query: The research query to run
+            max_retries: Maximum number of retries for AgentGenerationError
+            base_wait_time: Base wait time for exponential backoff if no retryDelay found
             
         Returns:
             The result from the agent containing the research report
         """
-        # Time the query execution
-        start_time = time.time()
+        last_error = None
         
-        # Run the query directly on the agent
-        result = self.agent.run(query)
+        for attempt in range(max_retries + 1):  # +1 for initial attempt
+            try:
+                # Time the query execution
+                start_time = time.time()
+                
+                logger.info(f"Running researcher agent (attempt {attempt + 1}/{max_retries + 1})")
+                
+                # Run the query directly on the agent
+                result = self.agent.run(query)
+                
+                # Calculate execution time
+                execution_time = time.time() - start_time
+                
+                print(f"\nExecution time: {execution_time:.2f} seconds")
+                
+                # Save the final answer using the shared tool
+                save_final_answer(
+                    agent=self.agent,
+                    result=result,
+                    query_or_prompt=query,
+                    agent_type="researcher"
+                )
+                
+                return result
+                
+            except AgentGenerationError as e:
+                last_error = e
+                
+                # Check if this is a rate limit error that we should retry
+                error_str = str(e).lower()
+                is_rate_limit = any(keyword in error_str for keyword in [
+                    "rate limit", "quota", "429", "resource_exhausted", 
+                    "resource exhausted", "too many requests"
+                ])
+                
+                if not is_rate_limit:
+                    logger.error(f"Non-rate-limit AgentGenerationError encountered: {str(e)[:200]}")
+                    raise  # Re-raise non-rate-limit errors immediately
+                    
+                if attempt >= max_retries:
+                    logger.error(f"Max retries ({max_retries}) exceeded for researcher agent execution")
+                    raise  # Re-raise after max retries
+                    
+                # Try to parse the retry delay from the error
+                retry_delay = parse_retry_delay_from_error(e)
+                
+                if retry_delay is not None:
+                    # Use the specific retry delay from the API
+                    wait_time = retry_delay
+                    logger.warning(f"Rate limit error on researcher attempt {attempt + 1}. "
+                                 f"Waiting {wait_time}s as specified by API retryDelay")
+                else:
+                    # Fall back to exponential backoff
+                    wait_time = base_wait_time * (2 ** attempt)
+                    logger.warning(f"Rate limit error on researcher attempt {attempt + 1}. "
+                                 f"No retryDelay found, using exponential backoff: {wait_time}s")
+                
+                # Add some jitter to avoid thundering herd
+                jitter = random.uniform(0.1, 0.3) * wait_time
+                total_wait_time = wait_time + jitter
+                
+                logger.info(f"Waiting {total_wait_time:.2f}s before retry...")
+                time.sleep(total_wait_time)
+                
+            except Exception as e:
+                # Handle other types of exceptions
+                logger.error(f"Non-AgentGenerationError encountered: {type(e).__name__}: {str(e)[:200]}")
+                raise  # Re-raise other exceptions immediately
         
-        # Calculate execution time
-        execution_time = time.time() - start_time
-        
-        print(f"\nExecution time: {execution_time:.2f} seconds")
-        
-        # Save the final answer using the shared tool
-        save_final_answer(
-            agent=self.agent,
-            result=result,
-            query_or_prompt=query,
-            agent_type="researcher"
-        )
-        
-        return result
+        # This should not be reached due to the logic above, but just in case
+        if last_error:
+            raise last_error
+        else:
+            raise RuntimeError("Unexpected error in researcher agent run_query")
 
