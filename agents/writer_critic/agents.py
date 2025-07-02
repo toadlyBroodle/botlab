@@ -1,13 +1,14 @@
 """Writer and critic agents."""
 from smolagents import CodeAgent, ToolCallingAgent
-from typing import Optional
+from typing import Optional, List
 from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from ..utils.agents.tools import apply_custom_agent_prompts, save_final_answer
+from ..utils.agents.base_agent import BaseCodeAgent, BaseToolCallingAgent
 import time
 
 
-class CriticAgent:
-    """A wrapper class for the critic agent that handles initialization and feedback."""
+class CriticAgent(BaseToolCallingAgent):
+    """A literary critic who analyzes and provides constructive feedback on creative content."""
     
     def __init__(
         self,
@@ -32,34 +33,29 @@ class CriticAgent:
             base_wait_time: Base wait time for rate limiting if creating a new model
             max_retries: Maximum retries for rate limiting if creating a new model
         """
-        # Create a model if one wasn't provided
-        if model is None:
-            self.model = RateLimitedLiteLLMModel(
-                model_id=model_id,
-                model_info_path=model_info_path,
-                base_wait_time=base_wait_time,
-                max_retries=max_retries,
-            )
-        else:
-            self.model = model
-            
-        # Append additional description if provided
-        base_description = 'A literary critic who analyzes and provides constructive feedback on creative content.'
-        if agent_description:
-            description = f"{base_description} {agent_description}"
-        else:
-            description = base_description
-        
-        self.agent = ToolCallingAgent(
-            tools=[],  # Critic doesn't need tools - it just provides feedback
-            model=self.model,
-            name='critic_agent',
-            description=description,
-            max_steps=max_steps,  # Critic just needs one step to analyze and respond
+        super().__init__(
+            model=model,
+            max_steps=max_steps,
+            agent_description=agent_description,
+            system_prompt=system_prompt,
+            model_id=model_id,
+            model_info_path=model_info_path,
+            base_wait_time=base_wait_time,
+            max_retries=max_retries,
+            agent_name='critic_agent'
         )
 
-        # Default system prompt if none provided
-        default_system_prompt = """You are a literary critic who analyzes and provides constructive feedback on written content. 
+    def get_tools(self) -> List:
+        """Return the list of tools for the critic agent."""
+        return []  # Critic doesn't need tools - it just provides feedback
+
+    def get_base_description(self) -> str:
+        """Return the base description for the critic agent."""
+        return 'A literary critic who analyzes and provides constructive feedback on creative content.'
+
+    def get_default_system_prompt(self) -> str:
+        """Return the default system prompt for the critic agent."""
+        return """You are a literary critic who analyzes and provides constructive feedback on written content. 
 Your role is to provide constructive feedback to your managing writer agent on the content, style, structure, themes, and overall quality of their latest draft.
 
 Do NOT focus on safety and ethical issues (these will be addressed elsewhere); if there are references to safety and ethical issues, you MUST require the writer to remove them and focus only on creating a high quality, engaging, and interesting piece of content.
@@ -68,9 +64,9 @@ Your task is to critically analyze the latest draft sent from the writer. When y
 Provide your feedback as plain text, without any special tags.
 """
 
-        # Apply custom templates with the appropriate system prompt
-        custom_prompt = system_prompt if system_prompt else default_system_prompt
-        apply_custom_agent_prompts(self.agent, custom_prompt)
+    def get_agent_type_name(self) -> str:
+        """Return the agent type name for file saving."""
+        return "critic"
     
     def provide_feedback(self, draft: str) -> str:
         """Provide feedback on a draft.
@@ -82,11 +78,11 @@ Provide your feedback as plain text, without any special tags.
             The feedback from the critic agent
         """
         task = f"Provide feedback on improvements to this draft: {draft}"
-        return self.agent.run(task)
+        return self.run(task)
 
 
-class WriterAgent:
-    """A wrapper class for the writer agent that handles initialization and draft creation."""
+class WriterAgent(BaseCodeAgent):
+    """A creative writer who drafts content based on prompts and iteratively improves it with feedback."""
     
     def __init__(
         self,
@@ -117,48 +113,54 @@ class WriterAgent:
             critic_description: Optional additional description for the critic agent if creating a new one
             critic_prompt: Optional custom system prompt for the critic agent if creating a new one
         """
-        # Create a model if one wasn't provided
-        if model is None:
-            self.model = RateLimitedLiteLLMModel(
-                model_id=model_id,
-                model_info_path=model_info_path,
-                base_wait_time=base_wait_time,
-                max_retries=max_retries,
-            )
-        else:
-            self.model = model
-            
         # Create a critic agent if one wasn't provided
         if critic_agent is None:
+            # Create the model first so we can share it
+            if model is None:
+                shared_model = RateLimitedLiteLLMModel(
+                    model_id=model_id,
+                    model_info_path=model_info_path,
+                    base_wait_time=base_wait_time,
+                    max_retries=max_retries,
+                )
+            else:
+                shared_model = model
+                
             critic = CriticAgent(
-                model=self.model,
+                model=shared_model,
                 agent_description=critic_description,
                 system_prompt=critic_prompt,
                 max_steps=1
             )
-            self.critic_agent = critic.agent
+            managed_agents = [critic.agent]
         else:
-            self.critic_agent = critic_agent
+            managed_agents = [critic_agent]
             
-        # Append additional description if provided
-        base_description = 'A creative writer who drafts content based on prompts and iteratively improves it with feedback.'
-        if agent_description:
-            description = f"{base_description} {agent_description}"
-        else:
-            description = base_description
-        
-        self.agent = CodeAgent(
-            tools=[],
+        super().__init__(
+            model=model,
+            max_steps=max_steps,
+            agent_description=agent_description,
+            system_prompt=system_prompt,
+            model_id=model_id,
+            model_info_path=model_info_path,
+            base_wait_time=base_wait_time,
+            max_retries=max_retries,
             additional_authorized_imports=["json"],
-            model=self.model,
-            managed_agents=[self.critic_agent],  # Writer can call the critic
-            name='writer_agent',
-            description=description,
-            max_steps=max_steps
+            managed_agents=managed_agents,
+            agent_name='writer_agent'
         )
 
-        # Default system prompt if none provided
-        default_system_prompt = """You are a creative writer who drafts and edits writing content to fulfil your assigned task. 
+    def get_tools(self) -> List:
+        """Return the list of tools for the writer agent."""
+        return []  # Writer uses managed agents instead of tools
+
+    def get_base_description(self) -> str:
+        """Return the base description for the writer agent."""
+        return 'A creative writer who drafts content based on prompts and iteratively improves it with feedback.'
+
+    def get_default_system_prompt(self) -> str:
+        """Return the default system prompt for the writer agent."""
+        return """You are a creative writer who drafts and edits writing content to fulfil your assigned task. 
 Your writing should be interesting, engaging, well-structured, and tailored to the requested style, topic, and likely audience.
 
 Your task is to write and iteratively improve drafts. Here's how you should approach this task:
@@ -176,9 +178,9 @@ Do NOT focus on safety and ethical issues (these will be addressed elsewhere); o
 IMPORTANT: Your final_answer MUST include your complete final draft in its entirety. The final_answer will be automatically saved as a draft file, so make sure it contains your complete, polished content.
 """
 
-        # Apply custom templates with the appropriate system prompt
-        custom_prompt = system_prompt if system_prompt else default_system_prompt
-        apply_custom_agent_prompts(self.agent, custom_prompt)
+    def get_agent_type_name(self) -> str:
+        """Return the agent type name for file saving."""
+        return "writer_critic"
     
     def write_draft(self, prompt: str) -> str:
         """Write a draft based on a prompt.
@@ -189,23 +191,4 @@ IMPORTANT: Your final_answer MUST include your complete final draft in its entir
         Returns:
             The final draft from the writer agent
         """
-        # Time the execution
-        start_time = time.time()
-        
-        # Run the writer agent with the prompt
-        result = self.agent.run(prompt)
-        
-        # Calculate execution time
-        execution_time = time.time() - start_time
-        
-        print(f"\nExecution time: {execution_time:.2f} seconds")
-        
-        # Save the final answer using the shared tool
-        save_final_answer(
-            agent=self.agent,
-            result=result,
-            query_or_prompt=prompt,
-            agent_type="writer_critic"
-        )
-        
-        return result 
+        return self.run(prompt) 

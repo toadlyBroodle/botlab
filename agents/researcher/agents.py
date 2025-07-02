@@ -2,8 +2,9 @@ from smolagents import CodeAgent
 from smolagents.utils import AgentGenerationError
 from .tools import arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown
 from ..utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
+from ..utils.agents.base_agent import BaseCodeAgent
 from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error
-from typing import Optional
+from typing import Optional, List
 import os
 import time
 import random
@@ -12,8 +13,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class ResearcherAgent:
-    """A wrapper class for the researcher agent that handles initialization and query execution."""
+class ResearcherAgent(BaseCodeAgent):
+    """A researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and arXiv."""
     
     def __init__(
         self,
@@ -25,7 +26,7 @@ class ResearcherAgent:
         model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
         max_retries: int = 3,
-        additional_tools: Optional[list] = None
+        additional_tools: Optional[List] = None
     ):
         """Initialize the researcher agent.
         
@@ -40,29 +41,23 @@ class ResearcherAgent:
             max_retries: Maximum retries for rate limiting if creating a new model
             additional_tools: Optional list of additional tools to include with the agent
         """
-        # Create a model if one wasn't provided
-        if model is None:
-            self.model = RateLimitedLiteLLMModel(
-                model_id=model_id,
-                model_info_path=model_info_path,
-                base_wait_time=base_wait_time,
-                max_retries=max_retries,
-            )
-        else:
-            self.model = model
-            
-        self.max_steps = max_steps
-        
-        # Create the agent
-        base_description = """This agent can craft advanced search queries, perform web searches using DuckDuckGo and arXiv, and scrape resulting urls (including pdfs) content into markdown. Use this agent to research topics, find specific information, analyze specific webpage content, search for academic papers on arXiv, and process PDF documents."""
-        
-        # Append additional description if provided
-        if researcher_description:
-            description = f"{base_description} {researcher_description}"
-        else:
-            description = base_description
+        super().__init__(
+            model=model,
+            max_steps=max_steps,
+            agent_description=researcher_description,
+            system_prompt=researcher_prompt,
+            model_id=model_id,
+            model_info_path=model_info_path,
+            base_wait_time=base_wait_time,
+            max_retries=max_retries,
+            additional_tools=additional_tools,
+            additional_authorized_imports=["time", "json", "re", "uuid"],
+            agent_name='researcher_agent'
+        )
 
-        tools = [
+    def get_tools(self) -> List:
+        """Return the list of tools for the researcher agent."""
+        return [
             web_search,
             visit_webpage,
             arxiv_search,
@@ -70,22 +65,14 @@ class ResearcherAgent:
             check_conversion_status,
             read_paper_markdown
         ]
-        
-        # Add any additional tools if provided
-        if additional_tools:
-            tools.extend(additional_tools)
-        
-        self.agent = CodeAgent(
-            tools=tools,
-            model=self.model,
-            additional_authorized_imports=["time", "json", "re", "uuid"],
-            name='researcher_agent',
-            description=description,
-            max_steps=self.max_steps
-        )
 
-        # Default system prompt if none provided
-        default_system_prompt = """You are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and search for academic papers on arXiv. 
+    def get_base_description(self) -> str:
+        """Return the base description for the researcher agent."""
+        return """This agent can craft advanced search queries, perform web searches using DuckDuckGo and arXiv, and scrape resulting urls (including pdfs) content into markdown. Use this agent to research topics, find specific information, analyze specific webpage content, search for academic papers on arXiv, and process PDF documents."""
+
+    def get_default_system_prompt(self) -> str:
+        """Return the default system prompt for the researcher agent."""
+        return """You are a researcher agent that can craft advanced search queries and perform web searches using DuckDuckGo and search for academic papers on arXiv. 
             You follow up all relevant search results by calling your `visit_webpage` tool and extracting the relevant content into a detailed markdown report, including all possibly relevant information.
 
 As a CodeAgent, you write Python code to call your tools. Here are examples of how to call each tool:
@@ -182,12 +169,15 @@ IMPORTANT: Your final_answer MUST include your complete, comprehensive research 
 The report should be well-structured and ready to be used as a standalone document. Your final_answer will be automatically saved as a report file, so make sure it contains your complete research findings.
 """
 
-        # Apply custom templates with the appropriate system prompt
-        custom_prompt = researcher_prompt if researcher_prompt else default_system_prompt
-        apply_custom_agent_prompts(self.agent, custom_prompt)
+    def get_agent_type_name(self) -> str:
+        """Return the agent type name for file saving."""
+        return "researcher"
     
-    def run_query(self, query: str, max_retries: int = 3, base_wait_time: float = 5.0) -> str:
+    def run_query(self, query: str, max_retries: Optional[int] = None, base_wait_time: Optional[float] = None) -> str:
         """Run the agent with a research query and return the result.
+        
+        This is a convenience method that calls the base run() method with the same signature
+        as the original ResearcherAgent for backward compatibility.
         
         Args:
             query: The research query to run
@@ -197,80 +187,5 @@ The report should be well-structured and ready to be used as a standalone docume
         Returns:
             The result from the agent containing the research report
         """
-        last_error = None
-        
-        for attempt in range(max_retries + 1):  # +1 for initial attempt
-            try:
-                # Time the query execution
-                start_time = time.time()
-                
-                logger.info(f"Running researcher agent (attempt {attempt + 1}/{max_retries + 1})")
-                
-                # Run the query directly on the agent
-                result = self.agent.run(query)
-                
-                # Calculate execution time
-                execution_time = time.time() - start_time
-                
-                print(f"\nExecution time: {execution_time:.2f} seconds")
-                
-                # Save the final answer using the shared tool
-                save_final_answer(
-                    agent=self.agent,
-                    result=result,
-                    query_or_prompt=query,
-                    agent_type="researcher"
-                )
-                
-                return result
-                
-            except AgentGenerationError as e:
-                last_error = e
-                
-                # Check if this is a rate limit error that we should retry
-                error_str = str(e).lower()
-                is_rate_limit = any(keyword in error_str for keyword in [
-                    "rate limit", "quota", "429", "resource_exhausted", 
-                    "resource exhausted", "too many requests"
-                ])
-                
-                if not is_rate_limit:
-                    logger.error(f"Non-rate-limit AgentGenerationError encountered: {str(e)[:200]}")
-                    raise  # Re-raise non-rate-limit errors immediately
-                    
-                if attempt >= max_retries:
-                    logger.error(f"Max retries ({max_retries}) exceeded for researcher agent execution")
-                    raise  # Re-raise after max retries
-                    
-                # Try to parse the retry delay from the error
-                retry_delay = parse_retry_delay_from_error(e)
-                
-                if retry_delay is not None:
-                    # Use the specific retry delay from the API
-                    wait_time = retry_delay
-                    logger.warning(f"Rate limit error on researcher attempt {attempt + 1}. "
-                                 f"Waiting {wait_time}s as specified by API retryDelay")
-                else:
-                    # Fall back to exponential backoff
-                    wait_time = base_wait_time * (2 ** attempt)
-                    logger.warning(f"Rate limit error on researcher attempt {attempt + 1}. "
-                                 f"No retryDelay found, using exponential backoff: {wait_time}s")
-                
-                # Add some jitter to avoid thundering herd
-                jitter = random.uniform(0.1, 0.3) * wait_time
-                total_wait_time = wait_time + jitter
-                
-                logger.info(f"Waiting {total_wait_time:.2f}s before retry...")
-                time.sleep(total_wait_time)
-                
-            except Exception as e:
-                # Handle other types of exceptions
-                logger.error(f"Non-AgentGenerationError encountered: {type(e).__name__}: {str(e)[:200]}")
-                raise  # Re-raise other exceptions immediately
-        
-        # This should not be reached due to the logic above, but just in case
-        if last_error:
-            raise last_error
-        else:
-            raise RuntimeError("Unexpected error in researcher agent run_query")
+        return self.run(query, max_retries, base_wait_time)
 
