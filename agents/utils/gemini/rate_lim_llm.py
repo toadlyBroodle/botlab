@@ -49,6 +49,11 @@ GEMINI_FALLBACK_CHAIN: List[str] = [
     "gemini/gemini-1.5-flash"
 ]
 
+# Google API quota ID patterns for rate limit detection
+PER_MINUTE_QUOTA_ID = "GenerateRequestsPerMinutePerProjectPerModel"
+DAILY_QUOTA_ID = "GenerateRequestsPerDayPerProjectPerModel"
+GOOGLE_SEARCH_DAILY_QUOTA_ID = "GenerateRequestsPerDayPerProjectPerModel"  # Same quota used for search operations
+
 class SharedRateLimitTracker:
     """Singleton class to track rate limits across all model instances.
     
@@ -619,6 +624,11 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             next_fallback_id = GEMINI_FALLBACK_CHAIN[i]
             logger.debug(f"Checking availability of fallback model {next_fallback_id} (index {i})")
             
+            # Skip models that have exhausted their daily quota
+            if is_model_daily_quota_exhausted(next_fallback_id):
+                logger.info(f"Skipping fallback model {next_fallback_id} - daily quota already exhausted")
+                continue
+            
             # Check if model is initialized in shared tracker
             if next_fallback_id not in self.shared_tracker._model_limits:
                 logger.warning(f"Fallback model {next_fallback_id} not initialized in shared tracker, "
@@ -737,7 +747,26 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         if isinstance(error, litellm.exceptions.APIError) and any(keyword in error_str for keyword in ["rate", "limit", "quota", "429"]): return True
         if "vertexaiexception" in error_str and ("resource_exhausted" in error_str or "429" in error_str): return True
         return False
+
+    def _is_daily_quota_error(self, error: Exception) -> bool:
+        """Check if the error is a daily quota exhaustion error using Google API quotaId.
         
+        Args:
+            error: The exception to check
+            
+        Returns:
+            True if this is a daily quota error that should trigger fallback or termination
+        """
+        error_str = str(error)
+        
+        # Check if daily quotaId is present in the error
+        is_daily_quota = DAILY_QUOTA_ID in error_str
+        
+        if is_daily_quota:
+            logger.info(f"Detected daily quota error via quotaId in RateLimitedLiteLLMModel: {error_str[:200]}...")
+            
+        return is_daily_quota
+
     def _create_temp_model(self, fallback_model_id: str) -> 'RateLimitedLiteLLMModel':
         """Creates a new RateLimitedLiteLLMModel instance, typically for a fallback scenario.
         
@@ -874,6 +903,56 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                 if is_rl_error:
                     self.shared_tracker.record_error(self.model_id, is_rate_limit=True) # Record error for the model that failed
                     
+                    # Check if this is specifically a daily quota error
+                    if self._is_daily_quota_error(e):
+                        logger.warning(f"Daily quota error detected for {self.model_id}")
+                        
+                        # Mark this model as daily quota exhausted
+                        mark_model_daily_quota_exhausted(self.model_id)
+                        
+                        attempted_fallback_and_switched = False
+                        if self.enable_fallback:
+                            # Check if all models in the fallback chain are exhausted
+                            if are_all_fallback_models_exhausted(self.model_id):
+                                logger.error(f"All models in fallback chain are daily quota exhausted. Terminating execution.")
+                                raise Exception(f"All models in fallback chain are daily quota exhausted") from e
+                            
+                            new_fallback_candidate = self._get_fallback_model(self.model_id)
+                            
+                            if new_fallback_candidate and new_fallback_candidate != self.model_id:
+                                logger.warning(f"Daily quota exceeded for {self.model_id}. Attempting to switch to fallback: {new_fallback_candidate}")
+                                if self._perform_model_switch(new_fallback_candidate, f"daily_quota_exceeded_for_{self.model_id}"):
+                                    retries = 0 # Reset retries for the new model
+                                    backoff_time = self.base_wait_time
+                                    attempted_fallback_and_switched = True
+                            else:
+                                logger.error(f"Daily quota exceeded for {self.model_id} and no suitable fallback model available (all may be exhausted). Terminating execution.")
+                                raise Exception(f"Daily quota exceeded for {self.model_id} and no suitable fallback model available") from e
+                        else:
+                            logger.error(f"Daily quota exceeded for {self.model_id} and fallback is disabled. Terminating execution.")
+                            raise Exception(f"Daily quota exceeded for {self.model_id} and fallback is disabled") from e
+                            
+                        if attempted_fallback_and_switched:
+                            # Apply rate limit for the NEW model before continuing the loop
+                            waited_fb, wait_time_fb = self._apply_rate_limit(self.model_id, estimated_input_tokens)
+                            if waited_fb: logger.info(f"Waited {wait_time_fb:.2f}s for new fallback {self.model_id} due to its rate limits ({self.last_wait_type})")
+                            continue # Continue to the next iteration of the while loop with the new (fallback) model
+                    
+                    # Check if this is specifically a per-minute rate limit error
+                    if is_per_minute_rate_limit_error(e):
+                        wait_time = handle_per_minute_rate_limit(e, self.model_id)
+                        
+                        retries += 1
+                        if retries > self.max_retries:
+                            logger.error(f"Max retries ({self.max_retries}) exceeded for {self.model_id} after per-minute rate limit error: {str(e)[:500]}")
+                            raise # Re-raise the last rate limit error
+                        
+                        # Apply rate limit for the CURRENT model again before retrying
+                        waited_retry, wait_time_retry = self._apply_rate_limit(self.model_id, estimated_input_tokens)
+                        if waited_retry: logger.info(f"Additional wait of {wait_time_retry:.2f}s for {self.model_id} after per-minute rate limit wait ({self.last_wait_type})")
+                        continue # Loop continues, will retry self.model_id
+                    
+                    # Handle regular (non-daily quota, non-per-minute) rate limit errors
                     attempted_fallback_and_switched = False
                     if self.enable_fallback:
                         new_fallback_candidate = self._get_fallback_model(self.model_id) # Pass current failing model
@@ -1056,6 +1135,257 @@ def parse_retry_delay_from_error(error: Exception) -> Optional[float]:
         logger.warning(f"Error parsing retry delay from error: {parse_error}")
         return None
 
+def is_per_minute_rate_limit_error(error: Exception) -> bool:
+    """Check if the error is specifically a per-minute rate limit error using Google API quotaId.
+    
+    Args:
+        error: The exception to check
+        
+    Returns:
+        True if this is a per-minute rate limit error that should trigger 60-second wait
+    """
+    error_str = str(error)
+    
+    # Check if per-minute quotaId is present in the error
+    is_per_minute = PER_MINUTE_QUOTA_ID in error_str
+    
+    if is_per_minute:
+        logger.info(f"Detected per-minute rate limit error via quotaId in: {error_str[:200]}...")
+        
+    return is_per_minute
+
+
+def handle_per_minute_rate_limit(error: Exception, context: str = "") -> float:
+    """Handle per-minute rate limit error by parsing retryDelay and waiting.
+    
+    Args:
+        error: The per-minute rate limit error exception
+        context: Optional context string for logging (e.g., model name, agent name)
+        
+    Returns:
+        float: The actual wait time used in seconds
+    """
+    # Try to parse the retry delay from the error
+    retry_delay = parse_retry_delay_from_error(error)
+    
+    if retry_delay is not None:
+        wait_time = retry_delay
+        logger.warning(f"Per-minute rate limit error detected{' for ' + context if context else ''}. "
+                     f"Waiting {wait_time}s as specified by API retryDelay.")
+    else:
+        wait_time = 60.0  # Fall back to 60 seconds if no retryDelay found
+        logger.warning(f"Per-minute rate limit error detected{' for ' + context if context else ''}. "
+                     f"No retryDelay found, waiting default 60 seconds.")
+    
+    time.sleep(wait_time)
+    return wait_time
+
+
+def is_google_search_daily_quota_error(error_or_message: Union[Exception, str]) -> bool:
+    """Check if the error is specifically a Google API search daily quota error.
+    
+    Args:
+        error_or_message: The exception or error message string to check
+        
+    Returns:
+        True if this is a Google search daily quota error that should disable Gemini search fallback
+    """
+    if isinstance(error_or_message, Exception):
+        error_str = str(error_or_message)
+    else:
+        error_str = str(error_or_message)
+    
+    error_str_lower = error_str.lower()
+    
+    # Check if Google search daily quotaId is present in the error
+    # Also check for search-related context clues including common log patterns
+    has_quota_id = GOOGLE_SEARCH_DAILY_QUOTA_ID in error_str
+    has_search_context = any(search_indicator in error_str_lower for search_indicator in [
+        "search", "gemini search", "performing gemini search", "google search",
+        "search error", "gemini search error", "error performing gemini search"
+    ])
+    
+    # Also check for resource exhausted errors with 429 status (common for search quota errors)
+    has_resource_exhausted = ("resource_exhausted" in error_str_lower and "429" in error_str)
+    
+    is_search_quota_error = (
+        has_quota_id and (has_search_context or has_resource_exhausted)
+    )
+    
+    if is_search_quota_error:
+        logger.warning(f"Detected Google API search daily quota error: {error_str[:200]}...")
+        
+    return is_search_quota_error
+
+
+# Global flag to track if Google Gemini search should be disabled due to quota exhaustion
+_google_search_disabled = False
+_google_search_disabled_until = 0.0  # Timestamp when to re-enable
+
+# Global tracking of daily quota exhausted models
+_daily_quota_exhausted_models = set()  # Models that have hit daily quota limits
+
+
+def disable_google_gemini_search(duration_hours: float = 24.0) -> None:
+    """Disable Google Gemini search due to quota exhaustion.
+    
+    Args:
+        duration_hours: How long to disable Google search in hours (default: 24 hours)
+    """
+    global _google_search_disabled, _google_search_disabled_until
+    
+    _google_search_disabled = True
+    _google_search_disabled_until = time.time() + (duration_hours * 3600)
+    
+    logger.warning(f"Disabled Google Gemini search for {duration_hours} hours due to quota exhaustion. "
+                  f"Will re-enable at {datetime.fromtimestamp(_google_search_disabled_until).strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+def is_google_gemini_search_disabled() -> bool:
+    """Check if Google Gemini search is currently disabled.
+    
+    Returns:
+        True if Google Gemini search is disabled, False otherwise
+    """
+    global _google_search_disabled, _google_search_disabled_until
+    
+    # Check if the disable period has expired
+    if _google_search_disabled and time.time() > _google_search_disabled_until:
+        _google_search_disabled = False
+        _google_search_disabled_until = 0.0
+        logger.info("Re-enabled Google Gemini search - quota disable period has expired")
+        
+    return _google_search_disabled
+
+
+def handle_google_search_quota_error(error_or_message: Union[Exception, str]) -> None:
+    """Handle Google search daily quota error by disabling Gemini search fallback.
+    
+    Args:
+        error_or_message: The error or message that triggered the quota exhaustion
+    """
+    if is_google_search_daily_quota_error(error_or_message):
+        disable_google_gemini_search(duration_hours=24.0)
+        logger.error("Google API search daily quota exceeded. Disabled Google Gemini search for 24 hours. "
+                    "Search operations will use DuckDuckGo only until quota resets.")
+
+
+def check_and_handle_search_error_message(message: str) -> bool:
+    """Check if a log message contains Google search quota errors and handle them.
+    
+    This function can be called on error messages/logs to detect and handle Google search quota errors.
+    
+    Args:
+        message: The log message or error message to check
+        
+    Returns:
+        bool: True if a Google search quota error was detected and handled, False otherwise
+    """
+    # Check for Google search quota errors in the message
+    if is_google_search_daily_quota_error(message):
+        handle_google_search_quota_error(message)
+        return True
+    return False
+
+
+def mark_model_daily_quota_exhausted(model_id: str) -> None:
+    """Mark a model as having exhausted its daily quota.
+    
+    Args:
+        model_id: The model ID that has exhausted its daily quota
+    """
+    global _daily_quota_exhausted_models
+    _daily_quota_exhausted_models.add(model_id)
+    logger.warning(f"Marked model {model_id} as daily quota exhausted. "
+                  f"Total exhausted models: {len(_daily_quota_exhausted_models)}")
+
+
+def is_model_daily_quota_exhausted(model_id: str) -> bool:
+    """Check if a model has been marked as daily quota exhausted.
+    
+    Args:
+        model_id: The model ID to check
+        
+    Returns:
+        True if the model has exhausted its daily quota
+    """
+    return model_id in _daily_quota_exhausted_models
+
+
+def are_all_fallback_models_exhausted(model_id: str) -> bool:
+    """Check if all models in the fallback chain are daily quota exhausted.
+    
+    Args:
+        model_id: The current model ID to check fallback chain for
+        
+    Returns:
+        True if all models in the fallback chain (including current) are exhausted
+    """
+    global _daily_quota_exhausted_models
+    
+    # Get the relevant fallback chain
+    fallback_chain = GEMINI_FALLBACK_CHAIN.copy()
+    
+    # If current model is not in chain, add it to the beginning
+    if model_id not in fallback_chain:
+        fallback_chain.insert(0, model_id)
+    
+    # Count exhausted models
+    exhausted_count = 0
+    available_models = []
+    exhausted_models = []
+    
+    for model in fallback_chain:
+        if model in _daily_quota_exhausted_models:
+            exhausted_count += 1
+            exhausted_models.append(model)
+        else:
+            available_models.append(model)
+    
+    # Log current status
+    logger.info(f"Daily quota status: {exhausted_count}/{len(fallback_chain)} models exhausted. "
+               f"Available: {available_models}, Exhausted: {exhausted_models}")
+    
+    # Check if all models in the chain are exhausted
+    all_exhausted = exhausted_count == len(fallback_chain)
+    
+    if all_exhausted:
+        logger.error(f"All models in fallback chain are daily quota exhausted: {fallback_chain}")
+    
+    return all_exhausted
+
+
+def clear_daily_quota_tracking() -> None:
+    """Clear the daily quota exhaustion tracking (useful for testing or daily resets)."""
+    global _daily_quota_exhausted_models
+    _daily_quota_exhausted_models.clear()
+    logger.info("Cleared daily quota exhaustion tracking")
+
+
+def safe_search_with_quota_detection(search_function, *args, **kwargs):
+    """Wrapper to automatically detect and handle Google search quota errors.
+    
+    Args:
+        search_function: The search function to call
+        *args, **kwargs: Arguments to pass to the search function
+        
+    Returns:
+        The result from the search function, or raises an exception if quota errors occur
+    """
+    try:
+        result = search_function(*args, **kwargs)
+        return result
+    except Exception as e:
+        error_message = str(e)
+        
+        # Check for search quota errors
+        if check_and_handle_search_error_message(error_message):
+            # Re-raise as a more specific exception to terminate the process
+            raise Exception(f"Google search daily quota exhausted: {error_message}") from e
+        
+        # If not a quota error, re-raise the original exception
+        raise
+
 def run_agent_with_retry_delay_handling(
     agent,
     query: str,
@@ -1114,6 +1444,11 @@ def run_agent_with_retry_delay_handling(
             if attempt >= max_retries:
                 logger.error(f"Max retries ({max_retries}) exceeded for agent execution")
                 raise  # Re-raise after max retries
+            
+            # Check if this is specifically a per-minute rate limit error
+            if is_per_minute_rate_limit_error(e):
+                wait_time = handle_per_minute_rate_limit(e, f"agent (attempt {attempt + 1}/{max_retries + 1})")
+                continue  # Continue to the next retry attempt
                 
             # Try to parse the retry delay from the error
             retry_delay = parse_retry_delay_from_error(e)

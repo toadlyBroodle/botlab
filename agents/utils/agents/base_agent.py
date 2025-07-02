@@ -21,7 +21,7 @@ from typing import Optional, List, Dict, Any, Union
 from smolagents import CodeAgent, ToolCallingAgent
 from smolagents.utils import AgentGenerationError
 
-from ..gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error
+from ..gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error, is_per_minute_rate_limit_error, handle_per_minute_rate_limit, DAILY_QUOTA_ID, check_and_handle_search_error_message, safe_search_with_quota_detection, mark_model_daily_quota_exhausted, are_all_fallback_models_exhausted, is_model_daily_quota_exhausted
 from .tools import apply_custom_agent_prompts, save_final_answer
 
 logger = logging.getLogger(__name__)
@@ -208,7 +208,7 @@ class BaseAgent(ABC):
         return self.agent.run(task)
     
     def _is_daily_quota_error(self, error: Exception) -> bool:
-        """Check if the error is a daily quota exhaustion error.
+        """Check if the error is a daily quota exhaustion error using Google API quotaId.
         
         Args:
             error: The exception to check
@@ -216,60 +216,13 @@ class BaseAgent(ABC):
         Returns:
             True if this is a daily quota error that should trigger fallback
         """
-        error_str = str(error).lower()
+        error_str = str(error)
         
-        # Check for daily quota specific indicators
-        daily_quota_indicators = [
-            "generaterequestsperdayperprojectpermodel",
-            "generate_content_free_tier_requests", 
-            "generativelanguage.googleapis.com/generate_content",
-            "requests per day per model",
-            "requests per day",
-            "daily quota",
-            "daily limit",
-            "rpd",  # Requests Per Day
-            "per day",
-            "daily usage"
-        ]
-        
-        # Check for quota exhaustion indicators
-        quota_exhaustion_indicators = [
-            "exceeded your current quota",
-            "quota exceeded", 
-            "quota exhausted",
-            "resource_exhausted",
-            "quota failure",
-            "limit exceeded",
-            "usage limit",
-            "quota limit",
-            "api quota",
-            "request quota"
-        ]
-        
-        # Check for specific error codes that indicate daily quota issues
-        error_codes = [
-            "403",  # Forbidden - often used for quota exceeded
-            "429",  # Too Many Requests
-        ]
-        
-        has_daily_indicator = any(indicator in error_str for indicator in daily_quota_indicators)
-        has_quota_exhaustion = any(indicator in error_str for indicator in quota_exhaustion_indicators)  
-        has_relevant_error_code = any(code in error_str for code in error_codes)
-        
-        # More comprehensive check: daily + quota exhaustion, or specific daily patterns
-        is_daily_quota = (has_daily_indicator and has_quota_exhaustion) or \
-                        (has_daily_indicator and has_relevant_error_code) or \
-                        any(pattern in error_str for pattern in [
-                            "daily quota exceeded",
-                            "daily limit exceeded", 
-                            "requests per day exceeded",
-                            "rpd exceeded",
-                            "daily usage exceeded"
-                        ])
+        # Check if daily quotaId is present in the error
+        is_daily_quota = DAILY_QUOTA_ID in error_str
         
         if is_daily_quota:
-            logger.info(f"Detected daily quota error: daily_indicator={has_daily_indicator}, "
-                       f"quota_exhaustion={has_quota_exhaustion}, error_code={has_relevant_error_code}")
+            logger.info(f"Detected daily quota error via quotaId: {error_str[:200]}...")
             
         return is_daily_quota
     
@@ -286,10 +239,11 @@ class BaseAgent(ABC):
             logger.info("Daily quota fallback is disabled")
             return False
             
-        logger.warning(f"Daily quota exceeded for {self.model.model_id}. Attempting to fallback to lower-tier model.")
+        logger.warning(f"Daily quota exceeded for {self.model.model_id}. Attempting to fallback to lower-tier model (skipping any models with exhausted daily quotas).")
         logger.debug(f"Daily quota error details: {str(error)[:500]}")
         
         # Try to get a fallback model using the existing fallback system
+        # This will automatically skip models that have exhausted their daily quotas
         current_model_id = self.model.model_id
         
         try:
@@ -387,13 +341,31 @@ class BaseAgent(ABC):
                     logger.warning("Daily quota error detected - attempting model fallback")
                     daily_quota_fallback_attempted = True
                     
+                    # Mark this model as daily quota exhausted
+                    mark_model_daily_quota_exhausted(self.model.model_id)
+                    
+                    # Check if all models in the fallback chain are exhausted
+                    if are_all_fallback_models_exhausted(self.model.model_id):
+                        logger.error(f"All models in fallback chain are daily quota exhausted. Terminating execution.")
+                        raise AgentGenerationError(f"All models in fallback chain are daily quota exhausted", self.agent.logger) from e
+                    
                     if self._handle_daily_quota_fallback(e):
                         # Successfully fell back, retry immediately with new model
                         logger.info("Daily quota fallback successful - retrying with fallback model")
                         continue
                     else:
-                        logger.error("Daily quota fallback failed - no suitable fallback model available")
-                        # Continue with normal rate limit handling
+                        # Daily quota fallback failed or is disabled - but check if all models are truly exhausted
+                        if not self.enable_daily_quota_fallback:
+                            logger.error(f"Daily quota exceeded for {self.model.model_id} and fallback is disabled. Terminating execution.")
+                            raise AgentGenerationError(f"Daily quota exceeded for {self.model.model_id} and fallback is disabled", self.agent.logger) from e
+                        else:
+                            logger.error(f"Daily quota exceeded for {self.model.model_id} and no suitable fallback model available (all may be exhausted). Terminating execution.")
+                            raise AgentGenerationError(f"Daily quota exceeded for {self.model.model_id} and no suitable fallback model available", self.agent.logger) from e
+                
+                # If we've already attempted daily quota fallback, don't retry daily quota errors
+                if self._is_daily_quota_error(e) and daily_quota_fallback_attempted:
+                    logger.error(f"Daily quota error encountered again after fallback attempt. All available models may be exhausted. Terminating execution.")
+                    raise AgentGenerationError(f"Daily quota error encountered again after fallback attempt", self.agent.logger) from e
                 
                 # Check if this is a regular rate limit error that we should retry
                 error_str = str(e).lower()
@@ -402,6 +374,11 @@ class BaseAgent(ABC):
                     "resource exhausted", "too many requests"
                 ])
                 
+                # Don't retry daily quota errors - they should have been handled above
+                if self._is_daily_quota_error(e):
+                    logger.error(f"Daily quota error not properly handled above. Terminating execution.")
+                    raise AgentGenerationError(f"Daily quota error not properly handled", self.agent.logger) from e
+                
                 if not is_rate_limit:
                     logger.error(f"Non-rate-limit AgentGenerationError encountered: {str(e)[:200]}")
                     raise  # Re-raise non-rate-limit errors immediately
@@ -409,6 +386,11 @@ class BaseAgent(ABC):
                 if attempt >= max_retries:
                     logger.error(f"Max retries ({max_retries}) exceeded for {self.__class__.__name__} execution")
                     raise  # Re-raise after max retries
+                
+                # Check if this is specifically a per-minute rate limit error
+                if is_per_minute_rate_limit_error(e):
+                    wait_time = handle_per_minute_rate_limit(e, f"{self.__class__.__name__} (attempt {attempt + 1}/{max_retries + 1})")
+                    continue  # Continue to the next retry attempt
                     
                 # Try to parse the retry delay from the error
                 retry_delay = parse_retry_delay_from_error(e)
