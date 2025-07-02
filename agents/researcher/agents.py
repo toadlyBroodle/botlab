@@ -26,7 +26,8 @@ class ResearcherAgent(BaseCodeAgent):
         model_info_path: str = "agents/utils/gemini/gem_llm_info.json",
         base_wait_time: float = 2.0,
         max_retries: int = 3,
-        additional_tools: Optional[List] = None
+        additional_tools: Optional[List] = None,
+        **kwargs  # Accept additional arguments to pass to BaseCodeAgent
     ):
         """Initialize the researcher agent.
         
@@ -40,6 +41,7 @@ class ResearcherAgent(BaseCodeAgent):
             base_wait_time: Base wait time for rate limiting if creating a new model
             max_retries: Maximum retries for rate limiting if creating a new model
             additional_tools: Optional list of additional tools to include with the agent
+            **kwargs: Additional arguments passed to BaseCodeAgent (e.g., enable_daily_quota_fallback)
         """
         super().__init__(
             model=model,
@@ -52,7 +54,8 @@ class ResearcherAgent(BaseCodeAgent):
             max_retries=max_retries,
             additional_tools=additional_tools,
             additional_authorized_imports=["time", "json", "re", "uuid"],
-            agent_name='researcher_agent'
+            agent_name='researcher_agent',
+            **kwargs  # Pass through additional arguments
         )
 
     def get_tools(self) -> List:

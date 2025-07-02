@@ -36,7 +36,8 @@ class AgentLoop:
         state_file: Optional[str] = None,
         load_state: bool = False,
         agent_configs: Optional[Dict[str, Any]] = None,
-        agent_contexts: Optional[Dict[str, Dict[str, Any]]] = None
+        agent_contexts: Optional[Dict[str, Dict[str, Any]]] = None,
+        shared_model: Optional[RateLimitedLiteLLMModel] = None
     ):
         """Initialize the agent loop.
         
@@ -55,6 +56,7 @@ class AgentLoop:
             load_state: Whether to load state from state_file if it exists (default: False)
             agent_configs: Optional dictionary containing custom configuration for agents
             agent_contexts: Optional dictionary containing context data for specific agents
+            shared_model: Optional shared RateLimitedLiteLLMModel instance for coordinated rate limiting
         """
         self.agent_sequence = agent_sequence
         self.max_iterations = max_iterations
@@ -87,6 +89,29 @@ class AgentLoop:
         self.enable_telemetry = enable_telemetry
         self.state_file = state_file
         self.agent_contexts = agent_contexts or {}
+        
+        # Initialize shared model for coordinated rate limiting across all agents
+        if shared_model:
+            self.shared_model = shared_model
+        else:
+            # Check if any agents need daily quota fallback
+            enable_fallback = False
+            for agent_type, context in self.agent_contexts.items():
+                if context.get('enable_daily_quota_fallback', False):
+                    enable_fallback = True
+                    print(f"✓ Enabling model fallback for shared model due to {agent_type} agent requesting daily quota fallback")
+                    break
+            
+            if not enable_fallback:
+                print("⚠ Model fallback disabled for shared model - no agents requested daily quota fallback")
+            
+            # Create a shared model instance that all agents can use
+            self.shared_model = RateLimitedLiteLLMModel(
+                model_id=model_id,
+                model_info_path=model_info_path,
+                max_retries=max_retries,
+                enable_fallback=enable_fallback  # Enable fallback if any agent needs it
+            )
         
         # Initialize state
         self.state = {
@@ -213,16 +238,22 @@ class AgentLoop:
                         # Extract additional_tools if provided
                         additional_tools = agent_context.get('additional_tools')
                         
+                        # Extract enable_daily_quota_fallback if provided
+                        enable_daily_quota_fallback = agent_context.get('enable_daily_quota_fallback', True)
+                        
                         agent_instance = ResearcherAgent(
+                            model=self.shared_model,
                             max_steps=max_steps,
                             researcher_description=self.agent_configs.get('researcher_description'),
                             researcher_prompt=self.agent_configs.get('researcher_prompt'),
-                            additional_tools=additional_tools
+                            additional_tools=additional_tools,
+                            enable_daily_quota_fallback=enable_daily_quota_fallback
                         )
                         self.agents[agent_type] = agent_instance
                         
                     elif agent_type.lower() == 'writer':
                         agent_instance = WriterAgent(
+                            model=self.shared_model,
                             max_steps=max_steps,
                             agent_description=self.agent_configs.get('writer_description'),
                             system_prompt=self.agent_configs.get('writer_prompt'),
@@ -233,6 +264,7 @@ class AgentLoop:
                         
                     elif agent_type.lower() == 'editor':
                         agent_instance = EditorAgent(
+                            model=self.shared_model,
                             max_steps=max_steps,
                             agent_description=self.agent_configs.get('editor_description'),
                             system_prompt=self.agent_configs.get('editor_prompt'),
@@ -247,6 +279,7 @@ class AgentLoop:
                             agent_context.pop('original_row')
                         
                         agent_instance = QAQCAgent(
+                            model=self.shared_model,
                             max_steps=max_steps,
                             agent_description=self.agent_configs.get('qaqc_description'),
                             system_prompt=self.agent_configs.get('qaqc_prompt')
@@ -259,6 +292,7 @@ class AgentLoop:
                         report_frequency = self.agent_configs.get('report_frequency', 1)
                         
                         agent_instance = UserFeedbackAgent(
+                            model=self.shared_model,
                             max_steps=max_steps,
                             user_email=remote_email,
                             report_frequency=report_frequency,
@@ -665,7 +699,8 @@ def main():
         state_file=args.state_file,
         load_state=args.load_state,
         agent_configs=agent_configs,
-        agent_contexts={}
+        agent_contexts={},
+        shared_model=None  # Let the AgentLoop create its own shared model
     )
     
     # Run the agent loop

@@ -480,6 +480,9 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         self.shared_tracker.initialize_model(self.model_id, self.rpm_limit, self.tpm_limit, self.rpd_limit)
         
         if self.enable_fallback:
+            # Proactively initialize fallback models in the shared tracker
+            self._initialize_fallback_models()
+            
             # For Gemini models, log the global fallback chain and check if original_model_id is in it.
             if 'gemini' in self.original_model_id.lower() and hasattr(litellm, 'GEMINI_FALLBACK_CHAIN') and isinstance(GEMINI_FALLBACK_CHAIN, list):
                 chain_display = ' -> '.join(GEMINI_FALLBACK_CHAIN) if GEMINI_FALLBACK_CHAIN else "No fallbacks defined"
@@ -500,6 +503,35 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         self.last_error = None
         self.last_wait_type = "None" # For logging which limit caused wait in _apply_rate_limit
         
+    def _initialize_fallback_models(self):
+        """Proactively initialize fallback models in the shared tracker to ensure they're available when needed."""
+        try:
+            with open(self.model_info_path_for_fallback, 'r') as f:
+                model_info_json = json.load(f)
+            
+            for fallback_model_id in GEMINI_FALLBACK_CHAIN:
+                if fallback_model_id != self.original_model_id:
+                    # Extract model key from full model ID (e.g., "gemini-2.0-flash-lite" from "gemini/gemini-2.0-flash-lite")
+                    model_key = fallback_model_id.split('/')[-1] if '/' in fallback_model_id else fallback_model_id
+                    
+                    model_data = model_info_json.get(model_key, model_info_json.get("default", {}))
+                    if not isinstance(model_data, dict):
+                        logger.warning(f"Invalid model data for fallback {fallback_model_id}, using defaults")
+                        model_data = {}
+                    
+                    fb_rpm = model_data.get("rpm_limit", 15)
+                    fb_tpm = model_data.get("tpm_limit", 1000000) 
+                    fb_rpd = model_data.get("rpd_limit", 1500)
+                    
+                    # Initialize in shared tracker so it's available for availability checks
+                    self.shared_tracker.initialize_model(fallback_model_id, fb_rpm, fb_tpm, fb_rpd)
+                    logger.debug(f"Pre-initialized fallback model {fallback_model_id} with limits RPM={fb_rpm}, TPM={fb_tpm}, RPD={fb_rpd}")
+            
+            logger.info(f"Pre-initialized {len(GEMINI_FALLBACK_CHAIN) - 1} fallback models for {self.original_model_id}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to pre-initialize fallback models: {e}. Fallback models will be initialized on-demand.")
+    
     def _perform_model_switch(self, new_fallback_candidate: str, reason: str) -> bool:
         """Switches the active model to the new_fallback_candidate and updates associated limits.
 
@@ -567,31 +599,78 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                            if the end of the chain is reached, or if no subsequent fallbacks are currently available.
         """
         if not self.enable_fallback:
+            logger.debug(f"Fallback disabled for {current_model_id_for_fallback}")
             return None
+
+        logger.info(f"Looking for fallback model for {current_model_id_for_fallback}")
+        logger.debug(f"Available fallback chain: {GEMINI_FALLBACK_CHAIN}")
 
         try:
             # Find the index of the current model in the global fallback chain.
             # The chain should contain full model IDs like "gemini/gemini-2.0-flash".
             current_index = GEMINI_FALLBACK_CHAIN.index(current_model_id_for_fallback)
+            logger.debug(f"Found {current_model_id_for_fallback} at index {current_index} in fallback chain")
         except ValueError:
-            logger.warning(f"Model {current_model_id_for_fallback} not found in GEMINI_FALLBACK_CHAIN. Cannot determine next fallback.")
+            logger.warning(f"Model {current_model_id_for_fallback} not found in GEMINI_FALLBACK_CHAIN: {GEMINI_FALLBACK_CHAIN}. Cannot determine next fallback.")
             return None
 
         # Start searching for an available model from the *next* index.
         for i in range(current_index + 1, len(GEMINI_FALLBACK_CHAIN)):
             next_fallback_id = GEMINI_FALLBACK_CHAIN[i]
+            logger.debug(f"Checking availability of fallback model {next_fallback_id} (index {i})")
+            
+            # Check if model is initialized in shared tracker
+            if next_fallback_id not in self.shared_tracker._model_limits:
+                logger.warning(f"Fallback model {next_fallback_id} not initialized in shared tracker, "
+                             f"attempting to initialize it now...")
+                try:
+                    self._initialize_single_fallback_model(next_fallback_id)
+                except Exception as init_e:
+                    logger.error(f"Failed to initialize fallback model {next_fallback_id}: {init_e}")
+                    continue
+            
             if self.shared_tracker.check_model_availability(next_fallback_id, threshold=0.85):
                 logger.info(f"Selected available fallback model: {next_fallback_id} (previous: {current_model_id_for_fallback})")
-                # Update current_fallback_level or a similar tracker if needed here or in __call__
-                # For now, _get_fallback_model just finds the next candidate.
-                # The caller (__call__) will update self.model_id and related state.
                 return next_fallback_id
             else:
-                logger.info(f"Fallback model {next_fallback_id} is unavailable (usage > 85% or cooldown).")
+                # Get more detailed info about why the model is unavailable
+                status = self.shared_tracker.get_rate_limit_status(next_fallback_id)
+                cooldown_info = status.get('cooldown', {})
+                if cooldown_info.get('active', False):
+                    logger.info(f"Fallback model {next_fallback_id} is in cooldown for {cooldown_info.get('remaining', 0):.1f}s")
+                else:
+                    rpm_pct = status.get('rpm', {}).get('percentage', 0)
+                    tpm_pct = status.get('tpm', {}).get('percentage', 0)
+                    logger.info(f"Fallback model {next_fallback_id} usage too high: RPM {rpm_pct:.1f}%, TPM {tpm_pct:.1f}% (threshold: 85%)")
         
         logger.warning(f"All subsequent fallback models for {current_model_id_for_fallback} in GEMINI_FALLBACK_CHAIN are currently unavailable or end of chain reached.")
+        logger.debug(f"Checked models: {GEMINI_FALLBACK_CHAIN[current_index + 1:]}")
         return None
         
+    def _initialize_single_fallback_model(self, fallback_model_id: str):
+        """Initialize a single fallback model in the shared tracker."""
+        try:
+            with open(self.model_info_path_for_fallback, 'r') as f:
+                model_info_json = json.load(f)
+            
+            model_key = fallback_model_id.split('/')[-1] if '/' in fallback_model_id else fallback_model_id
+            model_data = model_info_json.get(model_key, model_info_json.get("default", {}))
+            
+            if not isinstance(model_data, dict):
+                logger.warning(f"Invalid model data for {fallback_model_id}, using defaults")
+                model_data = {}
+            
+            fb_rpm = model_data.get("rpm_limit", 15)
+            fb_tpm = model_data.get("tpm_limit", 1000000)
+            fb_rpd = model_data.get("rpd_limit", 1500)
+            
+            self.shared_tracker.initialize_model(fallback_model_id, fb_rpm, fb_tpm, fb_rpd)
+            logger.info(f"Successfully initialized fallback model {fallback_model_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize fallback model {fallback_model_id}: {e}")
+            raise
+
     def reset_to_original_model(self) -> bool:
         """Attempts to revert the active model to the `original_model_id`.
 
