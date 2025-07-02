@@ -7,6 +7,7 @@ This base class encapsulates:
 - Execution timing and result saving
 - Custom prompt application
 - Error handling and logging
+- Automatic daily quota fallback
 
 All specialized agents should inherit from this base class and only implement
 their specific tools, descriptions, and business logic.
@@ -36,6 +37,7 @@ class BaseAgent(ABC):
     - Execution timing and result saving
     - Custom prompt application
     - Consistent error handling and logging
+    - Automatic daily quota fallback to lower-tier models
     
     Subclasses need to implement:
     - get_agent_type(): Return "code" or "toolcalling"
@@ -59,6 +61,7 @@ class BaseAgent(ABC):
         additional_authorized_imports: Optional[List[str]] = None,
         managed_agents: Optional[List] = None,
         agent_name: Optional[str] = None,
+        enable_daily_quota_fallback: bool = True,
         **kwargs
     ):
         """Initialize the base agent with common functionality.
@@ -76,6 +79,7 @@ class BaseAgent(ABC):
             additional_authorized_imports: Optional list of additional imports for CodeAgent
             managed_agents: Optional list of managed agents for the agent
             agent_name: Optional custom name for the agent (defaults to class-based name)
+            enable_daily_quota_fallback: Whether to enable automatic fallback on daily quota errors
             **kwargs: Additional keyword arguments for agent creation
         """
         # Store configuration
@@ -86,6 +90,7 @@ class BaseAgent(ABC):
         self.additional_authorized_imports = additional_authorized_imports or []
         self.managed_agents = managed_agents or []
         self.agent_kwargs = kwargs
+        self.enable_daily_quota_fallback = enable_daily_quota_fallback
         
         # Create a model if one wasn't provided
         if model is None:
@@ -94,9 +99,20 @@ class BaseAgent(ABC):
                 model_info_path=model_info_path,
                 base_wait_time=base_wait_time,
                 max_retries=max_retries,
+                enable_fallback=enable_daily_quota_fallback,  # Enable fallback for daily quota handling
             )
         else:
             self.model = model
+            # If daily quota fallback is enabled but the model doesn't have fallback enabled, update it
+            if enable_daily_quota_fallback and not getattr(self.model, 'enable_fallback', False):
+                logger.warning(f"Enabling fallback on provided model {self.model.model_id} for daily quota handling")
+                self.model.enable_fallback = True
+                # Also pre-initialize fallback models if the method exists
+                if hasattr(self.model, '_initialize_fallback_models'):
+                    try:
+                        self.model._initialize_fallback_models()
+                    except Exception as e:
+                        logger.warning(f"Failed to pre-initialize fallback models: {e}")
         
         # Initialize the agent
         self._initialize_agent(agent_description, system_prompt, agent_name)
@@ -191,12 +207,134 @@ class BaseAgent(ABC):
         """
         return self.agent.run(task)
     
+    def _is_daily_quota_error(self, error: Exception) -> bool:
+        """Check if the error is a daily quota exhaustion error.
+        
+        Args:
+            error: The exception to check
+            
+        Returns:
+            True if this is a daily quota error that should trigger fallback
+        """
+        error_str = str(error).lower()
+        
+        # Check for daily quota specific indicators
+        daily_quota_indicators = [
+            "generaterequestsperdayperprojectpermodel",
+            "generate_content_free_tier_requests", 
+            "generativelanguage.googleapis.com/generate_content",
+            "requests per day per model",
+            "requests per day",
+            "daily quota",
+            "daily limit",
+            "rpd",  # Requests Per Day
+            "per day",
+            "daily usage"
+        ]
+        
+        # Check for quota exhaustion indicators
+        quota_exhaustion_indicators = [
+            "exceeded your current quota",
+            "quota exceeded", 
+            "quota exhausted",
+            "resource_exhausted",
+            "quota failure",
+            "limit exceeded",
+            "usage limit",
+            "quota limit",
+            "api quota",
+            "request quota"
+        ]
+        
+        # Check for specific error codes that indicate daily quota issues
+        error_codes = [
+            "403",  # Forbidden - often used for quota exceeded
+            "429",  # Too Many Requests
+        ]
+        
+        has_daily_indicator = any(indicator in error_str for indicator in daily_quota_indicators)
+        has_quota_exhaustion = any(indicator in error_str for indicator in quota_exhaustion_indicators)  
+        has_relevant_error_code = any(code in error_str for code in error_codes)
+        
+        # More comprehensive check: daily + quota exhaustion, or specific daily patterns
+        is_daily_quota = (has_daily_indicator and has_quota_exhaustion) or \
+                        (has_daily_indicator and has_relevant_error_code) or \
+                        any(pattern in error_str for pattern in [
+                            "daily quota exceeded",
+                            "daily limit exceeded", 
+                            "requests per day exceeded",
+                            "rpd exceeded",
+                            "daily usage exceeded"
+                        ])
+        
+        if is_daily_quota:
+            logger.info(f"Detected daily quota error: daily_indicator={has_daily_indicator}, "
+                       f"quota_exhaustion={has_quota_exhaustion}, error_code={has_relevant_error_code}")
+            
+        return is_daily_quota
+    
+    def _handle_daily_quota_fallback(self, error: Exception) -> bool:
+        """Handle daily quota errors by falling back to a lower-tier model.
+        
+        Args:
+            error: The daily quota error
+            
+        Returns:
+            True if fallback was successful, False otherwise
+        """
+        if not self.enable_daily_quota_fallback:
+            logger.info("Daily quota fallback is disabled")
+            return False
+            
+        logger.warning(f"Daily quota exceeded for {self.model.model_id}. Attempting to fallback to lower-tier model.")
+        logger.debug(f"Daily quota error details: {str(error)[:500]}")
+        
+        # Try to get a fallback model using the existing fallback system
+        current_model_id = self.model.model_id
+        
+        try:
+            fallback_model_id = self.model._get_fallback_model(current_model_id)
+            
+            if fallback_model_id and fallback_model_id != current_model_id:
+                logger.warning(f"Falling back from {current_model_id} to {fallback_model_id} due to daily quota exhaustion")
+                
+                # Perform the model switch using the existing method
+                success = self.model._perform_model_switch(
+                    fallback_model_id, 
+                    f"daily_quota_exhausted_for_{current_model_id}"
+                )
+                
+                if success:
+                    logger.info(f"Successfully switched to fallback model {fallback_model_id} for daily quota")
+                    
+                    # Update the agent's model reference to use the new model_id
+                    self.agent.model = self.model
+                    
+                    # Log the fallback status
+                    self.model.print_rate_limit_status(use_logger=True)
+                    
+                    return True
+                else:
+                    logger.error(f"Failed to switch to fallback model {fallback_model_id}")
+                    return False
+            else:
+                if fallback_model_id is None:
+                    logger.warning(f"No suitable fallback model available for {current_model_id}")
+                else:
+                    logger.warning(f"Fallback model is same as current model: {current_model_id}")
+                return False
+                
+        except Exception as fallback_e:
+            logger.error(f"Exception during daily quota fallback for {current_model_id}: {fallback_e}")
+            return False
+    
     def run(self, query: str, max_retries: Optional[int] = None, base_wait_time: Optional[float] = None) -> str:
         """Run the agent with a query, handling rate limits, retries, and result saving.
         
         This method provides the complete execution framework including:
         - Retry logic with exponential backoff
         - Rate limit error handling with API-specified retry delays
+        - Automatic daily quota fallback to lower-tier models
         - Execution timing
         - Automatic result saving
         
@@ -214,6 +352,7 @@ class BaseAgent(ABC):
             base_wait_time = self.base_wait_time
             
         last_error = None
+        daily_quota_fallback_attempted = False
         
         for attempt in range(max_retries + 1):  # +1 for initial attempt
             try:
@@ -243,7 +382,20 @@ class BaseAgent(ABC):
             except AgentGenerationError as e:
                 last_error = e
                 
-                # Check if this is a rate limit error that we should retry
+                # Check if this is a daily quota error first
+                if self._is_daily_quota_error(e) and not daily_quota_fallback_attempted:
+                    logger.warning("Daily quota error detected - attempting model fallback")
+                    daily_quota_fallback_attempted = True
+                    
+                    if self._handle_daily_quota_fallback(e):
+                        # Successfully fell back, retry immediately with new model
+                        logger.info("Daily quota fallback successful - retrying with fallback model")
+                        continue
+                    else:
+                        logger.error("Daily quota fallback failed - no suitable fallback model available")
+                        # Continue with normal rate limit handling
+                
+                # Check if this is a regular rate limit error that we should retry
                 error_str = str(e).lower()
                 is_rate_limit = any(keyword in error_str for keyword in [
                     "rate limit", "quota", "429", "resource_exhausted", 
