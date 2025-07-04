@@ -34,6 +34,15 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
+
+class AllDailySearchRateLimsExhausted(Exception):
+    """Exception raised when both Google search daily quota is exceeded and DuckDuckGo fails after all retries.
+    
+    This exception terminates the researcher as no search options are available.
+    """
+    pass
+
+
 # Set conservative buffer factor - operate at 93% of actual limits
 SAFETY_BUFFER_FACTOR = 0.93
 # Default minimum delay between API calls if model-specific delay can't be calculated

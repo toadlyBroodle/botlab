@@ -28,6 +28,9 @@ import base64
 # Import daily quota constant
 from ..gemini.rate_lim_llm import DAILY_QUOTA_ID
 
+# Import the new exception for search failures
+from ..gemini.rate_lim_llm import AllDailySearchRateLimsExhausted
+
 # Added for user feedback tools
 import subprocess
 import mailbox
@@ -239,7 +242,10 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
     
     try:
         # Create the search tool configuration
-        search_tool = GoogleSearch()
+        # The GoogleSearch tool needs to be wrapped in a Tool object with the proper tool_type
+        search_tool = GenaiTool(
+            google_search=GoogleSearch()
+        )
         
         # Configure the request
         config = GenerateContentConfig(
@@ -471,7 +477,12 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
         # Check if Google search was disabled due to quota exhaustion
         if "Google Search API daily quota exceeded" in result:
             logger.error("Both DuckDuckGo and Google search have failed. No search options available.")
-            return f"Error: Both DuckDuckGo and Google search are unavailable. DuckDuckGo failed after {max_retries + 1} attempts, and Google search daily quota is exhausted."
+            error_msg = f"Both DuckDuckGo and Google search are unavailable. DuckDuckGo failed after {max_retries + 1} attempts, and Google search daily quota is exhausted."
+            # Return a special error message that can be detected by the city_researcher
+            special_error_msg = f"SEARCH_EXHAUSTION_CRITICAL_ERROR: {error_msg}"
+            logger.error(f"Returning critical search exhaustion error: {special_error_msg}")
+            # Also raise the exception to try to terminate the agent
+            raise AllDailySearchRateLimsExhausted(error_msg)
         else:
             # Google search succeeded, set fallback mode
             _using_gemini_fallback = True
@@ -480,7 +491,12 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     else:
         # Google search is disabled, so we can't fall back to it
         logger.error(f"DuckDuckGo search failed after {max_retries + 1} attempts and Google search is disabled due to quota exhaustion.")
-        return f"Error: DuckDuckGo search failed after {max_retries + 1} attempts and Google search is disabled due to daily quota exhaustion. Search unavailable."
+        error_msg = f"DuckDuckGo search failed after {max_retries + 1} attempts and Google search is disabled due to daily quota exhaustion. Search unavailable."
+        # Return a special error message that can be detected by the city_researcher
+        special_error_msg = f"SEARCH_EXHAUSTION_CRITICAL_ERROR: {error_msg}"
+        logger.error(f"Returning critical search exhaustion error: {special_error_msg}")
+        # Also raise the exception to try to terminate the agent
+        raise AllDailySearchRateLimsExhausted(error_msg)
 
 @tool
 def visit_webpage(url: str) -> str:
