@@ -204,8 +204,69 @@ class BaseAgent(ABC):
             
         Returns:
             The result from the agent
+            
+        Raises:
+            AgentGenerationError: If daily quota error is detected in the response or execution steps
         """
-        return self.agent.run(task)
+        result = self.agent.run(task)
+        
+        # Check if the final result contains a daily quota error message
+        if isinstance(result, str) and "DAILY_QUOTA_ERROR:" in result:
+            # Check if this is a search quota error vs model quota error
+            if self._is_search_quota_error(result):
+                logger.warning(f"Search quota error detected in agent response (not a model error): {result[:300]}...")
+                # For search quota errors, don't raise an exception - let the agent continue
+                # The search tool should have handled this internally by disabling Google search
+                return result
+            else:
+                logger.error(f"Model daily quota error detected in agent response: {result[:300]}...")
+                # Convert to AgentGenerationError so it can be handled by the run method's daily quota logic
+                raise AgentGenerationError(f"Daily quota error detected in agent response: {result}", self.agent.logger)
+        
+        # Also check the agent's memory/steps for daily quota errors in tool responses
+        if hasattr(self.agent, 'memory') and hasattr(self.agent.memory, 'steps'):
+            for step in self.agent.memory.steps:
+                if hasattr(step, 'tool_calls') and step.tool_calls:
+                    for tool_call in step.tool_calls:
+                        if hasattr(tool_call, 'result') and tool_call.result:
+                            tool_result = str(tool_call.result)
+                            if "DAILY_QUOTA_ERROR:" in tool_result:
+                                # Check if this is a search quota error vs model quota error
+                                if self._is_search_quota_error(tool_result):
+                                    logger.warning(f"Search quota error detected in tool call result (not a model error): {tool_result[:300]}...")
+                                    # For search quota errors, don't raise an exception - let the agent continue
+                                    continue
+                                else:
+                                    logger.error(f"Model daily quota error detected in tool call result: {tool_result[:300]}...")
+                                    # Convert to AgentGenerationError so it can be handled by the run method's daily quota logic
+                                    raise AgentGenerationError(f"Daily quota error detected in tool execution: {tool_result}", self.agent.logger)
+        
+        return result
+    
+    def _is_search_quota_error(self, message: str) -> bool:
+        """Check if a DAILY_QUOTA_ERROR message is related to search quota vs model quota.
+        
+        Args:
+            message: The error message to check
+            
+        Returns:
+            True if this is a search quota error, False if it's a model quota error
+        """
+        message_lower = message.lower()
+        
+        # Check for search-related keywords in the error message
+        search_keywords = [
+            "search", "gemini search", "google search", "web search",
+            "search api", "search daily quota", "search quota",
+            "performing search", "performing gemini search"
+        ]
+        
+        # If the message contains search-related keywords, it's likely a search quota error
+        for keyword in search_keywords:
+            if keyword in message_lower:
+                return True
+        
+        return False
     
     def _is_daily_quota_error(self, error: Exception) -> bool:
         """Check if the error is a daily quota exhaustion error using Google API quotaId.
@@ -218,7 +279,7 @@ class BaseAgent(ABC):
         """
         error_str = str(error)
         
-        # Check if daily quotaId is present in the error
+        # Check if daily quotaId is present in the error (with or without suffixes like "-FreeTier")
         is_daily_quota = DAILY_QUOTA_ID in error_str
         
         if is_daily_quota:
@@ -416,6 +477,8 @@ class BaseAgent(ABC):
             except Exception as e:
                 # Handle other types of exceptions
                 logger.error(f"Non-AgentGenerationError encountered: {type(e).__name__}: {str(e)[:200]}")
+                
+                # For non-daily quota errors, re-raise as-is (daily quota errors are now handled in execute_task)
                 raise  # Re-raise other exceptions immediately
         
         # This should not be reached due to the logic above, but just in case

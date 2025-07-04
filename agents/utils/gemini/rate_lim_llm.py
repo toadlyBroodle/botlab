@@ -51,7 +51,7 @@ GEMINI_FALLBACK_CHAIN: List[str] = [
 
 # Google API quota ID patterns for rate limit detection
 PER_MINUTE_QUOTA_ID = "GenerateRequestsPerMinutePerProjectPerModel"
-DAILY_QUOTA_ID = "GenerateRequestsPerDayPerProjectPerModel"
+DAILY_QUOTA_ID = "GenerateRequestsPerDayPerProjectPerModel"  # Base pattern, may have suffixes like "-FreeTier"
 GOOGLE_SEARCH_DAILY_QUOTA_ID = "GenerateRequestsPerDayPerProjectPerModel"  # Same quota used for search operations
 
 class SharedRateLimitTracker:
@@ -759,7 +759,7 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         """
         error_str = str(error)
         
-        # Check if daily quotaId is present in the error
+        # Check if daily quotaId is present in the error (with or without suffixes like "-FreeTier")
         is_daily_quota = DAILY_QUOTA_ID in error_str
         
         if is_daily_quota:
@@ -1197,9 +1197,9 @@ def is_google_search_daily_quota_error(error_or_message: Union[Exception, str]) 
     
     error_str_lower = error_str.lower()
     
-    # Check if Google search daily quotaId is present in the error
+    # Check if Google search daily quotaId is present in the error (with or without suffixes like "-FreeTier")
     # Also check for search-related context clues including common log patterns
-    has_quota_id = GOOGLE_SEARCH_DAILY_QUOTA_ID in error_str
+    has_quota_id = DAILY_QUOTA_ID.lower() in error_str_lower
     has_search_context = any(search_indicator in error_str_lower for search_indicator in [
         "search", "gemini search", "performing gemini search", "google search",
         "search error", "gemini search error", "error performing gemini search"
@@ -1226,6 +1226,26 @@ _google_search_disabled_until = 0.0  # Timestamp when to re-enable
 _daily_quota_exhausted_models = set()  # Models that have hit daily quota limits
 
 
+def is_google_search_disabled() -> bool:
+    """Check if Google Gemini search is currently disabled due to quota exhaustion.
+    
+    Returns:
+        bool: True if Google search is disabled, False otherwise
+    """
+    global _google_search_disabled, _google_search_disabled_until
+    
+    current_time = time.time()
+    
+    # Check if the disable period has expired
+    if _google_search_disabled and current_time >= _google_search_disabled_until:
+        _google_search_disabled = False
+        _google_search_disabled_until = 0.0
+        logger.info("Google Gemini search re-enabled - quota disable period expired")
+        return False
+    
+    return _google_search_disabled
+
+
 def disable_google_gemini_search(duration_hours: float = 24.0) -> None:
     """Disable Google Gemini search due to quota exhaustion.
     
@@ -1239,23 +1259,6 @@ def disable_google_gemini_search(duration_hours: float = 24.0) -> None:
     
     logger.warning(f"Disabled Google Gemini search for {duration_hours} hours due to quota exhaustion. "
                   f"Will re-enable at {datetime.fromtimestamp(_google_search_disabled_until).strftime('%Y-%m-%d %H:%M:%S')}")
-
-
-def is_google_gemini_search_disabled() -> bool:
-    """Check if Google Gemini search is currently disabled.
-    
-    Returns:
-        True if Google Gemini search is disabled, False otherwise
-    """
-    global _google_search_disabled, _google_search_disabled_until
-    
-    # Check if the disable period has expired
-    if _google_search_disabled and time.time() > _google_search_disabled_until:
-        _google_search_disabled = False
-        _google_search_disabled_until = 0.0
-        logger.info("Re-enabled Google Gemini search - quota disable period has expired")
-        
-    return _google_search_disabled
 
 
 def handle_google_search_quota_error(error_or_message: Union[Exception, str]) -> None:

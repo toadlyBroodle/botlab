@@ -25,6 +25,9 @@ from PIL import Image
 from io import BytesIO
 import base64
 
+# Import daily quota constant
+from ..gemini.rate_lim_llm import DAILY_QUOTA_ID
+
 # Added for user feedback tools
 import subprocess
 import mailbox
@@ -235,66 +238,73 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
         return "Error: Gemini search unavailable. GEMINI_API_KEY may not be set."
     
     try:
-        # Create the search tool
-        google_search_tool = GenaiTool(
-            google_search=GoogleSearch()
+        # Create the search tool configuration
+        search_tool = GoogleSearch()
+        
+        # Configure the request
+        config = GenerateContentConfig(
+            tools=[search_tool],
+            temperature=0.1,
+            max_output_tokens=8192,
         )
         
-        # Perform the search using Gemini
+        # Create the search prompt
+        prompt = f"Search for information about: {query}"
+        
+        # Make the search request
         response = client.models.generate_content(
             model="gemini-2.0-flash",
-            contents=query,
-            config=GenerateContentConfig(
-                tools=[google_search_tool],
-                response_modalities=["TEXT"],
-            )
+            contents=prompt,
+            config=config,
         )
         
-        # Increment the search counter
+        # Increment search count
         _gemini_search_count += 1
+        logger.info(f"Gemini search completed. Count: {_gemini_search_count}")
         
-        # Extract the main content
-        main_content = ""
-        if hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'content') and candidate.content:
-                for part in candidate.content.parts:
-                    if hasattr(part, 'text'):
-                        main_content += part.text + "\n"
-        
-        # Format the result
-        result = f"# Search Results for: {query}\n\n{main_content.strip()}\n\n"
-        
-        # Add grounding sources if available
-        sources_info = ""
-        if hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'grounding_metadata'):
-                grounding_metadata = candidate.grounding_metadata
-                
-                # Add search suggestions if available
-                if hasattr(grounding_metadata, 'web_search_queries') and grounding_metadata.web_search_queries:
-                    sources_info += "\n## Related Searches\n"
-                    for query in grounding_metadata.web_search_queries:
-                        sources_info += f"- {query}\n"
-                
-                # Add source information if available
-                if hasattr(grounding_metadata, 'grounding_chunks') and grounding_metadata.grounding_chunks:
-                    sources_info += "\n## Sources\n"
-                    for i, chunk in enumerate(grounding_metadata.grounding_chunks):
-                        if hasattr(chunk, 'web') and hasattr(chunk.web, 'uri') and hasattr(chunk.web, 'title'):
-                            sources_info += f"{i+1}. [{chunk.web.title}]({chunk.web.uri})\n"
-        
-        # Add sources information if available
-        if sources_info:
-            result += sources_info
-        
-        # Add a note about the search provider
-        result += f"\n\n---\n*Note: These results were provided by Gemini Search due to DuckDuckGo rate limiting. Search count: {_gemini_search_count}/{_gemini_search_limit}*"
-        
-        return result
+        # Extract the text content
+        if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+            text_content = response.candidates[0].content.parts[0].text
+            
+            # Extract search results from the grounding metadata
+            results = []
+            if hasattr(response.candidates[0], 'grounding_metadata') and response.candidates[0].grounding_metadata:
+                grounding_chunks = response.candidates[0].grounding_metadata.grounding_chunks
+                if grounding_chunks:
+                    for chunk in grounding_chunks:
+                        if hasattr(chunk, 'web') and chunk.web:
+                            title = chunk.web.title if chunk.web.title else "No title"
+                            url = chunk.web.uri if chunk.web.uri else "No URL"
+                            results.append(f"**{title}**\n{url}\n")
+            
+            # Format the result
+            if results:
+                formatted_results = "\n".join(results[:max_results])
+                return f"Search results for '{query}':\n\n{formatted_results}\n\nSummary: {text_content}"
+            else:
+                return f"Search results for '{query}':\n\n{text_content}"
+        else:
+            return f"No search results found for '{query}'"
+    
     except Exception as e:
+        error_str = str(e)
         logger.error(f"Gemini search error: {e}")
+        
+        # Check if this is a daily quota error for Google Search API
+        if DAILY_QUOTA_ID in error_str:
+            logger.error(f"Google Search API daily quota error detected: {error_str[:300]}...")
+            
+            # Import the search quota handling functions
+            from ..gemini.rate_lim_llm import handle_google_search_quota_error
+            
+            # Handle the Google search quota error (this will disable Google search for 24 hours)
+            handle_google_search_quota_error(error_str)
+            
+            # Return a message indicating Google search is disabled, but don't use "DAILY_QUOTA_ERROR:" prefix
+            # that would confuse the BaseAgent into thinking this is a model quota error
+            return f"Google Search API daily quota exceeded. Google search has been disabled for 24 hours. Please use DuckDuckGo search instead."
+        
+        # For other errors, return error message as before
         return f"Error performing Gemini search: {str(e)}"
 
 @tool
@@ -304,6 +314,10 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     This tool uses DuckDuckGo as the default search engine and falls back to Gemini Search
     after exactly 3 failures. This provides a robust search capability that can handle
     rate limiting gracefully.
+    
+    When Google Search API hits daily quota limits, it automatically disables Google search
+    for 24 hours and uses DuckDuckGo exclusively. This prevents confusion with model quota errors.
+    In this case, DuckDuckGo retry attempts are automatically doubled since it becomes the only option.
     
     DuckDuckGo search operators:
     - Use quotes for exact phrases: "climate change solutions"
@@ -333,18 +347,52 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     logger.info(f"web_search called with query: '{query}', disable_duckduckgo: {disable_duckduckgo}")
     logger.info(f"Fallback state: _using_gemini_fallback={_using_gemini_fallback}, _gemini_fallback_until={_gemini_fallback_until}, current_time={time.time()}")
 
+    # Check if Google search is disabled due to daily quota exhaustion
+    from ..gemini.rate_lim_llm import is_google_search_disabled
+    
+    google_search_disabled = is_google_search_disabled()
+    
+    if google_search_disabled:
+        logger.info("Google search is disabled due to daily quota exhaustion. Using DuckDuckGo only.")
+        # Force use of DuckDuckGo only
+        disable_duckduckgo = False
+        _using_gemini_fallback = False
+        
+        # Double the retry attempts when Google search is disabled since DuckDuckGo is the only option
+        original_max_retries = max_retries
+        max_retries = max_retries * 2
+        logger.info(f"Google search disabled: Doubling DuckDuckGo retries from {original_max_retries} to {max_retries}")
+    
     # If DuckDuckGo is disabled, use Gemini search directly
     if disable_duckduckgo:
         logger.info("DuckDuckGo search disabled, using Gemini search directly")
-        return _perform_gemini_search(query, max_results)
+        result = _perform_gemini_search(query, max_results)
+        
+        # Check if Google search was disabled due to quota exhaustion
+        if "Google Search API daily quota exceeded" in result:
+            logger.warning("Google search quota exceeded, falling back to DuckDuckGo")
+            # Fall back to DuckDuckGo search
+            disable_duckduckgo = False
+            # Continue with DuckDuckGo search below
+        else:
+            return result
 
-    # Check if we should use Gemini fallback
+    # Check if we should use Gemini fallback (only if Google search is not disabled)
     current_time = time.time()
-    if _using_gemini_fallback and current_time < _gemini_fallback_until:
+    if not google_search_disabled and _using_gemini_fallback and current_time < _gemini_fallback_until:
         # We're in fallback mode, use Gemini search
         time_left = int(_gemini_fallback_until - current_time)
         logger.info(f"Using Gemini search fallback (DuckDuckGo cooling off for {time_left} more seconds)")
-        return _perform_gemini_search(query, max_results)
+        result = _perform_gemini_search(query, max_results)
+        
+        # Check if Google search was disabled due to quota exhaustion
+        if "Google Search API daily quota exceeded" in result:
+            logger.warning("Google search quota exceeded during fallback, switching to DuckDuckGo")
+            # Switch to DuckDuckGo
+            _using_gemini_fallback = False
+            # Continue with DuckDuckGo search below
+        else:
+            return result
 
     # If fallback period has expired, reset the fallback flag
     if _using_gemini_fallback and current_time >= _gemini_fallback_until:
@@ -354,10 +402,10 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     # Ensure minimum rate limit and cap max retries
     if rate_limit_seconds < 5.0:
         rate_limit_seconds = 5.0
-    if max_retries > 5:
-        max_retries = 5
+    if max_retries > 10:  # Increased max cap since we may double retries
+        max_retries = 10
 
-    logger.info("Proceeding with DuckDuckGo search - no fallback conditions met")
+    logger.info("Proceeding with DuckDuckGo search")
 
     # Apply basic rate limiting
     current_time = time.time()
@@ -372,7 +420,7 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     logger.info("Creating DuckDuckGoSearchTool instance")
     search_tool = DuckDuckGoSearchTool(max_results=max_results)
     
-    # Try DuckDuckGo search with retries (exactly 3 attempts by default)
+    # Try DuckDuckGo search with retries (exactly 3 attempts by default, 6 when Google is disabled)
     for attempt in range(max_retries + 1):  # 0, 1, 2, 3 (4 total attempts for max_retries=3)
         try:
             logger.info(f"DuckDuckGo search attempt {attempt + 1}/{max_retries + 1}")
@@ -414,11 +462,25 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
             logger.info(f"DuckDuckGo attempt {attempt + 1} failed. Retrying in {backoff_time:.2f} seconds...")
             time.sleep(backoff_time)
     
-    # All DuckDuckGo attempts failed - switch to Gemini search fallback
-    logger.warning(f"DuckDuckGo search failed after {max_retries + 1} attempts. Switching to Gemini search fallback.")
-    _using_gemini_fallback = True
-    _gemini_fallback_until = time.time() + _gemini_fallback_duration
-    return _perform_gemini_search(query, max_results)
+    # All DuckDuckGo attempts failed
+    # If Google search is not disabled, try switching to Gemini search fallback
+    if not google_search_disabled:
+        logger.warning(f"DuckDuckGo search failed after {max_retries + 1} attempts. Trying Gemini search fallback.")
+        result = _perform_gemini_search(query, max_results)
+        
+        # Check if Google search was disabled due to quota exhaustion
+        if "Google Search API daily quota exceeded" in result:
+            logger.error("Both DuckDuckGo and Google search have failed. No search options available.")
+            return f"Error: Both DuckDuckGo and Google search are unavailable. DuckDuckGo failed after {max_retries + 1} attempts, and Google search daily quota is exhausted."
+        else:
+            # Google search succeeded, set fallback mode
+            _using_gemini_fallback = True
+            _gemini_fallback_until = time.time() + _gemini_fallback_duration
+            return result
+    else:
+        # Google search is disabled, so we can't fall back to it
+        logger.error(f"DuckDuckGo search failed after {max_retries + 1} attempts and Google search is disabled due to quota exhaustion.")
+        return f"Error: DuckDuckGo search failed after {max_retries + 1} attempts and Google search is disabled due to daily quota exhaustion. Search unavailable."
 
 @tool
 def visit_webpage(url: str) -> str:
