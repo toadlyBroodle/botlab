@@ -21,7 +21,7 @@ from typing import Optional, List, Dict, Any, Union
 from smolagents import CodeAgent, ToolCallingAgent
 from smolagents.utils import AgentGenerationError
 
-from ..gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error, is_per_minute_rate_limit_error, handle_per_minute_rate_limit, DAILY_QUOTA_ID, check_and_handle_search_error_message, safe_search_with_quota_detection, mark_model_daily_quota_exhausted, are_all_fallback_models_exhausted, is_model_daily_quota_exhausted
+from ..gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error, is_per_minute_rate_limit_error, handle_per_minute_rate_limit, DAILY_QUOTA_ID, check_and_handle_search_error_message, safe_search_with_quota_detection, mark_model_daily_quota_exhausted, are_all_fallback_models_exhausted, is_model_daily_quota_exhausted, AllDailySearchRateLimsExhausted
 from .tools import apply_custom_agent_prompts, save_final_answer
 
 logger = logging.getLogger(__name__)
@@ -207,41 +207,79 @@ class BaseAgent(ABC):
             
         Raises:
             AgentGenerationError: If daily quota error is detected in the response or execution steps
+            AllDailySearchRateLimsExhausted: If all search options are exhausted
         """
-        result = self.agent.run(task)
-        
-        # Check if the final result contains a daily quota error message
-        if isinstance(result, str) and "DAILY_QUOTA_ERROR:" in result:
-            # Check if this is a search quota error vs model quota error
-            if self._is_search_quota_error(result):
-                logger.warning(f"Search quota error detected in agent response (not a model error): {result[:300]}...")
-                # For search quota errors, don't raise an exception - let the agent continue
-                # The search tool should have handled this internally by disabling Google search
-                return result
-            else:
-                logger.error(f"Model daily quota error detected in agent response: {result[:300]}...")
-                # Convert to AgentGenerationError so it can be handled by the run method's daily quota logic
-                raise AgentGenerationError(f"Daily quota error detected in agent response: {result}", self.agent.logger)
-        
-        # Also check the agent's memory/steps for daily quota errors in tool responses
-        if hasattr(self.agent, 'memory') and hasattr(self.agent.memory, 'steps'):
-            for step in self.agent.memory.steps:
-                if hasattr(step, 'tool_calls') and step.tool_calls:
-                    for tool_call in step.tool_calls:
-                        if hasattr(tool_call, 'result') and tool_call.result:
-                            tool_result = str(tool_call.result)
-                            if "DAILY_QUOTA_ERROR:" in tool_result:
-                                # Check if this is a search quota error vs model quota error
-                                if self._is_search_quota_error(tool_result):
-                                    logger.warning(f"Search quota error detected in tool call result (not a model error): {tool_result[:300]}...")
-                                    # For search quota errors, don't raise an exception - let the agent continue
-                                    continue
-                                else:
-                                    logger.error(f"Model daily quota error detected in tool call result: {tool_result[:300]}...")
-                                    # Convert to AgentGenerationError so it can be handled by the run method's daily quota logic
-                                    raise AgentGenerationError(f"Daily quota error detected in tool execution: {tool_result}", self.agent.logger)
-        
-        return result
+        try:
+            result = self.agent.run(task)
+            
+            # Check for AllDailySearchRateLimsExhausted in the main result
+            if isinstance(result, str):
+                if ("AllDailySearchRateLimsExhausted" in result or 
+                    "SEARCH_EXHAUSTION_CRITICAL_ERROR" in result or
+                    ("DuckDuckGo search failed after" in result and "Google search is disabled" in result)):
+                    logger.error(f"All search options exhausted detected in agent result: {result[:300]}...")
+                    raise AllDailySearchRateLimsExhausted(f"All search options exhausted in agent result: {result}")
+            
+            # Check if the final result contains a daily quota error message
+            if isinstance(result, str) and "DAILY_QUOTA_ERROR:" in result:
+                # Check if this is a search quota error vs model quota error
+                if self._is_search_quota_error(result):
+                    logger.warning(f"Search quota error detected in agent response (not a model error): {result[:300]}...")
+                    # For search quota errors, don't raise an exception - let the agent continue
+                    # The search tool should have handled this internally by disabling Google search
+                    return result
+                else:
+                    logger.error(f"Model daily quota error detected in agent response: {result[:300]}...")
+                    # Convert to AgentGenerationError so it can be handled by the run method's daily quota logic
+                    raise AgentGenerationError(f"Daily quota error detected in agent response: {result}", self.agent.logger)
+            
+            # Check for AllDailySearchRateLimsExhausted in the agent's execution steps
+            if hasattr(self.agent, 'memory') and hasattr(self.agent.memory, 'steps'):
+                for step in self.agent.memory.steps:
+                    if hasattr(step, 'tool_calls') and step.tool_calls:
+                        for tool_call in step.tool_calls:
+                            if hasattr(tool_call, 'result') and tool_call.result:
+                                tool_result = str(tool_call.result)
+                                
+                                # Check for AllDailySearchRateLimsExhausted exception in tool execution
+                                if ("AllDailySearchRateLimsExhausted" in tool_result or 
+                                    "SEARCH_EXHAUSTION_CRITICAL_ERROR" in tool_result or
+                                    "DuckDuckGo search failed after" in tool_result and "Google search is disabled" in tool_result):
+                                    logger.error(f"All search options exhausted detected in tool execution: {tool_result[:300]}...")
+                                    raise AllDailySearchRateLimsExhausted(f"All search options exhausted during tool execution: {tool_result}")
+                                
+                                if "DAILY_QUOTA_ERROR:" in tool_result:
+                                    # Check if this is a search quota error vs model quota error
+                                    if self._is_search_quota_error(tool_result):
+                                        logger.warning(f"Search quota error detected in tool call result (not a model error): {tool_result[:300]}...")
+                                        # For search quota errors, don't raise an exception - let the agent continue
+                                        continue
+                                    else:
+                                        logger.error(f"Model daily quota error detected in tool call result: {tool_result[:300]}...")
+                                        # Convert to AgentGenerationError so it can be handled by the run method's daily quota logic
+                                        raise AgentGenerationError(f"Daily quota error detected in tool execution: {tool_result}", self.agent.logger)
+                                        
+                    # Also check step error if it exists
+                    if hasattr(step, 'error') and step.error:
+                        step_error = step.error
+                        # Check if error is an AllDailySearchRateLimsExhausted exception object
+                        if isinstance(step_error, AllDailySearchRateLimsExhausted):
+                            logger.error(f"AllDailySearchRateLimsExhausted exception found in step: {str(step_error)}")
+                            raise step_error
+                        # Check if error is a string containing the exception details
+                        step_error_str = str(step_error)
+                        if ("AllDailySearchRateLimsExhausted" in step_error_str or 
+                            "SEARCH_EXHAUSTION_CRITICAL_ERROR" in step_error_str or
+                            "DuckDuckGo search failed after" in step_error_str and "Google search is disabled" in step_error_str):
+                            logger.error(f"All search options exhausted detected in step error: {step_error_str[:300]}...")
+                            raise AllDailySearchRateLimsExhausted(f"All search options exhausted in step execution: {step_error_str}")
+            
+            return result
+            
+        except AllDailySearchRateLimsExhausted as e:
+            # Re-raise AllDailySearchRateLimsExhausted without conversion
+            logger.error(f"All search options exhausted: {str(e)}")
+            raise
     
     def _is_search_quota_error(self, message: str) -> bool:
         """Check if a DAILY_QUOTA_ERROR message is related to search quota vs model quota.
@@ -477,6 +515,11 @@ class BaseAgent(ABC):
             except Exception as e:
                 # Handle other types of exceptions
                 logger.error(f"Non-AgentGenerationError encountered: {type(e).__name__}: {str(e)[:200]}")
+                
+                # Handle AllDailySearchRateLimsExhausted specifically
+                if isinstance(e, AllDailySearchRateLimsExhausted):
+                    logger.error(f"All search options exhausted during agent execution: {str(e)}")
+                    raise  # Re-raise to terminate the calling process
                 
                 # For non-daily quota errors, re-raise as-is (daily quota errors are now handled in execute_task)
                 raise  # Re-raise other exceptions immediately
