@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from agents.translator.agents import TranslatorAgent
 from agents.utils.file_manager import FileManager
+from agents.utils.agents.tools import save_final_answer
 
 
 def main():
@@ -60,7 +61,7 @@ def main():
         ],
         "model_used": "gemini-2.5-pro-preview-03-25"
     }
-    file_manager.save_final_answer(translator, results, "gemini_translation_examples", "translator")
+    save_final_answer(translator, results, "gemini_translation_examples", "translator", use_daily_master=True)
     print(f"\nResults saved to the translator/data directory.")
 
 

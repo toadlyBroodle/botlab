@@ -4,7 +4,7 @@ import uuid
 import argparse
 import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
 import logging
@@ -46,13 +46,15 @@ logger.setLevel(logging.INFO)
 class FileManager:
     """File manager for saving and loading agent outputs."""
     
-    def __init__(self, project_id: Optional[str] = None):
+    def __init__(self, project_id: Optional[str] = None, use_daily_master: bool = True):
         """Initialize the file manager.
         
         Args:
             project_id: Optional project identifier to group related files
+            use_daily_master: Whether to use daily master JSON files (default: True)
         """
         self.project_id = project_id or str(uuid.uuid4())[:8]
+        self.use_daily_master = use_daily_master
     
     def _get_directory_for_agent(self, agent_name: Optional[str] = None, file_type: Optional[str] = None) -> Path:
         """Get the appropriate directory for a given agent.
@@ -75,6 +77,152 @@ class FileManager:
         # Default to researcher if no agent specified
         return AGENT_DIRS["researcher_agent"]
     
+    def get_daily_master_file_path(self, agent_name: Optional[str] = None) -> str:
+        """Get the path for today's daily master JSON file.
+        
+        Args:
+            agent_name: Name of the agent (determines directory)
+            
+        Returns:
+            Path to today's daily master JSON file
+        """
+        today = date.today().strftime("%Y-%m-%d")
+        directory = self._get_directory_for_agent(agent_name)
+        return str(directory / f"{today}_master.json")
+    
+    def save_to_daily_master(self, 
+                           content: str, 
+                           agent_name: Optional[str] = None,
+                           file_type: str = "report", 
+                           title: Optional[str] = None, 
+                           metadata: Optional[Dict[str, Any]] = None) -> str:
+        """Save content to today's daily master JSON file.
+        
+        Args:
+            content: The content to save
+            agent_name: Name of the agent
+            file_type: Type of file (default: "report")
+            title: Optional title for the entry
+            metadata: Optional metadata to include
+            
+        Returns:
+            The path to the daily master file
+        """
+        logger.info(f"FileManager.save_to_daily_master called with agent_name={agent_name}, file_type={file_type}, title={title}")
+        
+        # Get the daily master file path
+        master_file_path = self.get_daily_master_file_path(agent_name)
+        directory = os.path.dirname(master_file_path)
+        
+        # Ensure directory exists
+        os.makedirs(directory, exist_ok=True)
+        
+        # Load existing data or create new structure
+        master_data = {"entries": [], "metadata": {"created": datetime.now().isoformat(), "project_id": self.project_id}}
+        
+        if os.path.exists(master_file_path):
+            try:
+                with open(master_file_path, 'r', encoding='utf-8') as f:
+                    master_data = json.load(f)
+                    # Ensure entries list exists
+                    if "entries" not in master_data:
+                        master_data["entries"] = []
+                logger.info(f"Loaded existing master file with {len(master_data['entries'])} entries")
+            except (json.JSONDecodeError, FileNotFoundError):
+                logger.warning(f"Could not load existing master file, creating new one")
+        
+        # Create new entry
+        entry_id = str(uuid.uuid4())[:8]
+        timestamp = datetime.now().isoformat()
+        
+        new_entry = {
+            "id": entry_id,
+            "timestamp": timestamp,
+            "agent_name": agent_name,
+            "file_type": file_type,
+            "title": title,
+            "content": content,
+            "metadata": metadata or {}
+        }
+        
+        # Add the new entry
+        master_data["entries"].append(new_entry)
+        
+        # Update master metadata
+        master_data["metadata"]["last_updated"] = timestamp
+        master_data["metadata"]["total_entries"] = len(master_data["entries"])
+        
+        # Save the updated master file
+        with open(master_file_path, 'w', encoding='utf-8') as f:
+            json.dump(master_data, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Saved entry {entry_id} to daily master file: {master_file_path}")
+        logger.info(f"Master file now contains {len(master_data['entries'])} total entries")
+        
+        return master_file_path
+    
+    def get_daily_master_entries(self, agent_name: Optional[str] = None, date_str: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get all entries from a daily master file.
+        
+        Args:
+            agent_name: Name of the agent (determines directory)
+            date_str: Date string (YYYY-MM-DD), defaults to today
+            
+        Returns:
+            List of entries from the daily master file
+        """
+        if date_str is None:
+            date_str = date.today().strftime("%Y-%m-%d")
+        
+        directory = self._get_directory_for_agent(agent_name)
+        master_file_path = directory / f"{date_str}_master.json"
+        
+        if not os.path.exists(master_file_path):
+            return []
+        
+        try:
+            with open(master_file_path, 'r', encoding='utf-8') as f:
+                master_data = json.load(f)
+                return master_data.get("entries", [])
+        except (json.JSONDecodeError, FileNotFoundError):
+            logger.warning(f"Could not load master file: {master_file_path}")
+            return []
+    
+    def get_latest_entry_from_daily_master(self, agent_name: Optional[str] = None, date_str: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get the latest entry from a daily master file.
+        
+        Args:
+            agent_name: Name of the agent (determines directory)
+            date_str: Date string (YYYY-MM-DD), defaults to today
+            
+        Returns:
+            The latest entry from the daily master file, or None if not found
+        """
+        entries = self.get_daily_master_entries(agent_name, date_str)
+        if entries:
+            # Return the latest entry (last in the list)
+            return entries[-1]
+        return None
+    
+    def list_daily_master_files(self, agent_name: Optional[str] = None) -> List[str]:
+        """List all daily master files for an agent.
+        
+        Args:
+            agent_name: Name of the agent (determines directory)
+            
+        Returns:
+            List of daily master file paths
+        """
+        directory = self._get_directory_for_agent(agent_name)
+        master_files = []
+        
+        if os.path.exists(directory):
+            for filename in os.listdir(directory):
+                if filename.endswith('_master.json'):
+                    master_files.append(str(directory / filename))
+        
+        return sorted(master_files, reverse=True)  # Most recent first
+    
     def save_file(self, 
                  content: str, 
                  file_type: str = "report", 
@@ -82,7 +230,8 @@ class FileManager:
                  agent_name: Optional[str] = None,
                  extension: str = ".md",
                  version: Optional[str] = None,
-                 metadata: Optional[Dict[str, Any]] = None) -> str:
+                 metadata: Optional[Dict[str, Any]] = None,
+                 use_daily_master: Optional[bool] = None) -> str:
         """Save a file to the agent's data directory.
         
         Args:
@@ -93,10 +242,25 @@ class FileManager:
             extension: File extension (default: .md)
             version: Optional version identifier
             metadata: Optional metadata to save alongside the content
+            use_daily_master: Override instance setting for daily master usage
             
         Returns:
-            The filepath of the saved file
+            The filepath of the saved file or daily master file
         """
+        # Determine whether to use daily master (override instance setting if specified)
+        should_use_daily_master = use_daily_master if use_daily_master is not None else self.use_daily_master
+        
+        if should_use_daily_master:
+            # Use daily master JSON file
+            return self.save_to_daily_master(
+                content=content,
+                agent_name=agent_name,
+                file_type=file_type,
+                title=title,
+                metadata=metadata
+            )
+        
+        # Original individual file saving logic
         logger.info(f"FileManager.save_file called with file_type={file_type}, title={title}")
         
         # Get human-readable timestamp
@@ -416,6 +580,9 @@ def parse_args():
     # List files command
     list_parser = subparsers.add_parser("list", help="List files")
     list_parser.add_argument("--agent", type=str, help="Filter by agent type (researcher, manager, editor, writer_critic, qaqc)")
+    list_parser.add_argument("--daily-master", action="store_true", help="List daily master files instead of individual files")
+    list_parser.add_argument("--entries", action="store_true", help="List entries from daily master files")
+    list_parser.add_argument("--date", type=str, help="Specific date (YYYY-MM-DD) for daily master entries")
     
     # Delete files command
     delete_parser = subparsers.add_parser("delete", help="Delete files")
@@ -434,21 +601,53 @@ def main():
     
     if args.command == "list":
         # List files
-        if args.agent:
-            agent_name = f"{args.agent}_agent"
-            if agent_name not in AGENT_DIRS:
+        if args.daily_master:
+            # List daily master files
+            agent_name = f"{args.agent}_agent" if args.agent else None
+            if args.agent and agent_name not in AGENT_DIRS:
                 print(f"Error: Invalid agent type '{args.agent}'")
                 return
             
-            filter_criteria = {"agent_name": agent_name}
-            files = file_manager.list_files(filter_criteria=filter_criteria)
+            master_files = file_manager.list_daily_master_files(agent_name)
+            print(f"Found {len(master_files)} daily master files:")
+            for master_file in master_files:
+                print(f"- {master_file}")
+                
+        elif args.entries:
+            # List entries from daily master files
+            agent_name = f"{args.agent}_agent" if args.agent else None
+            if args.agent and agent_name not in AGENT_DIRS:
+                print(f"Error: Invalid agent type '{args.agent}'")
+                return
+            
+            entries = file_manager.get_daily_master_entries(agent_name, args.date)
+            print(f"Found {len(entries)} entries in daily master file:")
+            for entry in entries:
+                print(f"- [{entry['timestamp']}] {entry.get('title', 'No title')} ({entry['agent_name']}, {entry['file_type']})")
+                print(f"  ID: {entry['id']}")
+                if len(entry['content']) > 100:
+                    print(f"  Content: {entry['content'][:100]}...")
+                else:
+                    print(f"  Content: {entry['content']}")
+                print()
+                
         else:
-            files = file_manager.list_files()
-        
-        # Print the files
-        print(f"Found {len(files)} files:")
-        for file in files:
-            print(f"- {file['filepath']} (ID: {file['file_id']})")
+            # List individual files (original behavior)
+            if args.agent:
+                agent_name = f"{args.agent}_agent"
+                if agent_name not in AGENT_DIRS:
+                    print(f"Error: Invalid agent type '{args.agent}'")
+                    return
+                
+                filter_criteria = {"agent_name": agent_name}
+                files = file_manager.list_files(filter_criteria=filter_criteria)
+            else:
+                files = file_manager.list_files()
+            
+            # Print the files
+            print(f"Found {len(files)} files:")
+            for file in files:
+                print(f"- {file['filepath']} (ID: {file['file_id']})")
     
     elif args.command == "delete":
         if args.file_id:

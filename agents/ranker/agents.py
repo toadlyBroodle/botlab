@@ -234,12 +234,13 @@ Always be fair and consistent in your evaluations.
         execution_time = time.time() - start_time
         print(f"\nExecution time: {execution_time:.2f} seconds")
         
-        # Save the result
+        # Save the result using daily master files
         save_final_answer(
             agent=self.agent,
             result=response,
             query_or_prompt=prompt,
-            agent_type="ranker"
+            agent_type="ranker",
+            use_daily_master=True
         )
         
         return response

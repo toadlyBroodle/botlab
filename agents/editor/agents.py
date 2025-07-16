@@ -373,12 +373,13 @@ DO NOT just outline steps or describe what you would do. Actually perform the ed
         
         print(f"\nExecution time: {execution_time:.2f} seconds")
         
-        # Save the final answer using the shared tool
+        # Save the final answer using the shared tool with daily master files
         save_final_answer(
             agent=self.agent,
             result=result,
             query_or_prompt=content,
-            agent_type="editor"
+            agent_type="editor",
+            use_daily_master=True
         )
         
         return result 
