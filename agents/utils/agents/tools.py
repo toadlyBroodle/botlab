@@ -358,9 +358,9 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     
     google_search_disabled = is_google_search_disabled()
     
-    if google_search_disabled:
+    if google_search_disabled and not disable_duckduckgo:
         logger.info("Google search is disabled due to daily quota exhaustion. Using DuckDuckGo only.")
-        # Force use of DuckDuckGo only
+        # Force use of DuckDuckGo only when Google is disabled AND DuckDuckGo is not disabled
         disable_duckduckgo = False
         _using_gemini_fallback = False
         
@@ -368,7 +368,12 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
         original_max_retries = max_retries
         max_retries = max_retries * 2
         logger.info(f"Google search disabled: Doubling DuckDuckGo retries from {original_max_retries} to {max_retries}")
-    
+    elif google_search_disabled and disable_duckduckgo:
+        # Both Google and DuckDuckGo are disabled - this is an error condition
+        logger.error("Both Google search and DuckDuckGo are disabled. No search options available.")
+        error_msg = "Both Google search (quota exhausted) and DuckDuckGo (disabled by configuration) are unavailable. No search options."
+        raise AllDailySearchRateLimsExhausted(error_msg)
+
     # If DuckDuckGo is disabled, use Gemini search directly
     if disable_duckduckgo:
         logger.info("DuckDuckGo search disabled, using Gemini search directly")
