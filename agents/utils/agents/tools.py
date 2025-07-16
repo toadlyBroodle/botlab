@@ -518,11 +518,77 @@ def visit_webpage(url: str) -> str:
     return webpage_tool.forward(url)
 
 @tool
-def load_file(agent_type: Optional[str] = None, version: str = "latest") -> str:
+def load_from_daily_master(agent_type: str, date_str: str = None, entry_id: str = None) -> str:
+    """Load content from a daily master file.
+    
+    Args:
+        agent_type: The type of agent (e.g., "researcher", "editor")
+        date_str: Date string (YYYY-MM-DD), defaults to today
+        entry_id: Specific entry ID to load, defaults to latest entry
+        
+    Returns:
+        The content of the entry as a string, or an error message
+    """
+    # Import here to avoid circular imports
+    try:
+        from ...utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    except ImportError:
+        # Handle case where relative imports don't work (e.g., when run as script)
+        import sys
+        import os
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        from utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    
+    try:
+        import logging
+        logger = logging.getLogger("file_manager")
+        
+        # Map agent_type to agent_name
+        agent_name = f"{agent_type}_agent"
+        
+        # Check if the agent exists
+        if agent_name not in AGENT_DIRS:
+            return f"Error: Invalid agent type '{agent_type}'"
+        
+        # Get entries from daily master file
+        file_manager = FileManager()
+        
+        if entry_id:
+            # Load specific entry by ID
+            entries = file_manager.get_daily_master_entries(agent_name, date_str)
+            entry = next((e for e in entries if e['id'] == entry_id), None)
+            if not entry:
+                return f"Entry with ID '{entry_id}' not found for agent: {agent_type}"
+        else:
+            # Load latest entry
+            entry = file_manager.get_latest_entry_from_daily_master(agent_name, date_str)
+            if not entry:
+                return f"No entries found in daily master file for agent: {agent_type}"
+        
+        # Format the return content
+        title = entry.get('title', 'No title')
+        timestamp = entry.get('timestamp', 'Unknown time')
+        content = entry.get('content', '')
+        
+        result = f"Daily Master Entry: '{title}' (ID: {entry['id']}, Time: {timestamp})\n\n{content}"
+        
+        logger.info(f"Loaded daily master entry for {agent_type}: {entry['id']}")
+        return result
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error loading daily master entry for {agent_type}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return f"Error loading daily master entry for {agent_type}: {str(e)}"
+
+
+@tool
+def load_file(agent_type: Optional[str] = None, version: str = "latest", use_daily_master: bool = True) -> str:
     """Load a file from an agent's data directory.
     
     This tool retrieves files from agent-specific data directories. Each agent stores its
     output files in its own data directory (e.g., researcher/data/, editor/data/).
+    By default, it loads from daily master JSON files that contain all outputs for the day.
     
     Args:
         agent_type: The type of agent to load files from. Options include:
@@ -531,19 +597,31 @@ def load_file(agent_type: Optional[str] = None, version: str = "latest") -> str:
         version: Which version to load. Options:
                 - "latest": The most recent file (default)
                 - "previous": The second most recent file
+        use_daily_master: Whether to load from daily master files (default: True)
     
     Returns:
         The content of the file, or an error message if no files are found.
     """
+    if use_daily_master and agent_type:
+        return load_from_daily_master(agent_type)
+    
+    # Original implementation for individual files
     # Import here to avoid circular imports
-    from ...utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    try:
+        from ...utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    except ImportError:
+        # Handle case where relative imports don't work (e.g., when run as script)
+        import sys
+        import os
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        from utils.file_manager.file_manager import FileManager, AGENT_DIRS
     
     try:
         import logging
         logger = logging.getLogger("file_manager")
         
-        # Initialize file manager
-        file_manager = FileManager()
+        # Initialize file manager with daily master disabled for this call
+        file_manager = FileManager(use_daily_master=False)
         
         # Get list of files from the agent's directory
         filter_criteria = {}
@@ -598,24 +676,32 @@ def extract_final_answer_from_memory(agent) -> Any:
     
     return None
 
-def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_type: str = "agent") -> str:
-    """Save the agent's final answer to a file in the agent's data directory.
+def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_type: str = "agent", use_daily_master: bool = True) -> str:
+    """Save the agent's final answer to a daily master file or individual file.
     
     This function extracts the final_answer from an agent's memory if available,
-    otherwise it uses the provided result. It then saves the content to a file
-    in the agent's data directory.
+    otherwise it uses the provided result. It then saves the content to the
+    agent's data directory using either daily master files or individual files.
     
     Args:
         agent: The agent instance with memory
         result: The result from the agent.run() call
         query_or_prompt: The original query or prompt that was given to the agent
         agent_type: The type of agent (e.g., "researcher", "editor")
+        use_daily_master: Whether to use daily master JSON files (default: True)
     
     Returns:
-        The file ID of the saved file, or an error message
+        The file path of the saved file, or an error message
     """
     # Import here to avoid circular imports
-    from ...utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    try:
+        from ...utils.file_manager.file_manager import FileManager, AGENT_DIRS
+    except ImportError:
+        # Handle case where relative imports don't work (e.g., when run as script)
+        import sys
+        import os
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        from utils.file_manager.file_manager import FileManager, AGENT_DIRS
     
     try:
         import os
@@ -623,7 +709,7 @@ def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_typ
         logger = logging.getLogger("file_manager")
         
         # Print debug information
-        logger.info(f"Saving final answer for agent_type: {agent_type}")
+        logger.info(f"Saving final answer for agent_type: {agent_type}, use_daily_master: {use_daily_master}")
         
         # Extract the final answer from agent.memory if available
         final_answer = extract_final_answer_from_memory(agent)
@@ -640,15 +726,27 @@ def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_typ
             "content_type": "final_answer",
         }
         
-        # Save the final answer
-        file_manager = FileManager()
-        file_id = file_manager.save_file(
+        # Create a title from the query if available
+        title = None
+        if query_or_prompt:
+            # Extract first 50 characters as title
+            title = query_or_prompt[:50].strip()
+            if len(query_or_prompt) > 50:
+                title += "..."
+        
+        # Save the final answer using FileManager with daily master option
+        file_manager = FileManager(use_daily_master=use_daily_master)
+        file_path = file_manager.save_file(
             content=final_answer,
-            metadata=metadata
+            agent_name=f"{agent_type}_agent",
+            file_type="final_answer",
+            title=title,
+            metadata=metadata,
+            use_daily_master=use_daily_master
         )
         
-        logger.info(f"Saved final answer as file_id: {file_id}")
-        return file_id
+        logger.info(f"Saved final answer to: {file_path}")
+        return file_path
         
     except Exception as e:
         import traceback

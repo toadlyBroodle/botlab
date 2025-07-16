@@ -121,12 +121,13 @@ Do not modify either of the outputs you are given, only provide a comparison and
         
         print(f"\nExecution time: {execution_time:.2f} seconds")
         
-        # Save the final answer using the shared tool
+        # Save the final answer using the shared tool with daily master files
         save_final_answer(
             agent=self.agent,
             result=result,
             query_or_prompt=prompt,
-            agent_type="qaqc"
+            agent_type="qaqc",
+            use_daily_master=True
         )
         
         return result 

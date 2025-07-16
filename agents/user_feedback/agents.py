@@ -201,8 +201,8 @@ class UserFeedbackAgent:
                 subject = f"Agent Progress Report - Iteration {self.iteration_count}"
                 send_status = send_mail(subject, report_content_body)
                 logger.info(f"Report sending status to {self.remote_email}: {send_status}")
-                # Save the generated report for record-keeping if needed
-                save_final_answer(self._report_generator_agent, report_content_body, f"Iteration {self.iteration_count} report to user", "user_feedback_report")
+                # Save the generated report for record-keeping if needed using daily master files
+                save_final_answer(self._report_generator_agent, report_content_body, f"Iteration {self.iteration_count} report to user", "user_feedback_report", use_daily_master=True)
             else:
                 logger.warning("Report content generation failed or returned empty. Report not sent.")
         elif is_paused:
@@ -211,7 +211,7 @@ class UserFeedbackAgent:
             logger.info(f"Report sending skipped: REMOTE_USER_EMAIL not configured.")
 
         # For general logging of this cycle's outcome, independent of LLM result
-        # save_final_answer(self._report_generator_agent, f"Process feedback cycle {self.iteration_count} complete.", "user_feedback_cycle_log")
+        # save_final_answer(self._report_generator_agent, f"Process feedback cycle {self.iteration_count} complete.", "user_feedback_cycle_log", use_daily_master=True)
         # Decided to save only actual reports for now.
 
         return state

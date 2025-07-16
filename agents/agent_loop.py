@@ -8,17 +8,33 @@ from typing import List, Dict, Any, Optional, Callable, Tuple, Union
 from datetime import datetime
 
 from dotenv import load_dotenv
-from .utils.telemetry import start_telemetry, suppress_litellm_logs
-from .utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from .utils.file_manager.file_manager import FileManager
-from .utils.agents.tools import load_file
 
-# Import the agent classes
-from .researcher.agents import ResearcherAgent
-from .writer_critic.agents import WriterAgent, CriticAgent
-from .editor.agents import EditorAgent, FactCheckerAgent
-from .qaqc.agents import QAQCAgent
-from .user_feedback.agents import UserFeedbackAgent
+# Handle imports for both module and script execution
+try:
+    from .utils.telemetry import start_telemetry, suppress_litellm_logs
+    from .utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+    from .utils.file_manager.file_manager import FileManager
+    from .utils.agents.tools import load_file
+    
+    # Import the agent classes
+    from .researcher.agents import ResearcherAgent
+    from .writer_critic.agents import WriterAgent, CriticAgent
+    from .editor.agents import EditorAgent, FactCheckerAgent
+    from .qaqc.agents import QAQCAgent
+    from .user_feedback.agents import UserFeedbackAgent
+except ImportError:
+    # For script execution
+    from utils.telemetry import start_telemetry, suppress_litellm_logs
+    from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+    from utils.file_manager.file_manager import FileManager
+    from utils.agents.tools import load_file
+    
+    # Import the agent classes
+    from researcher.agents import ResearcherAgent
+    from writer_critic.agents import WriterAgent, CriticAgent
+    from editor.agents import EditorAgent, FactCheckerAgent
+    from qaqc.agents import QAQCAgent
+    from user_feedback.agents import UserFeedbackAgent
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""
@@ -382,14 +398,21 @@ class AgentLoop:
             prev_agent_type = self.agent_sequence[current_agent_index - 1]
             
             # Use the load_file function to get the latest file from the previous agent
+            # Use daily master files by default
             try:
-                file_content = load_file(agent_type=prev_agent_type)
+                file_content = load_file(agent_type=prev_agent_type, use_daily_master=True)
                 
                 # Extract a title from the content
                 title = "Previous Output"
-                if isinstance(file_content, str) and file_content.startswith("File:"):
-                    title_line = file_content.split("\n")[0]
-                    title = title_line.replace("File:", "").strip().strip("'")
+                if isinstance(file_content, str):
+                    if file_content.startswith("Daily Master Entry:"):
+                        # Extract title from daily master entry format
+                        title_line = file_content.split("\n")[0]
+                        if "'" in title_line:
+                            title = title_line.split("'")[1]
+                    elif file_content.startswith("File:"):
+                        title_line = file_content.split("\n")[0]
+                        title = title_line.replace("File:", "").strip().strip("'")
                 
                 # Add to prompt
                 prompt += f"\n--- Latest Output from {prev_agent_type}: {title} ---\n"

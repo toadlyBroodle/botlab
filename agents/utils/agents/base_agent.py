@@ -422,12 +422,13 @@ class BaseAgent(ABC):
                 
                 print(f"\nExecution time: {execution_time:.2f} seconds")
                 
-                # Save the final answer using the shared tool
+                # Save the final answer using the shared tool with daily master files
                 save_final_answer(
                     agent=self.agent,
                     result=result,
                     query_or_prompt=query,
-                    agent_type=self.get_agent_type_name()
+                    agent_type=self.get_agent_type_name(),
+                    use_daily_master=True
                 )
                 
                 return result
