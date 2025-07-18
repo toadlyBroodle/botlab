@@ -379,12 +379,11 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
         logger.info("DuckDuckGo search disabled, using Gemini search directly")
         result = _perform_gemini_search(query, max_results)
         
-        # Check if Google search was disabled due to quota exhaustion
+        # If Gemini search also fails, raise an error instead of falling back to DuckDuckGo
         if "Google Search API daily quota exceeded" in result:
-            logger.warning("Google search quota exceeded, falling back to DuckDuckGo")
-            # Fall back to DuckDuckGo search
-            disable_duckduckgo = False
-            # Continue with DuckDuckGo search below
+            error_msg = "Google Search API daily quota exceeded and DuckDuckGo is disabled. No search options available."
+            logger.error(error_msg)
+            raise AllDailySearchRateLimsExhausted(error_msg)
         else:
             return result
 
