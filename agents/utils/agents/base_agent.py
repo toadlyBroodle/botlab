@@ -530,6 +530,56 @@ class BaseAgent(ABC):
             raise last_error
         else:
             raise RuntimeError(f"Unexpected error in {self.__class__.__name__} run method")
+    
+    def get_current_call_cost_info(self) -> Optional[Dict[str, Any]]:
+        """Get cost information for the current API call from the underlying model.
+        
+        Returns:
+            Dictionary with current call cost information, or None if not available
+        """
+        if hasattr(self.model, 'get_current_call_cost_info'):
+            return self.model.get_current_call_cost_info()
+        return None
+    
+    def get_total_cost_info(self) -> Dict[str, Any]:
+        """Get total accumulated cost information from the underlying model.
+        
+        Returns:
+            Dictionary with total cost information
+        """
+        if hasattr(self.model, 'get_total_cost_info'):
+            return self.model.get_total_cost_info()
+        return {
+            'prompt_tokens': 0,
+            'completion_tokens': 0,
+            'total_cost_cents': 0.0
+        }
+    
+    def get_model_cost_info(self) -> Optional[Dict[str, Any]]:
+        """Get comprehensive cost information from the underlying model.
+        
+        This method provides both current call and total cost information
+        in a format compatible with the CSV agent loop cost tracking.
+        
+        Returns:
+            Dictionary with current and total cost information, or None if not available
+        """
+        try:
+            current_cost = self.get_current_call_cost_info()
+            total_cost = self.get_total_cost_info()
+            
+            if current_cost or total_cost:
+                return {
+                    'current_call': current_cost,
+                    'total': total_cost,
+                    'prompt_tokens': total_cost.get('prompt_tokens', 0),
+                    'completion_tokens': total_cost.get('completion_tokens', 0),
+                    'total_cost_cents': total_cost.get('total_cost_cents', 0.0)
+                }
+            return None
+        except Exception as e:
+            logger.debug(f"Failed to get model cost info: {e}")
+            return None
 
 
 class BaseCodeAgent(BaseAgent):

@@ -6,7 +6,7 @@ from collections import deque
 from datetime import datetime, timedelta
 from smolagents import LiteLLMModel
 from litellm.exceptions import RateLimitError, ServiceUnavailableError
-from typing import List, Dict, Optional, Any, Tuple, Union
+from typing import List, Dict, Optional, Any, Tuple, Union, Callable
 import threading
 import logging
 import litellm
@@ -33,6 +33,37 @@ import litellm.exceptions
 import traceback
 
 logger = logging.getLogger(__name__)
+
+def load_model_costs_from_json(model_info_path: str) -> Dict[str, Dict[str, float]]:
+    """Load model cost information from gem_llm_info.json file.
+    
+    Args:
+        model_info_path: Path to the gem_llm_info.json file
+        
+    Returns:
+        Dictionary with model costs in the same format as the old MODEL_COSTS
+    """
+    model_costs = {}
+    try:
+        with open(model_info_path, 'r') as f:
+            model_info = json.load(f)
+        
+        for model_name, model_data in model_info.items():
+            if 'cost_info' in model_data:
+                cost_info = model_data['cost_info']
+                model_costs[model_name] = {
+                    "input_cost_per_token_cents": cost_info.get("input_cost_per_token_cents", 0.0),
+                    "output_cost_per_token_cents": cost_info.get("output_cost_per_token_cents", 0.0)
+                }
+        
+        logger.debug(f"Loaded cost information for {len(model_costs)} models from {model_info_path}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to load model costs from {model_info_path}: {e}")
+        # Fallback to empty dictionary - cost calculation will be skipped
+        model_costs = {}
+    
+    return model_costs
 
 
 class AllDailySearchRateLimsExhausted(Exception):
@@ -428,6 +459,7 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         enable_fallback: bool = False,
         enable_fallback_on_long_wait: bool = False,
         long_wait_fallback_threshold: float = 60.0,
+        cost_callback: Optional[Callable] = None,
         **kwargs
     ):
         """Initializes the rate-limited LiteLLM model wrapper.
@@ -452,6 +484,8 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                                                  exceeds `long_wait_fallback_threshold`.
             long_wait_fallback_threshold (float): The wait time in seconds that triggers proactive fallback
                                                   if `enable_fallback_on_long_wait` is True.
+            cost_callback (Optional[Callable]): Optional callback function to receive real-time cost information.
+                                               Called after each successful API call with cost data.
             **kwargs: Additional arguments passed to the underlying `LiteLLMModel` constructor.
         """
         litellm.utils.logging_enabled = False
@@ -470,6 +504,22 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         self.current_fallback_level = 0
         self.fallback_history = []
         self.model_info_path_for_fallback = model_info_path
+        self.cost_callback = cost_callback  # Store cost callback for external cost reporting
+        
+        # Cost tracking fields
+        self.current_call_cost_info = None
+        self.total_cost_cents = 0.0
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_search_cost_cents = 0.0
+        self.total_search_count = 0
+        
+        # Load model costs from JSON file (use correct path to gem_llm_info.json)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        gem_llm_info_path = os.path.join(current_dir, "gem_llm_info.json")
+        self.model_costs = load_model_costs_from_json(gem_llm_info_path)
+        
+        logger.info(f"RateLimitedLiteLLMModel initialized with model {model_id}")
 
         try:
             with open(model_info_path, 'r') as f: model_info_json = json.load(f)
@@ -803,7 +853,8 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             base_wait_time=self.base_wait_time,
             max_retries=self.max_retries, 
             jitter_factor=self.jitter_factor,
-            enable_fallback=False, 
+            enable_fallback=False,
+            cost_callback=self.cost_callback,  # Pass cost callback to temporary model
         )
         return temp_model
 
@@ -852,7 +903,8 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         if self.enable_fallback and self.model_id != self.original_model_id and self.api_call_count > 0: 
             self.reset_to_original_model() # This will change self.model_id if successful
             
-        estimated_input_tokens = min(sum(len(m.get("content", "")) for m in messages) // 4, self.input_token_limit)
+        # Handle both dict-style messages and ChatMessage objects
+        estimated_input_tokens = min(sum(len(getattr(m, 'content', '') if hasattr(m, 'content') else m.get("content", "")) for m in messages) // 4, self.input_token_limit)
         
         # self.model_id reflects the current model for this attempt (original or a stabilized fallback)
         # _apply_rate_limit will check against this model_id's limits in the shared_tracker.
@@ -892,16 +944,59 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                 # The model used by super().__call__ is self.model_id from the smolagents.LiteLLMModel parent.
                 response = super().__call__(messages=messages, **current_call_kwargs)
                 
-                token_counts = self.get_token_counts()
-                input_tokens, output_tokens = token_counts.get('input_token_count', estimated_input_tokens), token_counts.get('output_token_count', 0)
+                # Get token counts from response metadata or fallback to deprecated properties
+                input_tokens = estimated_input_tokens
+                output_tokens = 0
+                
+                # Try to extract from smolagents token_usage attribute (new format)
+                if hasattr(response, 'token_usage') and response.token_usage:
+                    token_usage = response.token_usage
+                    input_tokens = token_usage.input_tokens if hasattr(token_usage, 'input_tokens') else estimated_input_tokens
+                    output_tokens = token_usage.output_tokens if hasattr(token_usage, 'output_tokens') else 0
+                    logger.debug(f"📊 Extracted token counts from response.token_usage: {input_tokens} input + {output_tokens} output")
+                
+                # Fallback to legacy _additional_kwargs format if token_usage not available
+                elif hasattr(response, '_additional_kwargs') and response._additional_kwargs:
+                    usage = response._additional_kwargs.get('usage')
+                    if usage:
+                        input_tokens = usage.get('prompt_tokens', estimated_input_tokens)
+                        output_tokens = usage.get('completion_tokens', 0)
+                        logger.debug(f"📊 Extracted token counts from response._additional_kwargs: {input_tokens} input + {output_tokens} output")
+                
+                # Fallback to smolagents deprecated properties if response metadata not available
+                if input_tokens == estimated_input_tokens and output_tokens == 0:
+                    input_tokens = getattr(self, 'last_input_token_count', estimated_input_tokens) or estimated_input_tokens
+                    output_tokens = getattr(self, 'last_output_token_count', 0) or 0
+                    logger.debug(f"📊 Extracted token counts from deprecated properties: {input_tokens} input + {output_tokens} output")
+                
                 self.shared_tracker.update_tracking(self.model_id, input_tokens, output_tokens) # Track for the successful model
+                
+                # Calculate and store cost information for this call
+                self.current_call_cost_info = self.calculate_call_cost(input_tokens, output_tokens, self.model_id)
+                
+                # Update cumulative totals
+                self.total_prompt_tokens += input_tokens
+                self.total_completion_tokens += output_tokens
+                self.total_cost_cents += self.current_call_cost_info['total_cost_cents']
+                
+                # Call cost callback if provided
+                if self.cost_callback:
+                    try:
+                        cost_callback_data = {
+                            'current_call': self.current_call_cost_info,
+                            'total': self.get_total_cost_info()
+                        }
+                        self.cost_callback(cost_callback_data)
+                        logger.debug(f"📞 Called cost callback with: {cost_callback_data}")
+                    except Exception as callback_error:
+                        logger.warning(f"Cost callback failed: {callback_error}")
                 
                 if self.model_id != self.original_model_id: # Log if success was on a fallback
                     self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, self.model_id, "success_on_fallback"))
                 
                 self.api_call_count += 1
                 if self.api_call_count % 3 == 0: self.print_rate_limit_status(use_logger=True)
-                logger.info(f"API call successful with model {self.model_id}. Tokens: {input_tokens+output_tokens}")
+                logger.info(f"API call successful with model {self.model_id}. Tokens: {input_tokens+output_tokens}, Cost: ${self.current_call_cost_info['total_cost_cents']:.6f} cents")
                 return response
                 
             except Exception as e:
@@ -1102,6 +1197,90 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         logging.getLogger("litellm").setLevel(logging.ERROR if not enable_litellm_logging else logging.INFO)
         logger.info(f"Configured logging: HTTP libs to {logging.getLevelName(level)}, LiteLLM logging {'enabled' if enable_litellm_logging else 'disabled'}")
         return True
+
+    def calculate_call_cost(self, input_tokens: int, output_tokens: int, model_id: str = None) -> Dict[str, Any]:
+        """Calculate the cost for a single API call based on token counts.
+        
+        Args:
+            input_tokens: Number of input tokens
+            output_tokens: Number of output tokens
+            model_id: Model ID to use for cost calculation (uses self.model_id if None)
+            
+        Returns:
+            Dictionary with cost information
+        """
+        if model_id is None:
+            model_id = self.model_id
+            
+        # Remove gemini/ prefix if present for MODEL_COSTS lookup
+        model_key = model_id.replace('gemini/', '')
+        
+        cost_info = {
+            'prompt_tokens': input_tokens,
+            'completion_tokens': output_tokens,
+            'total_cost_cents': 0.0,
+            'search_cost_cents': 0.0,
+            'search_count': 0,
+            'model': model_key
+        }
+        
+        if model_key in self.model_costs:
+            model_cost_data = self.model_costs[model_key]
+            input_cost = input_tokens * model_cost_data["input_cost_per_token_cents"]
+            output_cost = output_tokens * model_cost_data["output_cost_per_token_cents"]
+            cost_info['total_cost_cents'] = input_cost + output_cost
+            
+            logger.debug(f"💰 Calculated cost: {input_tokens} prompt + {output_tokens} completion tokens = ${cost_info['total_cost_cents']:.6f} cents (model: {model_key})")
+        else:
+            logger.warning(f"No cost information available for model {model_key}")
+            
+        return cost_info
+
+    def get_current_call_cost_info(self) -> Optional[Dict[str, Any]]:
+        """Get cost information for the most recent API call.
+        
+        Returns:
+            Dictionary with cost information or None if no call has been made
+        """
+        return self.current_call_cost_info
+
+    def get_total_cost_info(self) -> Dict[str, Any]:
+        """Get cumulative cost information across all API calls.
+        
+        Returns:
+            Dictionary with total cost information
+        """
+        return {
+            'total_cost_cents': self.total_cost_cents,
+            'total_prompt_tokens': self.total_prompt_tokens,
+            'total_completion_tokens': self.total_completion_tokens,
+            'total_search_cost_cents': self.total_search_cost_cents,
+            'total_search_count': self.total_search_count,
+            'api_call_count': self.api_call_count
+        }
+    
+    def generate(self, messages, **kwargs):
+        """Override the generate method to add cost tracking.
+        
+        This is the method that smolagents actually calls, not __call__.
+        We need to track costs here for smolagents integration.
+        """
+        logger.debug(f"📊 RateLimitedLiteLLMModel.generate called with {len(messages)} messages")
+        
+        # Call our existing __call__ method which has all the cost tracking logic
+        response = self.__call__(messages=messages, **kwargs)
+        
+        logger.debug(f"📊 RateLimitedLiteLLMModel.generate completed, returning response")
+        return response
+
+    def reset_cost_tracking(self):
+        """Reset all cost tracking counters to zero."""
+        self.current_call_cost_info = None
+        self.total_cost_cents = 0.0
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_search_cost_cents = 0.0
+        self.total_search_count = 0
 
 def parse_retry_delay_from_error(error: Exception) -> Optional[float]:
     """Parse the retryDelay value from an AgentGenerationError containing a LiteLLM RateLimitError.
