@@ -2,12 +2,48 @@
     "gemini-2.5-pro-preview": {
         "rpm_limit": 15,
         "tpm_limit": 1000000,
-        "rpd_limit": 25
+        "rpd_limit": 25,
+        "cost_info": {
+            "input_cost_per_token_cents": 0.000125,
+            "output_cost_per_token_cents": 0.001
+        }
     },
     "gemini-2.5-flash-preview": {
         "rpm_limit": 10,
         "tpm_limit": 1000000,
-        "rpd_limit": 500
+        "rpd_limit": 500,
+        "cost_info": {
+            "input_cost_per_token_cents": 0.00003,
+            "output_cost_per_token_cents": 0.00025
+        }
+    },
+    "gemini-2.5-flash-lite": {
+        "rpm_limit": 30,
+        "tpm_limit": 1000000,
+        "rpd_limit": 1500,
+        "api_info": {
+            "name": "models/gemini-2.5-flash-lite",
+            "base_model_id": "",
+            "version": "2.5",
+            "display_name": "Gemini 2.5 Flash-Lite",
+            "description": "Our smallest and most cost effective model, built for at scale usage",
+            "input_token_limit": 1048576,
+            "output_token_limit": 8192,
+            "supported_generation_methods": [
+                "generateContent",
+                "countTokens",
+                "createCachedContent"
+            ],
+            "temperature": 1.0,
+            "max_temperature": 2.0,
+            "top_p": 0.95,
+            "top_k": 40
+        },
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.00001,
+            "output_cost_per_token_cents": 0.00004
+        }
     },
     "gemini-2.0-flash-exp-image-generation": {
         "rpm_limit": 10,
@@ -31,7 +67,11 @@
             "top_p": 0.95,
             "top_k": 40
         },
-        "model_family": "gemini"
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.000015,
+            "output_cost_per_token_cents": 0.00006
+        }
     },
     "gemini-2.0-flash": {
         "rpm_limit": 15,
@@ -55,7 +95,11 @@
             "top_p": 0.95,
             "top_k": 40
         },
-        "model_family": "gemini"
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.000015,
+            "output_cost_per_token_cents": 0.00006
+        }
     },
     "gemini-2.0-flash-lite": {
         "rpm_limit": 30,
@@ -79,7 +123,11 @@
             "top_p": 0.95,
             "top_k": 40
         },
-        "model_family": "gemini"
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.0000075,
+            "output_cost_per_token_cents": 0.00003
+        }
     },
     "gemini-2.0-flash-thinking-exp": {
         "rpm_limit": 10,
@@ -88,9 +136,9 @@
         "api_info": {
             "name": "models/gemini-2.0-flash-thinking-exp",
             "base_model_id": "",
-            "version": "2.5-preview-04-17",
-            "display_name": "Gemini 2.5 Flash Preview 04-17",
-            "description": "Preview release (April 17th, 2025) of Gemini 2.5 Flash",
+            "version": "2.0",
+            "display_name": "Gemini 2.0 Flash Thinking Experimental",
+            "description": "Gemini 2.0 Flash with thinking capabilities",
             "input_token_limit": 1048576,
             "output_token_limit": 65536,
             "supported_generation_methods": [
@@ -103,7 +151,11 @@
             "top_p": 0.95,
             "top_k": 64
         },
-        "model_family": "gemini"
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.000015,
+            "output_cost_per_token_cents": 0.00006
+        }
     },
     "gemini-1.5-flash": {
         "rpm_limit": 15,
@@ -114,7 +166,7 @@
             "base_model_id": "",
             "version": "001",
             "display_name": "Gemini 1.5 Flash",
-            "description": "Alias that points to the most recent stable version of Gemini 1.5 Flash, our fast and versatile multimodal model for scaling across diverse tasks.",
+            "description": "Our fastest multimodal model with great performance for diverse, repetitive tasks and a 1 million token context window",
             "input_token_limit": 1000000,
             "output_token_limit": 8192,
             "supported_generation_methods": [
@@ -126,7 +178,11 @@
             "top_p": 0.95,
             "top_k": 40
         },
-        "model_family": "gemini"
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.000075,
+            "output_cost_per_token_cents": 0.00030
+        }
     },
     "gemini-1.5-flash-8b": {
         "rpm_limit": 15,
@@ -137,7 +193,7 @@
             "base_model_id": "",
             "version": "001",
             "display_name": "Gemini 1.5 Flash-8B",
-            "description": "Stable version of Gemini 1.5 Flash-8B, our smallest and most cost effective Flash model, released in October of 2024.",
+            "description": "Our smallest model for lower intelligence use cases, with a 1 million token context window",
             "input_token_limit": 1000000,
             "output_token_limit": 8192,
             "supported_generation_methods": [
@@ -150,7 +206,11 @@
             "top_p": 0.95,
             "top_k": 40
         },
-        "model_family": "gemini"
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.0000375,
+            "output_cost_per_token_cents": 0.00015
+        }
     },
     "gemini-1.5-pro": {
         "rpm_limit": 2,
@@ -161,7 +221,7 @@
             "base_model_id": "",
             "version": "001",
             "display_name": "Gemini 1.5 Pro",
-            "description": "Stable version of Gemini 1.5 Pro, our mid-size multimodal model that supports up to 2 million tokens, released in May of 2024.",
+            "description": "Our highest intelligence Gemini 1.5 series model, with a breakthrough 2 million token context window",
             "input_token_limit": 2000000,
             "output_token_limit": 8192,
             "supported_generation_methods": [
@@ -173,6 +233,37 @@
             "top_p": 0.95,
             "top_k": 40
         },
-        "model_family": "gemini"
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.000125,
+            "output_cost_per_token_cents": 0.0005
+        }
+    },
+    "gemini-1.0-pro": {
+        "rpm_limit": 15,
+        "tpm_limit": 1000000,
+        "rpd_limit": 1500,
+        "api_info": {
+            "name": "models/gemini-1.0-pro",
+            "base_model_id": "",
+            "version": "001",
+            "display_name": "Gemini 1.0 Pro",
+            "description": "Legacy Gemini 1.0 Pro model",
+            "input_token_limit": 1000000,
+            "output_token_limit": 8192,
+            "supported_generation_methods": [
+                "generateContent",
+                "countTokens"
+            ],
+            "temperature": 1.0,
+            "max_temperature": 2.0,
+            "top_p": 0.95,
+            "top_k": 40
+        },
+        "model_family": "gemini",
+        "cost_info": {
+            "input_cost_per_token_cents": 0.00005,
+            "output_cost_per_token_cents": 0.00015
+        }
     }
 }

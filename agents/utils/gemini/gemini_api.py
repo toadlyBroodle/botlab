@@ -4,6 +4,7 @@
 import os
 import time
 import traceback
+import json
 from google import genai
 from google.genai import types
 import google.api_core.exceptions
@@ -14,6 +15,34 @@ from datetime import datetime
 from ...utils.logger_config import setup_logger
 from .model_config import GEMINI_MODELS
 
+def load_model_costs_from_json(json_path: str) -> Dict[str, Dict[str, float]]:
+    """Load model cost information from gem_llm_info.json file.
+    
+    Args:
+        json_path: Path to the gem_llm_info.json file
+        
+    Returns:
+        Dictionary with model costs
+    """
+    model_costs = {}
+    try:
+        with open(json_path, 'r') as f:
+            model_info = json.load(f)
+        
+        for model_name, model_data in model_info.items():
+            if 'cost_info' in model_data:
+                cost_info = model_data['cost_info']
+                model_costs[model_name] = {
+                    "input_cost_per_token_cents": cost_info.get("input_cost_per_token_cents", 0.0),
+                    "output_cost_per_token_cents": cost_info.get("output_cost_per_token_cents", 0.0)
+                }
+        
+    except Exception as e:
+        print(f"Warning: Failed to load model costs from {json_path}: {e}")
+        model_costs = {}
+    
+    return model_costs
+
 # Maximum number of characters in a prompt
 MAX_PROMPT_CHARS = 30000
 
@@ -22,12 +51,13 @@ def get_llm_postfix(model_name: str) -> str:
     return f"\n*llm: {model_name}*" # this format ensures clients don't render this as a url
 
 class GeminiAPI:
-    def __init__(self, default_model: str = 'gemini-2.0-flash'):
+    def __init__(self, default_model: str = 'gemini-2.0-flash', cost_callback: Optional[Callable] = None):
         if default_model not in GEMINI_MODELS:
             raise ValueError(f"Invalid model name. Must be one of: {list(GEMINI_MODELS.keys())}")
             
         self.default_model = default_model
         self.input_token_limit = GEMINI_MODELS[default_model]['input_token_limit']
+        self.cost_callback = cost_callback  # Cost callback for real-time cost reporting
         
         # Set up logging - respect console output setting
         disable_console = os.environ.get('DISABLE_CONSOLE_OUTPUT') == '1'
@@ -43,6 +73,18 @@ class GeminiAPI:
         
         # Initialize the Gemini client
         self.client = genai.Client(api_key=api_key)
+        
+        # Load model costs from gem_llm_info.json (default path relative to this file)
+        json_path = os.path.join(os.path.dirname(__file__), 'gem_llm_info.json')
+        self.model_costs = load_model_costs_from_json(json_path)
+        
+        # Cost tracking for cumulative totals
+        self.total_prompt_tokens = 0
+        self.total_completion_tokens = 0
+        self.total_cost_cents = 0.0
+        self.total_search_cost_cents = 0.0
+        self.total_search_count = 0
+        self.current_call_cost_info = None
         
         # Add safety settings
         self.safety_settings = [
@@ -90,6 +132,61 @@ class GeminiAPI:
         self.daily_requests = deque(maxlen=self.RPD_LIMIT)
         
         self.logger.info(f"GeminiAPI initialized with model {default_model}")
+
+    def limit_input_tokens(self, text: str, model: Optional[str] = None) -> str:
+        """Limit input text to model's token limit"""
+        model_name = model or self.default_model
+        if model_name in GEMINI_MODELS:
+            max_tokens = GEMINI_MODELS[model_name]['input_token_limit']
+            # Simple character-based estimation (4 chars ≈ 1 token)
+            max_chars = max_tokens * 4
+            if len(text) > max_chars:
+                self.logger.warning(f"Input text truncated from {len(text)} to {max_chars} characters")
+                return text[:max_chars]
+        return text
+
+    def get_current_call_cost_info(self) -> Optional[Dict[str, Any]]:
+        """Get cost information for the most recent API call"""
+        return self.current_call_cost_info
+
+    def get_total_cost_info(self) -> Dict[str, Any]:
+        """Get cumulative cost information across all API calls"""
+        return {
+            'total_cost_cents': self.total_cost_cents,
+            'total_prompt_tokens': self.total_prompt_tokens,
+            'total_completion_tokens': self.total_completion_tokens,
+            'total_search_cost_cents': self.total_search_cost_cents,
+            'total_search_count': self.total_search_count
+        }
+
+    def get_model_cost_info(self) -> Optional[Dict[str, Any]]:
+        """Get comprehensive cost information in the format expected by CSVAgentLoop"""
+        if self.current_call_cost_info is None:
+            return None
+            
+        return {
+            'current_call': self.current_call_cost_info,
+            'total': self.get_total_cost_info(),
+            'prompt_tokens': self.total_prompt_tokens,
+            'completion_tokens': self.total_completion_tokens,
+            'total_cost_cents': self.total_cost_cents
+        }
+
+    def _call_cost_callback(self, cost_info: Dict[str, Any]):
+        """Call the cost callback if one is set"""
+        if self.cost_callback:
+            try:
+                comprehensive_cost_info = {
+                    'current_call': cost_info,
+                    'total': self.get_total_cost_info(),
+                    'prompt_tokens': self.total_prompt_tokens,
+                    'completion_tokens': self.total_completion_tokens,
+                    'total_cost_cents': self.total_cost_cents
+                }
+                self.cost_callback(comprehensive_cost_info)
+                self.logger.debug(f"💰 Cost callback called with: {comprehensive_cost_info}")
+            except Exception as e:
+                self.logger.warning(f"Cost callback failed: {e}")
 
     def _wait_between_calls(self):
         """Ensure minimum wait between calls"""
@@ -270,7 +367,7 @@ class GeminiAPI:
              prompt: str, 
              model: Optional[str] = None,
              temperature: float = 0.7,
-             **kwargs) -> tuple[Optional[str], Optional[str]]:
+             **kwargs) -> tuple[Optional[str], Optional[str], Optional[Dict[str, Any]]]:
         """Generate content using Gemini API
         
         Args:
@@ -280,15 +377,16 @@ class GeminiAPI:
             **kwargs: Additional arguments to pass to generate_content
             
         Returns:
-            Tuple of (response_text, error_message)
+            Tuple of (response_text, error_message, cost_info)
+            cost_info contains: prompt_tokens, completion_tokens, total_cost_cents, search_cost_cents, search_count
         """
         if not prompt or not isinstance(prompt, str):
             self.logger.error("Invalid prompt: prompt must be a non-empty string")
-            return None, "Invalid prompt: prompt must be a non-empty string"
+            return None, "Invalid prompt: prompt must be a non-empty string", None
 
         model_name = model or self.default_model
         if model_name not in GEMINI_MODELS:
-            return None, f"Invalid model name. Must be one of: {list(GEMINI_MODELS.keys())}"
+            return None, f"Invalid model name. Must be one of: {list(GEMINI_MODELS.keys())}", None
 
         prompt = self.limit_input_tokens(prompt, model=model_name)
         input_tokens = self.count_tokens(prompt, model=model_name)
@@ -322,6 +420,61 @@ class GeminiAPI:
                     config=config
                 )
                 
+                # Initialize cost tracking variables
+                prompt_tokens = 0
+                completion_tokens = 0
+                total_cost_cents = 0
+                search_cost_cents = 0
+                search_count = 0
+                
+                # Extract token counts and calculate costs from response
+                if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                    usage = response.usage_metadata
+                    prompt_tokens = getattr(usage, 'prompt_token_count', 0) or getattr(usage, 'promptTokenCount', 0)
+                    completion_tokens = getattr(usage, 'candidates_token_count', 0) or getattr(usage, 'candidatesTokenCount', 0)
+                    
+                    # Calculate cost using MODEL_COSTS
+                    if model_name in self.model_costs:
+                        model_costs = self.model_costs[model_name]
+                        input_cost = prompt_tokens * model_costs["input_cost_per_token_cents"]
+                        output_cost = completion_tokens * model_costs["output_cost_per_token_cents"]
+                        total_cost_cents = input_cost + output_cost
+                        
+                        self.logger.debug(f"💰 API Response cost: {prompt_tokens} prompt + {completion_tokens} completion tokens = ${total_cost_cents:.6f} cents")
+                    
+                    # Extract search context cost if present
+                    if hasattr(usage, 'search_context_cost_per_query'):
+                        search_cost_cents = getattr(usage, 'search_context_cost_per_query', 0)
+                    
+                    # Update tracking for actual tokens used
+                    actual_tokens = getattr(usage, 'total_token_count', 0) or getattr(usage, 'totalTokenCount', 0)
+                    if actual_tokens > 0:
+                        if self.token_usage:
+                            self.token_usage.pop()
+                        self.token_usage.append(actual_tokens)
+                
+                # Prepare cost info to return
+                cost_info = {
+                    'prompt_tokens': prompt_tokens,
+                    'completion_tokens': completion_tokens,
+                    'total_cost_cents': total_cost_cents,
+                    'search_cost_cents': search_cost_cents,
+                    'search_count': search_count,
+                    'model': model_name
+                } if prompt_tokens > 0 or completion_tokens > 0 or total_cost_cents > 0 else None
+                
+                # Update cumulative totals
+                if cost_info:
+                    self.total_prompt_tokens += prompt_tokens
+                    self.total_completion_tokens += completion_tokens
+                    self.total_cost_cents += total_cost_cents
+                    self.total_search_cost_cents += search_cost_cents
+                    self.total_search_count += search_count
+                    self.current_call_cost_info = cost_info
+                    
+                    # Call cost callback if set
+                    self._call_cost_callback(cost_info)
+                
                 if hasattr(response, 'usage_metadata'):
                     actual_tokens = response.usage_metadata.total_token_count
                     if self.token_usage:
@@ -348,7 +501,7 @@ class GeminiAPI:
                                     if hasattr(part.code_execution_result, 'error') and part.code_execution_result.error:
                                         error_msg = part.code_execution_result.error
                                         self.logger.error(f"Code execution error: {error_msg}")
-                                        return None, "Error: Code execution failed"
+                                        return None, "Error: Code execution failed", cost_info
                                     if hasattr(part.code_execution_result, 'outcome'):
                                         self.logger.debug(f"\nOutcome: {part.code_execution_result.outcome}")
                                 elif hasattr(part, 'function_call') and part.function_call:
@@ -357,108 +510,29 @@ class GeminiAPI:
                                     if function_response is not None:
                                         result_parts.append(str(function_response))
                                     else:
-                                        return None, "Error: Function call failed"
+                                        return None, "Error: Function call failed", cost_info
                                 elif hasattr(part, 'function_response') and part.function_response:
                                     if hasattr(part.function_response, 'output') and part.function_response.output is not None:
                                         result_parts.append(f"`{part.function_response.output}`")
                                     elif hasattr(part.function_response, 'response') and part.function_response.response is not None:
                                         result_parts.append(f"`{part.function_response.response}`")
-                                    if hasattr(part.function_response, 'error') and part.function_response.error:
-                                        error_msg = part.function_response.error
-                                        self.logger.error(f"Function execution error: {error_msg}")
-                                        return None, "Error: Function execution failed"
-                    
-                    if result_parts:
-                        result = "\n".join(filter(None, result_parts))
-                        if result.strip():
-                            return f"{result}\n{get_llm_postfix(model_name)}", None
 
-                # Handle regular text response
-                if hasattr(response, 'prompt_feedback') and response.prompt_feedback and response.prompt_feedback.block_reason:
-                    error_msg = f"Content blocked: {response.prompt_feedback.block_reason}"
-                    self.logger.error(error_msg)
-                    return None, "Error: Content blocked"
+                    response_text = "\n".join(result_parts) if result_parts else None
+                    if response_text:
+                        return response_text, None, cost_info
+                    else:
+                        return None, "No response content found", cost_info
 
-                # Extract text from parts if direct text access fails
-                try:
-                    if hasattr(response, 'text'):
-                        text = response.text
-                        if text and text.strip():
-                            return f"{text.strip()}\n{get_llm_postfix(model_name)}", None
-                            
-                    if hasattr(response, 'parts'):
-                        text_parts = []
-                        for part in response.parts:
-                            if hasattr(part, 'text') and part.text is not None:
-                                text_parts.append(part.text)
-                        if text_parts:
-                            text = ' '.join(filter(None, text_parts)).strip()
-                            if text:
-                                return f"{text}\n{get_llm_postfix(model_name)}", None
-                    
-                    # If we get here and have no content, return an error
-                    return None, "Error: No valid content in response"
-                    
-                except AttributeError as e:
-                    self.logger.error(f"Failed to extract text from response: {str(e)}")
-                    return None, "Error: Failed to extract text from response"
+                return None, "No valid response from model", cost_info
 
-            except google.api_core.exceptions.ResourceExhausted as e:
-                self.logger.warning(f"Rate limit exceeded: {str(e)}\nTraceback:\n{traceback.format_exc()}")
-                
-                # If not already using gemlite, try falling back to it
-                if model_name != "gemini-2.0-flash-lite":
-                    self.logger.info("Attempting fallback to gemlite model...")
-                    try:
-                        return self.query(prompt=prompt, model="gemini-2.0-flash-lite", temperature=temperature, **kwargs)
-                    except Exception as fallback_e:
-                        self.logger.error(f"Fallback to gemlite failed: {fallback_e}")
-                
-                if attempt < self.MAX_RETRIES - 1:
-                    wait_time = self.RETRY_DELAY * (attempt + 1)
-                    self.logger.info(f"Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
-                else:
-                    return None, "Error: Rate limit exceeded"
-                    
-            except google.api_core.exceptions.InvalidArgument as e:
-                self.logger.error(f"Invalid argument error: {str(e)}\nTraceback:\n{traceback.format_exc()}")
-                return None, "Error: Invalid argument"
-                
             except Exception as e:
-                self.logger.error(f"Unexpected error: {str(e)}\nTraceback:\n{traceback.format_exc()}")
-                if attempt < self.MAX_RETRIES - 1:
-                    wait_time = self.RETRY_DELAY * (attempt + 1)
-                    self.logger.info(f"Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
+                if attempt == self.MAX_RETRIES - 1:
+                    error_msg = f"API call failed after {self.MAX_RETRIES} attempts: {str(e)}"
+                    self.logger.error(error_msg)
+                    return None, error_msg, None
                 else:
-                    return None, "Error: Unexpected error occurred"
-        
-        return None, "Error: Max retries exceeded"
+                    wait_time = self.RETRY_DELAY * (2 ** attempt)
+                    self.logger.warning(f"API call failed (attempt {attempt + 1}), retrying in {wait_time}s: {str(e)}")
+                    time.sleep(wait_time)
 
-    def limit_input_tokens(self, text: str, max_tokens: Optional[int] = None, model: Optional[str] = None) -> str:
-        """Limit input text to stay within token limits"""
-        if model and model in GEMINI_MODELS:
-            token_limit = GEMINI_MODELS[model]['input_token_limit']
-        else:
-            token_limit = self.input_token_limit
-            
-        if max_tokens is not None:
-            token_limit = min(token_limit, max_tokens)
-            
-        current_tokens = self.count_tokens(text, model=model)
-        
-        if current_tokens <= token_limit:
-            return text
-            
-        keep_ratio = token_limit / current_tokens
-        char_limit = int(len(text) * keep_ratio)
-        
-        truncated = text[:char_limit]
-        last_period = truncated.rfind('.')
-        
-        if last_period > 0:
-            truncated = truncated[:last_period + 1]
-        
-        self.logger.debug(f"Truncated text from {current_tokens} to ~{self.count_tokens(truncated, model=model)} tokens")
-        return truncated
+        return None, "Max retries exceeded", None
