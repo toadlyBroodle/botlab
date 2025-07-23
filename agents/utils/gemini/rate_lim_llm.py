@@ -34,36 +34,7 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
-def load_model_costs_from_json(model_info_path: str) -> Dict[str, Dict[str, float]]:
-    """Load model cost information from gem_llm_info.json file.
-    
-    Args:
-        model_info_path: Path to the gem_llm_info.json file
-        
-    Returns:
-        Dictionary with model costs in the same format as the old MODEL_COSTS
-    """
-    model_costs = {}
-    try:
-        with open(model_info_path, 'r') as f:
-            model_info = json.load(f)
-        
-        for model_name, model_data in model_info.items():
-            if 'cost_info' in model_data:
-                cost_info = model_data['cost_info']
-                model_costs[model_name] = {
-                    "input_cost_per_token_cents": cost_info.get("input_cost_per_token_cents", 0.0),
-                    "output_cost_per_token_cents": cost_info.get("output_cost_per_token_cents", 0.0)
-                }
-        
-        logger.debug(f"Loaded cost information for {len(model_costs)} models from {model_info_path}")
-        
-    except Exception as e:
-        logger.warning(f"Failed to load model costs from {model_info_path}: {e}")
-        # Fallback to empty dictionary - cost calculation will be skipped
-        model_costs = {}
-    
-    return model_costs
+
 
 
 class AllDailySearchRateLimsExhausted(Exception):
@@ -514,10 +485,12 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         self.total_search_cost_cents = 0.0
         self.total_search_count = 0
         
-        # Load model costs from JSON file (use correct path to gem_llm_info.json)
+        # Load comprehensive tiered pricing data
         current_dir = os.path.dirname(os.path.abspath(__file__))
         gem_llm_info_path = os.path.join(current_dir, "gem_llm_info.json")
-        self.model_costs = load_model_costs_from_json(gem_llm_info_path)
+        
+        from .pricing_utils import load_comprehensive_pricing_from_json
+        self.comprehensive_pricing = load_comprehensive_pricing_from_json(gem_llm_info_path)
         
         logger.info(f"RateLimitedLiteLLMModel initialized with model {model_id}")
 
@@ -1199,7 +1172,7 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
         return True
 
     def calculate_call_cost(self, input_tokens: int, output_tokens: int, model_id: str = None) -> Dict[str, Any]:
-        """Calculate the cost for a single API call based on token counts.
+        """Calculate the cost for a single API call based on token counts using tiered pricing.
         
         Args:
             input_tokens: Number of input tokens
@@ -1207,12 +1180,12 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             model_id: Model ID to use for cost calculation (uses self.model_id if None)
             
         Returns:
-            Dictionary with cost information
+            Dictionary with cost information including tier used
         """
         if model_id is None:
             model_id = self.model_id
             
-        # Remove gemini/ prefix if present for MODEL_COSTS lookup
+        # Remove gemini/ prefix if present for cost lookup
         model_key = model_id.replace('gemini/', '')
         
         cost_info = {
@@ -1221,18 +1194,26 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             'total_cost_cents': 0.0,
             'search_cost_cents': 0.0,
             'search_count': 0,
-            'model': model_key
+            'model': model_key,
+            'pricing_tier': 'unknown'
         }
         
-        if model_key in self.model_costs:
-            model_cost_data = self.model_costs[model_key]
-            input_cost = input_tokens * model_cost_data["input_cost_per_token_cents"]
-            output_cost = output_tokens * model_cost_data["output_cost_per_token_cents"]
-            cost_info['total_cost_cents'] = input_cost + output_cost
+        # Use comprehensive tiered pricing
+        if model_key in self.comprehensive_pricing:
+            from .pricing_utils import calculate_tiered_cost
+            model_pricing = self.comprehensive_pricing[model_key]
+            total_cost_cents, tier_description = calculate_tiered_cost(
+                model_pricing, input_tokens, output_tokens
+            )
+            cost_info['total_cost_cents'] = total_cost_cents
+            cost_info['pricing_tier'] = tier_description
             
-            logger.debug(f"💰 Calculated cost: {input_tokens} prompt + {output_tokens} completion tokens = ${cost_info['total_cost_cents']:.6f} cents (model: {model_key})")
+            logger.debug(f"💰 Calculated cost using {model_pricing.pricing_type} pricing "
+                        f"(tier: {tier_description}): ${total_cost_cents:.6f} cents")
+            
         else:
-            logger.warning(f"No cost information available for model {model_key}")
+            logger.error(f"💰 No cost information available for model {model_key}. "
+                        f"Available models: {list(self.comprehensive_pricing.keys())}")
             
         return cost_info
 

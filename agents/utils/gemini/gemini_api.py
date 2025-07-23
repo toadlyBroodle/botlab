@@ -15,33 +15,7 @@ from datetime import datetime
 from ...utils.logger_config import setup_logger
 from .model_config import GEMINI_MODELS
 
-def load_model_costs_from_json(json_path: str) -> Dict[str, Dict[str, float]]:
-    """Load model cost information from gem_llm_info.json file.
-    
-    Args:
-        json_path: Path to the gem_llm_info.json file
-        
-    Returns:
-        Dictionary with model costs
-    """
-    model_costs = {}
-    try:
-        with open(json_path, 'r') as f:
-            model_info = json.load(f)
-        
-        for model_name, model_data in model_info.items():
-            if 'cost_info' in model_data:
-                cost_info = model_data['cost_info']
-                model_costs[model_name] = {
-                    "input_cost_per_token_cents": cost_info.get("input_cost_per_token_cents", 0.0),
-                    "output_cost_per_token_cents": cost_info.get("output_cost_per_token_cents", 0.0)
-                }
-        
-    except Exception as e:
-        print(f"Warning: Failed to load model costs from {json_path}: {e}")
-        model_costs = {}
-    
-    return model_costs
+
 
 # Maximum number of characters in a prompt
 MAX_PROMPT_CHARS = 30000
@@ -74,9 +48,11 @@ class GeminiAPI:
         # Initialize the Gemini client
         self.client = genai.Client(api_key=api_key)
         
-        # Load model costs from gem_llm_info.json (default path relative to this file)
+        # Load comprehensive tiered pricing data
         json_path = os.path.join(os.path.dirname(__file__), 'gem_llm_info.json')
-        self.model_costs = load_model_costs_from_json(json_path)
+        
+        from .pricing_utils import load_comprehensive_pricing_from_json
+        self.comprehensive_pricing = load_comprehensive_pricing_from_json(json_path)
         
         # Cost tracking for cumulative totals
         self.total_prompt_tokens = 0
@@ -420,14 +396,19 @@ class GeminiAPI:
                     prompt_tokens = getattr(usage, 'prompt_token_count', 0) or getattr(usage, 'promptTokenCount', 0)
                     completion_tokens = getattr(usage, 'candidates_token_count', 0) or getattr(usage, 'candidatesTokenCount', 0)
                     
-                    # Calculate cost using MODEL_COSTS
-                    if model_name in self.model_costs:
-                        model_costs = self.model_costs[model_name]
-                        input_cost = prompt_tokens * model_costs["input_cost_per_token_cents"]
-                        output_cost = completion_tokens * model_costs["output_cost_per_token_cents"]
-                        total_cost_cents = input_cost + output_cost
+                    # Calculate cost using tiered pricing
+                    if model_name in self.comprehensive_pricing:
+                        from .pricing_utils import calculate_tiered_cost
+                        model_pricing = self.comprehensive_pricing[model_name]
+                        total_cost_cents, tier_description = calculate_tiered_cost(
+                            model_pricing, prompt_tokens, completion_tokens
+                        )
                         
-                        self.logger.debug(f"💰 API Response cost: {prompt_tokens} prompt + {completion_tokens} completion tokens = ${total_cost_cents:.6f} cents")
+                        self.logger.debug(f"💰 API Response cost using {model_pricing.pricing_type} pricing "
+                                        f"(tier: {tier_description}): {prompt_tokens} prompt + {completion_tokens} completion tokens = ${total_cost_cents:.6f} cents")
+                    else:
+                        self.logger.warning(f"💰 No pricing information available for model {model_name}")
+                        total_cost_cents = 0.0
                     
                     # Extract search context cost if present
                     if hasattr(usage, 'search_context_cost_per_query'):
