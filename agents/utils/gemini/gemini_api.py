@@ -159,19 +159,6 @@ class GeminiAPI:
             'total_search_count': self.total_search_count
         }
 
-    def get_model_cost_info(self) -> Optional[Dict[str, Any]]:
-        """Get comprehensive cost information in the format expected by CSVAgentLoop"""
-        if self.current_call_cost_info is None:
-            return None
-            
-        return {
-            'current_call': self.current_call_cost_info,
-            'total': self.get_total_cost_info(),
-            'prompt_tokens': self.total_prompt_tokens,
-            'completion_tokens': self.total_completion_tokens,
-            'total_cost_cents': self.total_cost_cents
-        }
-
     def _call_cost_callback(self, cost_info: Dict[str, Any]):
         """Call the cost callback if one is set"""
         if self.cost_callback:
@@ -536,3 +523,76 @@ class GeminiAPI:
                     time.sleep(wait_time)
 
         return None, "Max retries exceeded", None
+    
+    def add_search_cost(self, search_cost_cents: float, search_count: int = 1):
+        """Add search cost tracking when web search tools are used.
+        
+        Args:
+            search_cost_cents: Cost of the search in cents
+            search_count: Number of searches performed (default: 1)
+        """
+        self.total_search_cost_cents += search_cost_cents
+        self.total_search_count += search_count
+        
+        # Update current call cost info if it exists
+        if self.current_call_cost_info is None:
+            self.current_call_cost_info = {
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_cost_cents': 0.0,
+                'search_cost_cents': search_cost_cents,
+                'search_count': search_count,
+                'model': self.default_model
+            }
+        else:
+            # Add to existing current call cost info
+            if 'search_cost_cents' not in self.current_call_cost_info:
+                self.current_call_cost_info['search_cost_cents'] = 0.0
+            if 'search_count' not in self.current_call_cost_info:
+                self.current_call_cost_info['search_count'] = 0
+            self.current_call_cost_info['search_cost_cents'] += search_cost_cents
+            self.current_call_cost_info['search_count'] += search_count
+        
+        # Call cost callback if set to report the updated cost immediately
+        if self.cost_callback:
+            try:
+                # For GeminiAPI, we need to structure the cost info similar to what's expected
+                cost_info = {
+                    'current_call': self.current_call_cost_info,
+                    'total': {
+                        'total_cost_cents': self.total_cost_cents,
+                        'total_prompt_tokens': self.total_prompt_tokens,
+                        'total_completion_tokens': self.total_completion_tokens,
+                        'total_search_cost_cents': self.total_search_cost_cents,
+                        'total_search_count': self.total_search_count
+                    }
+                }
+                self.cost_callback(cost_info)
+                self.logger.debug(f"💰 Called cost callback after search cost addition: ${search_cost_cents:.3f} cents")
+            except Exception as e:
+                self.logger.warning(f"Cost callback failed after search cost addition: {e}")
+        
+        self.logger.debug(f"💰 Added search cost: ${search_cost_cents:.3f} cents, count: {search_count}")
+        self.logger.debug(f"💰 Total search cost: ${self.total_search_cost_cents:.3f} cents, total count: {self.total_search_count}")
+    
+    def get_model_cost_info(self):
+        """Get comprehensive cost information from the GeminiAPI model.
+        
+        Returns:
+            Dictionary with current and total cost information
+        """
+        return {
+            'current_call': self.current_call_cost_info,
+            'total': {
+                'total_cost_cents': self.total_cost_cents,
+                'total_prompt_tokens': self.total_prompt_tokens,
+                'total_completion_tokens': self.total_completion_tokens,
+                'total_search_cost_cents': self.total_search_cost_cents,
+                'total_search_count': self.total_search_count
+            },
+            'prompt_tokens': self.total_prompt_tokens,
+            'completion_tokens': self.total_completion_tokens,
+            'total_cost_cents': self.total_cost_cents,
+            'search_cost_cents': self.total_search_cost_cents,
+            'search_count': self.total_search_count
+        }
