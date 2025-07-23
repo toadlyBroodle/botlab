@@ -4,7 +4,8 @@ from .tools import arxiv_search, pdf_to_markdown, check_conversion_status, read_
 from ..utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
 from ..utils.agents.base_agent import BaseCodeAgent
 from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error
-from typing import Optional, List
+from ..utils.gemini.simple_llm import SimpleLiteLLMModel
+from typing import Optional, List, Union
 import os
 import time
 import random
@@ -18,7 +19,7 @@ class ResearcherAgent(BaseCodeAgent):
     
     def __init__(
         self,
-        model: Optional[RateLimitedLiteLLMModel] = None,
+        model: Optional[Union[RateLimitedLiteLLMModel, SimpleLiteLLMModel]] = None,
         max_steps: int = 20,
         researcher_description: Optional[str] = None,
         researcher_prompt: Optional[str] = None,
@@ -27,22 +28,30 @@ class ResearcherAgent(BaseCodeAgent):
         base_wait_time: float = 2.0,
         max_retries: int = 3,
         additional_tools: Optional[List] = None,
+        disable_default_web_search: bool = False,  # New parameter to disable default web_search
+        web_search_disabled: bool = False,  # New parameter to completely disable web search
         **kwargs  # Accept additional arguments to pass to BaseCodeAgent
     ):
-        """Initialize the researcher agent.
+        """Initialize the ResearcherAgent.
         
         Args:
-            model: Optional RateLimitedLiteLLMModel to use. If not provided, one will be created.
+            model: Optional LiteLLM model to use
             max_steps: Maximum number of steps for the agent
-            researcher_description: Optional additional description to append to the base description
-            researcher_prompt: Optional custom system prompt to use instead of the default
-            model_id: The model ID to use if creating a new model
-            model_info_path: Path to the model info JSON file if creating a new model
-            base_wait_time: Base wait time for rate limiting if creating a new model
-            max_retries: Maximum retries for rate limiting if creating a new model
-            additional_tools: Optional list of additional tools to include with the agent
-            **kwargs: Additional arguments passed to BaseCodeAgent (e.g., enable_daily_quota_fallback)
+            researcher_description: Optional additional description
+            researcher_prompt: Optional custom system prompt
+            model_id: Model ID if creating a new model
+            model_info_path: Path to model info JSON file
+            base_wait_time: Base wait time for rate limiting (only used with rate limiting)
+            max_retries: Maximum retries for rate limiting (only used with rate limiting)
+            additional_tools: Optional list of additional tools
+            disable_default_web_search: If True, excludes the default web_search tool from base tools
+            web_search_disabled: If True, replaces web_search with a disabled placeholder
+            **kwargs: Additional arguments to pass to BaseCodeAgent
         """
+        # Store configuration for tool selection
+        self.disable_default_web_search = disable_default_web_search
+        self.web_search_disabled = web_search_disabled
+        
         super().__init__(
             model=model,
             max_steps=max_steps,
@@ -60,14 +69,49 @@ class ResearcherAgent(BaseCodeAgent):
 
     def get_tools(self) -> List:
         """Return the list of tools for the researcher agent."""
-        return [
-            web_search,
+        from ..utils.agents.tools import web_search, visit_webpage
+        from smolagents import tool
+        
+        # Import arxiv tools with fallback if not available
+        try:
+            from ..utils.agents.tools import arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown
+            arxiv_tools = [arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown]
+        except ImportError:
+            # Arxiv tools not available, use empty list
+            arxiv_tools = []
+        
+        base_tools = [
             visit_webpage,
-            arxiv_search,
-            pdf_to_markdown,
-            check_conversion_status,
-            read_paper_markdown
-        ]
+        ] + arxiv_tools
+        
+        # Conditionally add web_search based on configuration
+        if self.web_search_disabled:
+            # Create a disabled web_search placeholder locally to avoid circular imports
+            @tool
+            def web_search_disabled(query: str, max_results: int = 10, rate_limit_seconds: float = 5.0, max_retries: int = 3) -> str:
+                """Placeholder web_search tool that returns an error when web search is completely disabled.
+                
+                Args:
+                    query: The search query that would be performed (ignored since search is disabled)
+                    max_results: Maximum number of results that would be returned (default: 10, ignored)
+                    rate_limit_seconds: Minimum seconds that would wait between searches (default: 5.0, ignored)
+                    max_retries: Maximum number of retry attempts when rate limited (default: 3, ignored)
+                    
+                Returns:
+                    Error message indicating that web search is disabled for this agent
+                """
+                return "Error: Web search is disabled for this agent. Cannot perform search queries."
+            
+            # Set the function name to web_search to override the default tool
+            web_search_disabled.__name__ = "web_search"
+            base_tools.insert(0, web_search_disabled)
+        elif not self.disable_default_web_search:
+            # Add the default web_search tool (normal behavior)
+            base_tools.insert(0, web_search)
+        # If disable_default_web_search is True, we don't add any web_search here
+        # The additional_tools should provide the replacement (web_search_gemini_only)
+        
+        return base_tools
 
     def get_base_description(self) -> str:
         """Return the base description for the researcher agent."""

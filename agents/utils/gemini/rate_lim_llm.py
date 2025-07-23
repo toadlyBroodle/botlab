@@ -1259,6 +1259,50 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             'api_call_count': self.api_call_count
         }
     
+    def add_search_cost(self, search_cost_cents: float, search_count: int = 1):
+        """Add search cost tracking when web search tools are used.
+        
+        Args:
+            search_cost_cents: Cost of the search in cents
+            search_count: Number of searches performed (default: 1)
+        """
+        self.total_search_cost_cents += search_cost_cents
+        self.total_search_count += search_count
+        
+        # Update current call cost info if it exists
+        if self.current_call_cost_info is None:
+            self.current_call_cost_info = {
+                'prompt_tokens': 0,
+                'completion_tokens': 0,
+                'total_cost_cents': 0.0,
+                'search_cost_cents': search_cost_cents,
+                'search_count': search_count,
+                'model': self.model_id.replace('gemini/', '')
+            }
+        else:
+            # Add to existing current call cost info
+            if 'search_cost_cents' not in self.current_call_cost_info:
+                self.current_call_cost_info['search_cost_cents'] = 0.0
+            if 'search_count' not in self.current_call_cost_info:
+                self.current_call_cost_info['search_count'] = 0
+            self.current_call_cost_info['search_cost_cents'] += search_cost_cents
+            self.current_call_cost_info['search_count'] += search_count
+        
+        # Call cost callback if set to report the updated cost immediately
+        if self.cost_callback:
+            try:
+                cost_info = {
+                    'current_call': self.current_call_cost_info,
+                    'total': self.get_total_cost_info()
+                }
+                self.cost_callback(cost_info)
+                logger.debug(f"💰 Called cost callback after search cost addition: ${search_cost_cents:.3f} cents")
+            except Exception as e:
+                logger.warning(f"Cost callback failed after search cost addition: {e}")
+        
+        logger.debug(f"💰 Added search cost: ${search_cost_cents:.3f} cents, count: {search_count}")
+        logger.debug(f"💰 Total search cost: ${self.total_search_cost_cents:.3f} cents, total count: {self.total_search_count}")
+    
     def generate(self, messages, **kwargs):
         """Override the generate method to add cost tracking.
         

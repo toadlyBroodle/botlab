@@ -107,7 +107,7 @@ class AgentLoop:
         self.agent_contexts = agent_contexts or {}
         
         # Initialize shared model for coordinated rate limiting across all agents
-        if shared_model:
+        if shared_model is not None:
             self.shared_model = shared_model
         else:
             # Check if any agents need daily quota fallback
@@ -257,13 +257,30 @@ class AgentLoop:
                         # Extract enable_daily_quota_fallback if provided
                         enable_daily_quota_fallback = agent_context.get('enable_daily_quota_fallback', True)
                         
+                        # Extract use_rate_limiting if provided
+                        use_rate_limiting = agent_context.get('use_rate_limiting', True)
+                        
+                        # Extract web search control flags
+                        disable_default_web_search = agent_context.get('disable_default_web_search', False)
+                        web_search_disabled = agent_context.get('web_search_disabled', False)
+                        
+                        # Pass None as model if use_rate_limiting is False to let the agent create its own SimpleLiteLLMModel
+                        model_to_use = None if not use_rate_limiting else self.shared_model
+                        model_type = "individual SimpleLiteLLMModel" if not use_rate_limiting else "shared RateLimitedLiteLLMModel"
+                        print(f"Creating ResearcherAgent with {model_type} (use_rate_limiting={use_rate_limiting})")
+                        
                         agent_instance = ResearcherAgent(
-                            model=self.shared_model,
+                            model=model_to_use,
                             max_steps=max_steps,
                             researcher_description=self.agent_configs.get('researcher_description'),
                             researcher_prompt=self.agent_configs.get('researcher_prompt'),
                             additional_tools=additional_tools,
-                            enable_daily_quota_fallback=enable_daily_quota_fallback
+                            enable_daily_quota_fallback=enable_daily_quota_fallback,
+                            use_rate_limiting=use_rate_limiting,
+                            model_id=self.model_id,
+                            model_info_path=self.model_info_path,
+                            disable_default_web_search=disable_default_web_search,
+                            web_search_disabled=web_search_disabled
                         )
                         self.agents[agent_type] = agent_instance
                         

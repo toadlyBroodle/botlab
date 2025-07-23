@@ -22,6 +22,7 @@ from smolagents import CodeAgent, ToolCallingAgent
 from smolagents.utils import AgentGenerationError
 
 from ..gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error, is_per_minute_rate_limit_error, handle_per_minute_rate_limit, DAILY_QUOTA_ID, check_and_handle_search_error_message, safe_search_with_quota_detection, mark_model_daily_quota_exhausted, are_all_fallback_models_exhausted, is_model_daily_quota_exhausted, AllDailySearchRateLimsExhausted
+from ..gemini.simple_llm import SimpleLiteLLMModel
 from .tools import apply_custom_agent_prompts, save_final_answer
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ class BaseAgent(ABC):
     
     def __init__(
         self,
-        model: Optional[RateLimitedLiteLLMModel] = None,
+        model: Optional[Union[RateLimitedLiteLLMModel, SimpleLiteLLMModel]] = None,
         max_steps: int = 20,
         agent_description: Optional[str] = None,
         system_prompt: Optional[str] = None,
@@ -62,24 +63,26 @@ class BaseAgent(ABC):
         managed_agents: Optional[List] = None,
         agent_name: Optional[str] = None,
         enable_daily_quota_fallback: bool = True,
+        use_rate_limiting: bool = True,
         **kwargs
     ):
         """Initialize the base agent with common functionality.
         
         Args:
-            model: Optional RateLimitedLiteLLMModel to use. If not provided, one will be created.
+            model: Optional LiteLLM model to use. If not provided, one will be created.
             max_steps: Maximum number of steps for the agent
             agent_description: Optional additional description to append to the base description
             system_prompt: Optional custom system prompt to use instead of the default
             model_id: The model ID to use if creating a new model
             model_info_path: Path to the model info JSON file if creating a new model
-            base_wait_time: Base wait time for rate limiting if creating a new model
-            max_retries: Maximum retries for rate limiting if creating a new model
+            base_wait_time: Base wait time for rate limiting if creating a new model (only used with rate limiting)
+            max_retries: Maximum retries for rate limiting if creating a new model (only used with rate limiting)
             additional_tools: Optional list of additional tools to include with the agent
             additional_authorized_imports: Optional list of additional imports for CodeAgent
             managed_agents: Optional list of managed agents for the agent
             agent_name: Optional custom name for the agent (defaults to class-based name)
-            enable_daily_quota_fallback: Whether to enable automatic fallback on daily quota errors
+            enable_daily_quota_fallback: Whether to enable automatic fallback on daily quota errors (only used with rate limiting)
+            use_rate_limiting: Whether to use RateLimitedLiteLLMModel (True) or SimpleLiteLLMModel (False)
             **kwargs: Additional keyword arguments for agent creation
         """
         # Store configuration
@@ -91,20 +94,36 @@ class BaseAgent(ABC):
         self.managed_agents = managed_agents or []
         self.agent_kwargs = kwargs
         self.enable_daily_quota_fallback = enable_daily_quota_fallback
+        self.use_rate_limiting = use_rate_limiting
+        
+        # Extract cost_callback from kwargs if present
+        cost_callback = kwargs.get('cost_callback', None)
         
         # Create a model if one wasn't provided
         if model is None:
-            self.model = RateLimitedLiteLLMModel(
-                model_id=model_id,
-                model_info_path=model_info_path,
-                base_wait_time=base_wait_time,
-                max_retries=max_retries,
-                enable_fallback=enable_daily_quota_fallback,  # Enable fallback for daily quota handling
-            )
+            if use_rate_limiting:
+                logger.info(f"Creating RateLimitedLiteLLMModel with rate limiting enabled")
+                self.model = RateLimitedLiteLLMModel(
+                    model_id=model_id,
+                    model_info_path=model_info_path,
+                    base_wait_time=base_wait_time,
+                    max_retries=max_retries,
+                    enable_fallback=enable_daily_quota_fallback,  # Enable fallback for daily quota handling
+                    cost_callback=cost_callback,  # Pass cost callback
+                )
+            else:
+                logger.info(f"Creating SimpleLiteLLMModel without rate limiting")
+                self.model = SimpleLiteLLMModel(
+                    model_id=model_id,
+                    model_info_path=model_info_path,
+                    cost_callback=cost_callback,  # Pass cost callback
+                )
         else:
             self.model = model
             # If daily quota fallback is enabled but the model doesn't have fallback enabled, update it
-            if enable_daily_quota_fallback and not getattr(self.model, 'enable_fallback', False):
+            if (enable_daily_quota_fallback and 
+                hasattr(self.model, 'enable_fallback') and 
+                not getattr(self.model, 'enable_fallback', False)):
                 logger.warning(f"Enabling fallback on provided model {self.model.model_id} for daily quota handling")
                 self.model.enable_fallback = True
                 # Also pre-initialize fallback models if the method exists
@@ -113,6 +132,11 @@ class BaseAgent(ABC):
                         self.model._initialize_fallback_models()
                     except Exception as e:
                         logger.warning(f"Failed to pre-initialize fallback models: {e}")
+            
+            # Set cost callback on provided model if it doesn't have one
+            if cost_callback and hasattr(self.model, 'cost_callback') and not self.model.cost_callback:
+                logger.info(f"Setting cost callback on provided model")
+                self.model.cost_callback = cost_callback
         
         # Initialize the agent
         self._initialize_agent(agent_description, system_prompt, agent_name)
