@@ -447,12 +447,12 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
     - Enhanced error detection for various rate-limit related exceptions.
     """
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    gem_rate_lims_path = os.path.join(current_dir, "gem_rate_lims.json")
+    gem_llm_rates_path = os.path.join(current_dir, "gem_llm_rates.json")
 
     def __init__(
         self,
         model_id: str,
-        model_info_path: str = gem_rate_lims_path,
+        model_info_path: str = gem_llm_rates_path,
         base_wait_time: float = 2.0,
         max_retries: int = 5,
         jitter_factor: float = 0.2,
@@ -473,7 +473,7 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             model_id (str): The primary model identifier for LiteLLM (e.g., "gemini/gemini-1.5-flash").
                             This will be the `original_model_id`.
             model_info_path (str): Path to the JSON file containing model rate limit configurations.
-                                   Defaults to "gem_rate_lims.json" in the same directory.
+                                   Defaults to "gem_llm_rates.json" in the same directory.
             base_wait_time (float): Base wait time in seconds for exponential backoff on retries.
             max_retries (int): Maximum number of retries for rate limit errors or designated retryable errors.
             jitter_factor (float): Factor for adding random jitter to wait times (0 to 1 range typical).

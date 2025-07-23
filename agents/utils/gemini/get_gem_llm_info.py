@@ -1,9 +1,22 @@
 import json
 import os
+import re
 import google.generativeai as genai
 from dotenv import load_dotenv
 
-def process_gemini_data(input_file="agents/utils/gemini/gem_rate_lims.json", output_file="agents/utils/gemini/gem_llm_info.json"):
+def format_scientific_notation(json_str):
+    """Convert scientific notation in JSON string to decimal format"""
+    def replace_scientific(match):
+        number = float(match.group(0))
+        # Format with enough precision and remove trailing zeros
+        formatted = f"{number:.12f}".rstrip('0').rstrip('.')
+        return formatted
+    
+    # Pattern to match scientific notation (e.g., 1.5e-05, 3e-05)
+    pattern = r'\d+\.?\d*e[+-]\d+'
+    return re.sub(pattern, replace_scientific, json_str)
+
+def process_gemini_data(input_file="agents/utils/gemini/gem_llm_rates.json", output_file="agents/utils/gemini/gem_llm_info.json"):
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
 
@@ -65,8 +78,13 @@ def process_gemini_data(input_file="agents/utils/gemini/gem_rate_lims.json", out
             # return # stops on first error.
 
     try:
+        # First write the JSON normally
+        json_string = json.dumps(processed_data, indent=4)
+        # Apply post-processing to format scientific notation
+        formatted_json = format_scientific_notation(json_string)
+        # Write the formatted JSON to file
         with open(output_file, 'w') as f:
-            json.dump(processed_data, f, indent=4)
+            f.write(formatted_json)
         print(f"Successfully saved processed data to '{output_file}'.")
     except IOError:
         print(f"Error: Could not write to output file '{output_file}'.")
