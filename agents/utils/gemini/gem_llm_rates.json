@@ -4,10 +4,10 @@
         "tpm_limit": 250000,
         "rpd_limit": 100,
         "cost_info": {
-            "input_cost_le_200k_per_token_cents": 0.00125,
-            "output_cost_le_200k_per_token_cents": 0.01,
-            "input_cost_gt_200k_per_token_cents": 0.0025,
-            "output_cost_gt_200k_per_token_cents": 0.015
+            "input_cost_le_200k_per_token_cents": 0.000125,
+            "output_cost_le_200k_per_token_cents": 0.001,
+            "input_cost_gt_200k_per_token_cents": 0.00025,
+            "output_cost_gt_200k_per_token_cents": 0.0015
         }
     },
     "gemini-2.5-flash": {
@@ -15,9 +15,9 @@
         "tpm_limit": 250000,
         "rpd_limit": 250,
         "cost_info": {
-            "input_cost_text_image_video_per_token_cents": 0.0003,
-            "input_cost_audio_per_token_cents": 0.001,
-            "output_cost_per_token_cents": 0.0025
+            "input_cost_text_image_video_per_token_cents": 0.00003,
+            "input_cost_audio_per_token_cents": 0.0001,
+            "output_cost_per_token_cents": 0.00025
         }
     },
     "gemini-2.5-flash-lite": {
@@ -25,9 +25,9 @@
         "tpm_limit": 250000,
         "rpd_limit": 1000,
         "cost_info": {
-            "input_cost_text_image_video_per_token_cents": 0.0001,
-            "input_cost_audio_per_token_cents": 0.0003,
-            "output_cost_per_token_cents": 0.0004
+            "input_cost_text_image_video_per_token_cents": 0.00001,
+            "input_cost_audio_per_token_cents": 0.00003,
+            "output_cost_per_token_cents": 0.00004
         }
     },
     "gemini-2.0-flash": {
@@ -45,8 +45,8 @@
         "tpm_limit": 1000000,
         "rpd_limit": 200,
         "cost_info": {
-            "input_cost_per_token_cents": 0.000075,
-            "output_cost_per_token_cents": 0.0003
+            "input_cost_per_token_cents": 0.0000075,
+            "output_cost_per_token_cents": 0.00003
         }
     },
     "gemini-2.0-flash-exp-image-generation": {
@@ -72,10 +72,10 @@
         "tpm_limit": 250000,
         "rpd_limit": 50,
         "cost_info": {
-            "input_cost_le_128k_per_token_cents": 0.000075,
-            "output_cost_le_128k_per_token_cents": 0.0003,
-            "input_cost_gt_128k_per_token_cents": 0.00015,
-            "output_cost_gt_128k_per_token_cents": 0.0006
+            "input_cost_le_128k_per_token_cents": 0.0000075,
+            "output_cost_le_128k_per_token_cents": 0.00003,
+            "input_cost_gt_128k_per_token_cents": 0.000015,
+            "output_cost_gt_128k_per_token_cents": 0.00006
         }
     }
 }
