@@ -95,9 +95,9 @@
         "tpm_limit": 1000000,
         "rpd_limit": 200,
         "cost_info": {
-            "input_cost_text_image_video_per_token_cents": 0.0001,
-            "input_cost_audio_per_token_cents": 0.0007,
-            "output_cost_per_token_cents": 0.0004
+            "input_cost_text_image_video_per_token_cents": 0.00001,
+            "input_cost_audio_per_token_cents": 0.00007,
+            "output_cost_per_token_cents": 0.00004
         },
         "api_info": {
             "name": "models/gemini-2.0-flash",
@@ -146,63 +146,6 @@
             "max_temperature": 2.0,
             "top_p": 0.95,
             "top_k": 40
-        },
-        "model_family": "gemini"
-    },
-    "gemini-2.0-flash-exp-image-generation": {
-        "rpm_limit": 10,
-        "tpm_limit": 200000,
-        "rpd_limit": 100,
-        "cost_info": {
-            "input_cost_per_token_cents": 0.000015,
-            "output_cost_per_token_cents": 0.00006
-        },
-        "api_info": {
-            "name": "models/gemini-2.0-flash-exp-image-generation",
-            "base_model_id": "",
-            "version": "2.0",
-            "display_name": "Gemini 2.0 Flash (Image Generation) Experimental",
-            "description": "Gemini 2.0 Flash (Image Generation) Experimental",
-            "input_token_limit": 1048576,
-            "output_token_limit": 8192,
-            "supported_generation_methods": [
-                "generateContent",
-                "countTokens",
-                "bidiGenerateContent"
-            ],
-            "temperature": 1.0,
-            "max_temperature": 2.0,
-            "top_p": 0.95,
-            "top_k": 40
-        },
-        "model_family": "gemini"
-    },
-    "gemini-2.0-flash-thinking-exp": {
-        "rpm_limit": 10,
-        "tpm_limit": 4000000,
-        "rpd_limit": 1500,
-        "cost_info": {
-            "input_cost_per_token_cents": 0.000015,
-            "output_cost_per_token_cents": 0.00006
-        },
-        "api_info": {
-            "name": "models/gemini-2.0-flash-thinking-exp",
-            "base_model_id": "",
-            "version": "2.5-preview-05-20",
-            "display_name": "Gemini 2.5 Flash Preview 05-20",
-            "description": "Preview release (April 17th, 2025) of Gemini 2.5 Flash",
-            "input_token_limit": 1048576,
-            "output_token_limit": 65536,
-            "supported_generation_methods": [
-                "generateContent",
-                "countTokens",
-                "createCachedContent",
-                "batchGenerateContent"
-            ],
-            "temperature": 1.0,
-            "max_temperature": 2.0,
-            "top_p": 0.95,
-            "top_k": 64
         },
         "model_family": "gemini"
     },
