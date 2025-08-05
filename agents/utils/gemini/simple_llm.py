@@ -1,6 +1,7 @@
 import json
 import os
 import logging
+import time
 from typing import List, Dict, Optional, Any, Callable
 from smolagents import LiteLLMModel
 import litellm
@@ -26,15 +27,15 @@ logger = logging.getLogger(__name__)
 
 
 class SimpleLiteLLMModel(LiteLLMModel):
-    """A simplified wrapper around `smolagents.LiteLLMModel` with cost tracking but no rate limiting.
+    """A simplified wrapper around `smolagents.LiteLLMModel` with cost tracking and basic retry logic.
 
     This class provides basic LiteLLM functionality with built-in cost tracking and monitoring.
-    Unlike RateLimitedLiteLLMModel, it does not implement any rate limiting, fallback mechanisms,
-    or retry logic - it's designed for simpler use cases where rate limiting is handled elsewhere
-    or not needed.
+    Unlike RateLimitedLiteLLMModel, it does not implement complex rate limiting or fallback mechanisms,
+    but includes simple retry logic for "model is overloaded" errors.
 
     Features:
     - Direct LiteLLM API calls without rate limiting
+    - Exponential backoff retry logic for "model is overloaded" errors (up to 4 retries: 1s, 2s, 4s, 8s)
     - Comprehensive cost tracking and reporting
     - Token usage monitoring
     - Optional cost callback for real-time cost updates
@@ -128,15 +129,16 @@ class SimpleLiteLLMModel(LiteLLMModel):
             return 32000
 
     def __call__(self, messages: List[Dict[str, str]], **kwargs) -> Any:
-        """Makes an API call using the current model with cost tracking.
+        """Makes an API call using the current model with cost tracking and exponential backoff retry logic.
 
         This is the primary method for interacting with the LLM. It performs the following steps:
         1. Estimates input tokens for the request
         2. Calls the parent LiteLLM model directly (no rate limiting)
-        3. Extracts token usage from the response
-        4. Calculates and tracks costs
-        5. Calls cost callback if provided
-        6. Returns the response
+        3. If "model is overloaded" error occurs, retries up to 4 times with exponential backoff (1s, 2s, 4s, 8s)
+        4. Extracts token usage from the response
+        5. Calculates and tracks costs
+        6. Calls cost callback if provided
+        7. Returns the response
 
         Args:
             messages (List[Dict[str, str]]): The list of messages for the chat completion.
@@ -146,7 +148,7 @@ class SimpleLiteLLMModel(LiteLLMModel):
             Any: The response from the LiteLLM completion call.
 
         Raises:
-            Exception: If the API call fails for any reason.
+            Exception: If the API call fails after all retries or for non-retryable errors.
         """
         # Estimate input tokens
         estimated_input_tokens = min(
@@ -160,44 +162,75 @@ class SimpleLiteLLMModel(LiteLLMModel):
         if "timeout" not in current_call_kwargs:
             current_call_kwargs["timeout"] = 120
         
-        try:
-            # Make the API call using the parent's generate method directly - NO RATE LIMITING
-            # This is the key difference from RateLimitedLiteLLMModel - we call immediately
-            response = super().generate(messages=messages, **current_call_kwargs)
-            
-            # Extract token counts from response
-            input_tokens, output_tokens = self._extract_token_counts(response, estimated_input_tokens)
-            
-            # Calculate and store cost information
-            self.current_call_cost_info = self.calculate_call_cost(input_tokens, output_tokens)
-            
-            # Update cumulative totals
-            self.total_prompt_tokens += input_tokens
-            self.total_completion_tokens += output_tokens
-            self.total_cost_cents += self.current_call_cost_info['total_cost_cents']
-            self.api_call_count += 1
-            
-            # Call cost callback if provided
-            if self.cost_callback:
-                try:
-                    cost_callback_data = {
-                        'current_call': self.current_call_cost_info,
-                        'total': self.get_total_cost_info()
-                    }
-                    self.cost_callback(cost_callback_data)
-                    logger.debug(f"📞 Called cost callback with: {cost_callback_data}")
-                except Exception as callback_error:
-                    logger.warning(f"Cost callback failed: {callback_error}")
-            
-            logger.info(f"API call successful with model {self.model_id}. "
-                       f"Tokens: {input_tokens + output_tokens}, "
-                       f"Cost: ${self.current_call_cost_info['total_cost_cents']:.6f} cents")
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"API call failed with model {self.model_id}: {type(e).__name__}: {str(e)}")
-            raise
+        # Retry logic for "model is overloaded" errors with exponential backoff
+        max_retries = 4
+        base_delay = 1.0  # Base delay in seconds
+        
+        for attempt in range(max_retries + 1):
+            try:
+                # Make the API call using the parent's generate method directly - NO RATE LIMITING
+                # This is the key difference from RateLimitedLiteLLMModel - we call immediately
+                response = super().generate(messages=messages, **current_call_kwargs)
+                
+                # Extract token counts from response
+                input_tokens, output_tokens = self._extract_token_counts(response, estimated_input_tokens)
+                
+                # Calculate and store cost information
+                self.current_call_cost_info = self.calculate_call_cost(input_tokens, output_tokens)
+                
+                # Update cumulative totals
+                self.total_prompt_tokens += input_tokens
+                self.total_completion_tokens += output_tokens
+                self.total_cost_cents += self.current_call_cost_info['total_cost_cents']
+                self.api_call_count += 1
+                
+                # Call cost callback if provided
+                if self.cost_callback:
+                    try:
+                        cost_callback_data = {
+                            'current_call': self.current_call_cost_info,
+                            'total': self.get_total_cost_info()
+                        }
+                        self.cost_callback(cost_callback_data)
+                        logger.debug(f"📞 Called cost callback with: {cost_callback_data}")
+                    except Exception as callback_error:
+                        logger.warning(f"Cost callback failed: {callback_error}")
+                
+                if attempt > 0:
+                    logger.info(f"API call successful with model {self.model_id} on attempt {attempt + 1}. "
+                               f"Tokens: {input_tokens + output_tokens}, "
+                               f"Cost: ${self.current_call_cost_info['total_cost_cents']:.6f} cents")
+                else:
+                    logger.info(f"API call successful with model {self.model_id}. "
+                               f"Tokens: {input_tokens + output_tokens}, "
+                               f"Cost: ${self.current_call_cost_info['total_cost_cents']:.6f} cents")
+                
+                return response
+                
+            except Exception as e:
+                # Check if this is a "model is overloaded" error
+                error_message = str(e).lower()
+                is_overloaded_error = (
+                    "model is overloaded" in error_message or
+                    "overloaded" in error_message or
+                    ("code\": 503" in str(e) and "unavailable" in error_message)
+                )
+                
+                if is_overloaded_error and attempt < max_retries:
+                    # Exponential backoff: 1s, 2s, 4s, 8s
+                    retry_delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Model overloaded error detected (attempt {attempt + 1}/{max_retries + 1}). "
+                                  f"Waiting {retry_delay} seconds before retry...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    # Either not an overloaded error, or we've exhausted retries
+                    if attempt > 0:
+                        logger.error(f"API call failed with model {self.model_id} after {attempt + 1} attempts: "
+                                   f"{type(e).__name__}: {str(e)}")
+                    else:
+                        logger.error(f"API call failed with model {self.model_id}: {type(e).__name__}: {str(e)}")
+                    raise
 
     def _extract_token_counts(self, response: Any, estimated_input_tokens: int) -> tuple[int, int]:
         """Extract token counts from the API response.
