@@ -22,6 +22,7 @@ try:
     from .editor.agents import EditorAgent, FactCheckerAgent
     from .qaqc.agents import QAQCAgent
     from .user_feedback.agents import UserFeedbackAgent
+    from .promoter.agents import PromoterAgent
 except ImportError:
     # For script execution
     from utils.telemetry import start_telemetry, suppress_litellm_logs
@@ -35,6 +36,7 @@ except ImportError:
     from editor.agents import EditorAgent, FactCheckerAgent
     from qaqc.agents import QAQCAgent
     from user_feedback.agents import UserFeedbackAgent
+    from promoter.agents import PromoterAgent
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""
@@ -284,6 +286,20 @@ class AgentLoop:
                         )
                         self.agents[agent_type] = agent_instance
                         
+                    elif agent_type.lower() == 'promoter':
+                        # PromoterAgent supports additional_tools; mirrors researcher pattern
+                        additional_tools = agent_context.get('additional_tools')
+                        use_rate_limiting = agent_context.get('use_rate_limiting', True)
+                        model_to_use = None if not use_rate_limiting else self.shared_model
+                        agent_instance = PromoterAgent(
+                            model=model_to_use,
+                            max_steps=max_steps,
+                            description=self.agent_configs.get('promoter_description'),
+                            system_prompt=self.agent_configs.get('promoter_prompt'),
+                            additional_tools=additional_tools,
+                        )
+                        self.agents[agent_type] = agent_instance
+
                     elif agent_type.lower() == 'writer':
                         agent_instance = WriterAgent(
                             model=self.shared_model,
