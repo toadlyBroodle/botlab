@@ -199,11 +199,11 @@ class SimpleLiteLLMModel(LiteLLMModel):
                 if attempt > 0:
                     logger.info(f"API call successful with model {self.model_id} on attempt {attempt + 1}. "
                                f"Tokens: {input_tokens + output_tokens}, "
-                               f"Cost: ${self.current_call_cost_info['total_cost_cents']:.6f} cents")
+                               f"Cost: ${self.current_call_cost_info['total_cost_cents']/100:.6f} USD")
                 else:
                     logger.info(f"API call successful with model {self.model_id}. "
                                f"Tokens: {input_tokens + output_tokens}, "
-                               f"Cost: ${self.current_call_cost_info['total_cost_cents']:.6f} cents")
+                               f"Cost: ${self.current_call_cost_info['total_cost_cents']/100:.6f} USD")
                 
                 return response
                 
@@ -316,7 +316,7 @@ class SimpleLiteLLMModel(LiteLLMModel):
             cost_info['pricing_tier'] = tier_description
             
             logger.debug(f"💰 Calculated cost using {model_pricing.pricing_type} pricing "
-                        f"(tier: {tier_description}): ${total_cost_cents:.6f} cents")
+                        f"(tier: {tier_description}): ${total_cost_cents/100:.6f} USD")
             
         else:
             logger.error(f"💰 No cost information available for model {model_key}. "
@@ -415,14 +415,14 @@ class SimpleLiteLLMModel(LiteLLMModel):
             f"  Total API Calls: {total_info['api_call_count']}",
             f"  Total Prompt Tokens: {total_info['total_prompt_tokens']:,}",
             f"  Total Completion Tokens: {total_info['total_completion_tokens']:,}",
-            f"  Total Cost: ${total_info['total_cost_cents']:.6f} cents"
+            f"  Total Cost: ${total_info['total_cost_cents']/100:.6f} USD"
         ]
         
         if total_info['api_call_count'] > 0:
             avg_cost = total_info['total_cost_cents'] / total_info['api_call_count']
             avg_tokens = (total_info['total_prompt_tokens'] + total_info['total_completion_tokens']) / total_info['api_call_count']
             summary_lines.extend([
-                f"  Average Cost per Call: ${avg_cost:.6f} cents",
+                f"  Average Cost per Call: ${avg_cost/100:.6f} USD",
                 f"  Average Tokens per Call: {avg_tokens:.1f}"
             ])
         

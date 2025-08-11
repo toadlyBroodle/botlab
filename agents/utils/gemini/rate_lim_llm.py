@@ -969,7 +969,7 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                 
                 self.api_call_count += 1
                 if self.api_call_count % 3 == 0: self.print_rate_limit_status(use_logger=True)
-                logger.info(f"API call successful with model {self.model_id}. Tokens: {input_tokens+output_tokens}, Cost: ${self.current_call_cost_info['total_cost_cents']:.6f} cents")
+                logger.info(f"API call successful with model {self.model_id}. Tokens: {input_tokens+output_tokens}, Cost: ${self.current_call_cost_info['total_cost_cents']/100:.6f} USD")
                 return response
                 
             except Exception as e:

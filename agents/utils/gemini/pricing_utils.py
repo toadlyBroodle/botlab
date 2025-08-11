@@ -182,7 +182,7 @@ def calculate_tiered_cost(model_pricing: ModelPricing, input_tokens: int, output
         output_cost = output_tokens * selected_tier.output_cost_per_token_cents
         
         logger.debug(f"Model {model_pricing.model_name}: {total_tokens} total tokens using tier '{selected_tier.tier_name}' "
-                    f"(input: ${input_cost:.6f}, output: ${output_cost:.6f} cents)")
+                    f"(input: ${input_cost/100:.6f} USD, output: ${output_cost/100:.6f} USD)")
         
         return input_cost + output_cost, selected_tier.tier_name
         

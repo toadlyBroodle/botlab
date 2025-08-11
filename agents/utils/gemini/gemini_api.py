@@ -405,7 +405,7 @@ class GeminiAPI:
                         )
                         
                         self.logger.debug(f"💰 API Response cost using {model_pricing.pricing_type} pricing "
-                                        f"(tier: {tier_description}): {prompt_tokens} prompt + {completion_tokens} completion tokens = ${total_cost_cents:.6f} cents")
+                                        f"(tier: {tier_description}): {prompt_tokens} prompt + {completion_tokens} completion tokens = ${total_cost_cents/100:.6f} USD")
                     else:
                         self.logger.warning(f"💰 No pricing information available for model {model_name}")
                         total_cost_cents = 0.0
