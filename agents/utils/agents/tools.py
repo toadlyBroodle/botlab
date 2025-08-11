@@ -120,10 +120,6 @@ def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     if not hasattr(agent, 'name'):
         raise ValueError("Agent must have a 'name' attribute to determine its type")
     
-    # Apply the custom system prompt if provided
-    if custom_system_prompt:
-        agent.prompt_templates["system_prompt"] = custom_system_prompt
-    
     # Determine agent type from the agent's class
     agent_class_name = agent.__class__.__name__
     
@@ -154,17 +150,16 @@ def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     
     # Apply the template to the agent's prompt_templates
     agent.prompt_templates = template
-    
-    # append todays date and time to all system prompts
-    agent.prompt_templates["system_prompt"] += f"\n\nToday's date and time is {datetime.now().strftime('%Y-%m-%d %H:%M')}."
-    
-    # Append custom system prompt if provided
-    if custom_system_prompt:
-        # append to base system prompt
-        agent.prompt_templates["system_prompt"] += f"\n\n{custom_system_prompt}"
-    
-    # Reinitialize the system prompt to apply the new template (this is a workaround for the read-only system_prompt property)
+
+    # Initialize the base system prompt from the template first
     agent.prompt_templates["system_prompt"] = agent.initialize_system_prompt()
+
+    # Append today's date and time
+    agent.prompt_templates["system_prompt"] += f"\n\nToday's date and time is {datetime.now().strftime('%Y-%m-%d %H:%M')}."
+
+    # Append custom system prompt if provided (ensure it is preserved)
+    if custom_system_prompt:
+        agent.prompt_templates["system_prompt"] += f"\n\n{custom_system_prompt}"
 
 def _initialize_gemini_client():
     """Initialize the Gemini client for search.
@@ -666,13 +661,32 @@ def extract_final_answer_from_memory(agent) -> Any:
     # Check if the agent has memory and steps
     if hasattr(agent, 'memory') and hasattr(agent.memory, 'steps'):
         # Look for tool calls in the agent's memory steps
-        for step in agent.memory.steps:
+        for step in getattr(agent.memory, 'steps', []) or []:
             if hasattr(step, 'tool_calls') and step.tool_calls:
                 for tool_call in step.tool_calls:
-                    if tool_call.name == "final_answer":
-                        # Extract the final answer content
-                        return tool_call.result
-    
+                    try:
+                        if getattr(tool_call, 'name', None) == "final_answer":
+                            # Prefer explicit result/output fields if present
+                            if hasattr(tool_call, 'result') and tool_call.result is not None:
+                                return tool_call.result
+                            if hasattr(tool_call, 'output') and tool_call.output is not None:
+                                return tool_call.output
+                            # Try arguments/kwargs patterns
+                            for attr in ('arguments', 'args', 'kwargs', 'parameters'):
+                                payload = getattr(tool_call, attr, None)
+                                if isinstance(payload, dict):
+                                    if 'answer' in payload and payload['answer']:
+                                        return payload['answer']
+                            # Fallback to content/text-like attributes
+                            for attr in ('content', 'output_text', 'text'):
+                                value = getattr(tool_call, attr, None)
+                                if value:
+                                    return value
+                            # Last resort stringification
+                            return str(tool_call)
+                    except Exception:
+                        # Skip malformed entries and continue scanning
+                        continue
     return None
 
 def save_final_answer(agent, result: str, query_or_prompt: str = None, agent_type: str = "agent", use_daily_master: bool = True) -> str:

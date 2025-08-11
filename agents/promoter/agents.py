@@ -1,12 +1,12 @@
 from typing import Optional, List, Union
 from smolagents import CodeAgent
-from ..utils.agents.base_agent import BaseCodeAgent
+from ..utils.agents.base_agent import BaseToolCallingAgent
 from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
 from ..utils.gemini.simple_llm import SimpleLiteLLMModel
-from ..utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
+from ..utils.agents.tools import visit_webpage, apply_custom_agent_prompts, save_final_answer
 
 
-class PromoterAgent(BaseCodeAgent):
+class PromoterAgent(BaseToolCallingAgent):
     """A general-purpose promoter agent that can browse, log in, search for relevant posts, and post tailored replies.
 
     This agent is designed to work with a Playwright MCP server made available to the runtime
@@ -39,7 +39,6 @@ class PromoterAgent(BaseCodeAgent):
             base_wait_time=base_wait_time,
             max_retries=max_retries,
             additional_tools=additional_tools,
-            additional_authorized_imports=["time", "json", "re", "uuid", "os"],
             agent_name="promoter_agent",
             enable_daily_quota_fallback=enable_daily_quota_fallback,
             use_rate_limiting=use_rate_limiting,
@@ -47,8 +46,8 @@ class PromoterAgent(BaseCodeAgent):
         )
 
     def get_tools(self) -> List:
-        # Return only core generic tools. Any extra tools are injected via BaseCodeAgent using additional_tools.
-        return [web_search, visit_webpage]
+        # Return only core generic tools (exclude web_search and visit_webpage). Any extra tools are injected via BaseToolCallingAgent using additional_tools.
+        return []
 
     def get_base_description(self) -> str:
         return (
