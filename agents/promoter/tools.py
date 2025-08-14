@@ -37,6 +37,11 @@ def _slow_mo_ms() -> int:
         return 0
 
 
+def _tor_enabled() -> bool:
+    value = os.getenv('PROMOTER_USE_TOR', '1').strip().lower()
+    return value not in ('0', 'false', 'no', 'off')
+
+
 class _BrowserWorker:
     def __init__(self) -> None:
         self._thread: Optional[threading.Thread] = None
@@ -59,6 +64,29 @@ class _BrowserWorker:
             slow_mo_value = _slow_mo_ms()
             logger.info(f"Playwright launch params: headless={headless_flag}, slow_mo_ms={slow_mo_value}, DISPLAY='{display_env}'")
 
+            # Configure Tor proxy (via tor_manager) if enabled
+            proxy_settings = None
+            if _tor_enabled():
+                try:
+                    # Import lazily to avoid hard dependency if Tor is not used
+                    from agent.utils.tor.tor_manager import start_tor_if_needed, check_tor_connection, setup_tor_cleanup
+
+                    started = start_tor_if_needed()
+                    if not check_tor_connection():
+                        raise RuntimeError("Tor not reachable on 127.0.0.1:9050 after startup attempt")
+
+                    # Ensure Tor is cleaned up on exit if we started it
+                    try:
+                        setup_tor_cleanup()
+                    except Exception:
+                        pass
+
+                    tor_server = os.getenv('PROMOTER_TOR_SOCKS', 'socks5://127.0.0.1:9050')
+                    proxy_settings = {"server": tor_server}
+                    logger.info(f"Using Tor proxy for Playwright: {tor_server} (started_by_us={started})")
+                except Exception as e:
+                    logger.warning(f"Tor requested but not available, continuing without Tor: {e}")
+
             launch_args = []
             if not headless_flag:
                 launch_args.extend(["--disable-gpu", "--no-sandbox"])  # friendly flags for WSL/X11
@@ -68,6 +96,7 @@ class _BrowserWorker:
                 slow_mo=slow_mo_value,
                 devtools=(not headless_flag),
                 args=launch_args or None,
+                proxy=proxy_settings,
             )
             context: BrowserContext = browser.new_context(
                 viewport={'width': 1280, 'height': 800},
