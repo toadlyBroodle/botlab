@@ -13,7 +13,7 @@ import os
 # Add project root to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from utils.tor_manager import (
+from agents.utils.tor.tor_manager import (
     configure_session_for_tor, 
     test_api_connection,
     renew_circuit_and_reinitialize_session,

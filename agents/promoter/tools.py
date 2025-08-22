@@ -69,7 +69,7 @@ class _BrowserWorker:
             if _tor_enabled():
                 try:
                     # Import lazily to avoid hard dependency if Tor is not used
-                    from agent.utils.tor.tor_manager import start_tor_if_needed, check_tor_connection, setup_tor_cleanup
+                    from agents.utils.tor.tor_manager import start_tor_if_needed, check_tor_connection, setup_tor_cleanup
 
                     started = start_tor_if_needed()
                     if not check_tor_connection():
