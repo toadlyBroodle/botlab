@@ -87,7 +87,10 @@ class _BrowserWorker:
                 except Exception as e:
                     logger.warning(f"Tor requested but not available, continuing without Tor: {e}")
 
-            launch_args = []
+            launch_args = [
+                "--disable-quic",  # ensure no UDP/HTTP3 that could bypass transparent proxy
+                "--disable-features=AsyncDNS,UseDnsHttpsSvcb,UseDnsHttpsSvcbAlpn",  # prefer system DNS (redirected by iptables)
+            ]
             if not headless_flag:
                 launch_args.extend(["--disable-gpu", "--no-sandbox"])  # friendly flags for WSL/X11
 
@@ -447,6 +450,55 @@ def pw_console_logs(limit: int = 50, clear: bool = False) -> str:
         return f"Error: {e}"
 
 
+# Verification tool: confirm routing through Tor by checking Tor Project and httpbin
+@tool
+def pw_verify_tor(timeout_ms: int = 30000) -> str:
+    """Verify browser routing via Tor by checking Tor Project API and httpbin.org/ip.
+
+    Args:
+        timeout_ms: Max time to wait for each check.
+
+    Returns:
+        JSON string with fields: ok, checkTor (IsTor, IP), httpbin (origin), usingTor.
+    """
+    worker = _ensure_worker()
+    def _task(state: Dict[str, Any]):
+        try:
+            result: Dict[str, Any] = {"ok": True}
+
+            # Check Tor Project API
+            state['page'].goto("https://check.torproject.org/api/ip", wait_until="load", timeout=timeout_ms)
+            body_text = state['page'].evaluate("() => document.body && document.body.innerText || ''")
+            check_data: Dict[str, Any] = {}
+            try:
+                check_data = json.loads(body_text)
+            except Exception:
+                check_data = {"raw": body_text[:1000]}
+
+            # Check httpbin IP
+            state['page'].goto("https://httpbin.org/ip", wait_until="load", timeout=timeout_ms)
+            hb_text = state['page'].evaluate("() => document.body && document.body.innerText || ''")
+            httpbin_data: Dict[str, Any] = {}
+            try:
+                httpbin_data = json.loads(hb_text)
+            except Exception:
+                httpbin_data = {"raw": hb_text[:1000]}
+
+            is_tor = False
+            if isinstance(check_data, dict):
+                is_tor = bool(check_data.get("IsTor", False))
+
+            result.update({
+                "checkTor": check_data,
+                "httpbin": httpbin_data,
+                "usingTor": is_tor,
+            })
+            return json.dumps(result)
+        except Exception as e:
+            return json.dumps({"ok": False, "error": str(e)})
+    return worker.call(_task)
+
+
 # --- MCP-style aliases for compatibility with prompts that expect these names ---
 
 @tool
@@ -573,3 +625,16 @@ def mcp_playwright_playwright_console_logs(limit: int = 50, clear: bool = False)
         JSON array string of console log entries.
     """
     return pw_console_logs(limit=limit, clear=clear)
+
+
+@tool
+def mcp_playwright_playwright_verify_tor(timeout_ms: int = 30000) -> str:
+    """Alias of pw_verify_tor. Verify Playwright routing via Tor.
+
+    Args:
+        timeout_ms: Max time to wait for each check.
+
+    Returns:
+        JSON string with verification results.
+    """
+    return pw_verify_tor(timeout_ms=timeout_ms)
