@@ -12,6 +12,10 @@ manager/__init__.py
 manager/agents.py
 manager/example.py
 manager/tools.py
+promoter/__init__.py
+promoter/agents.py
+promoter/example.py
+promoter/tools.py
 qaqc/__init__.py
 qaqc/agents.py
 qaqc/example.py
@@ -36,6 +40,8 @@ utils/__init__.py
 utils/logger_config.py
 utils/telemetry.py
 utils/agents/__init__.py
+utils/agents/base_agent.py
+utils/agents/base_agent_example.py
 utils/agents/tools.py
 utils/file_manager/__init__.py
 utils/file_manager/file_manager.py
@@ -43,8 +49,10 @@ utils/gemini/__init__.py
 utils/gemini/gemini_api.py
 utils/gemini/get_gem_llm_info.py
 utils/gemini/model_config.py
+utils/gemini/pricing_utils.py
 utils/gemini/rate_lim_llm.py
 utils/gemini/rate_lim_llm_demo.py
+utils/gemini/simple_llm.py
 writer_critic/__init__.py
 writer_critic/agents.py
 writer_critic/example.py

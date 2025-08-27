@@ -1,5 +1,6 @@
 editor
 manager
+promoter
 qaqc
 ranker
 researcher
