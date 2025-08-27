@@ -26,7 +26,8 @@ _state: Dict[str, Any] = {
 
 
 def _headless() -> bool:
-    value = os.getenv('PROMOTER_PLAYWRIGHT_HEADLESS', '1').strip().lower()
+    # Default to headed mode for Cursor MCP usage
+    value = os.getenv('PROMOTER_PLAYWRIGHT_HEADLESS', '0').strip().lower()
     return value not in ('0', 'false', 'no', 'off')
 
 

@@ -76,3 +76,4 @@ if __name__ == "__main__":
 - Don't remove or modify existing comments unless they are incorrect, outdated, or immediately relevant to your current task.
 - Prefer existing dependencies over new ones. Don't add new dependencies without asking first.
 - Always prefer the simplest solution and don't make unnecessarily complex additions: the simplest solution is always best
+ - When browsing the internet, ALWAYS use the MCP Playwright browser in headed (non-headless) mode and keep pages open as requested by the user. NEVER use online search engines for searching; instead, use standard local search tools: web search, codebase search, grep, etc.
