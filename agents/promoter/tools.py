@@ -26,9 +26,8 @@ _state: Dict[str, Any] = {
 
 
 def _headless() -> bool:
-    # Default to headed mode for Cursor MCP usage
-    value = os.getenv('PROMOTER_PLAYWRIGHT_HEADLESS', '0').strip().lower()
-    return value not in ('0', 'false', 'no', 'off')
+    # Force headed mode so the user can follow along visually
+    return False
 
 
 def _slow_mo_ms() -> int:
@@ -107,6 +106,40 @@ class _BrowserWorker:
                 ignore_https_errors=True,
             )
             page: Page = context.new_page()
+
+            # Prevent multiple tabs/windows: close any extra pages and force same-tab navigation
+            def _close_extra_page(p: Page) -> None:
+                try:
+                    if _state.get('page') is not None and p != _state['page']:
+                        p.close()
+                except Exception:
+                    pass
+
+            # Override window.open to reuse the same page, and strip target="_blank"
+            try:
+                page.add_init_script(
+                    """
+                    // Redirect window.open to same-tab navigation
+                    window.open = function(url, name, specs) {
+                      try { if (url) { window.location.href = url; } } catch (e) {}
+                      return window;
+                    };
+                    // Remove target=_blank on clicks
+                    document.addEventListener('click', function(e) {
+                      const a = e.target && e.target.closest ? e.target.closest('a[target="_blank"]') : null;
+                      if (a) { try { a.removeAttribute('target'); } catch (e) {} }
+                    }, true);
+                    """
+                )
+            except Exception:
+                pass
+
+            # Close popups/new pages immediately
+            try:
+                page.on("popup", _close_extra_page)
+                context.on("page", _close_extra_page)
+            except Exception:
+                pass
 
             # Attach console logger
             def _on_console(msg):
