@@ -17,6 +17,9 @@ google-generativeai>=0.8.5
 arxiv>=2.2.0
 pymupdf4llm>=0.0.17
 duckduckgo_search>=8.0.2
+pysocks>=1.7.1
+stem>=1.8.2
+
 #uuid>=1.30
 
 # Youtube, video, translation dependencies
