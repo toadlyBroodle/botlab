@@ -12,6 +12,8 @@ import socket
 import time
 import argparse
 import logging
+import os
+from typing import List
 
 def check_tor_installed():
     """Check if Tor is installed on the system."""
@@ -69,7 +71,7 @@ def start_tor():
             'tor',
             '--SocksPort', '9050',
             '--ControlPort', '9051',
-            '--CookieAuthentication', '0',
+            '--CookieAuthentication', '0',  # standalone mode without cookie auth
             '--RunAsDaemon', '1'
         ]
         
@@ -95,6 +97,102 @@ def start_tor():
         print(f"Error starting Tor: {e}")
         print("\nTry starting Tor manually:")
         print("  tor --SocksPort 9050 --ControlPort 9051 --CookieAuthentication 0 --RunAsDaemon 1")
+
+def _ensure_lines_present(lines: List[str], required: List[str]) -> List[str]:
+    """Ensure each required directive is present (and not commented) replacing any existing entries."""
+    existing = []
+    for line in lines:
+        stripped = line.strip()
+        # Skip comments when checking duplicates
+        if stripped.startswith('#'):
+            existing.append(line)
+            continue
+        key = stripped.split()[0] if stripped else ''
+        # If this line sets one of the required keys, we will drop it to replace with our value later
+        if key in {r.split()[0] for r in required}:
+            continue
+        existing.append(line)
+    # Append required directives
+    for r in required:
+        existing.append(r + "\n")
+    return existing
+
+def setup_control_port_for_renewals():
+    """Configure system Tor for circuit renewals (control port + cookie auth). Requires root.
+
+    Actions:
+    - Ensure /etc/tor/torrc has:
+        SocksPort 9050
+        ControlPort 9051
+        CookieAuthentication 1
+        CookieAuthFileGroupReadable 1
+    - Add current user to 'debian-tor' group so it can read the control cookie
+    - Restart tor service
+    """
+    if os.geteuid() != 0:
+        user = os.environ.get('SUDO_USER') or os.environ.get('USER') or 'your-user'
+        print("\nThis operation requires root. Run:")
+        print("  sudo python agents/utils/tor/setup_tor.py --setup-renewals")
+        print("\nManual commands if you prefer:")
+        print("  sudo cp /etc/tor/torrc /etc/tor/torrc.bak")
+        print("  sudo bash -c 'cat > /etc/tor/torrc <<\nEOF\nSocksPort 9050\nControlPort 9051\nCookieAuthentication 1\nCookieAuthFileGroupReadable 1\nEOF'\n")
+        print(f"  sudo usermod -aG debian-tor {user}")
+        print("  sudo systemctl restart tor")
+        return False
+
+    torrc_path = '/etc/tor/torrc'
+    try:
+        # Backup existing config
+        if os.path.exists(torrc_path):
+            subprocess.run(['cp', torrc_path, f'{torrc_path}.bak'], check=False)
+        else:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(torrc_path), exist_ok=True)
+
+        required_directives = [
+            'SocksPort 9050',
+            'ControlPort 9051',
+            'CookieAuthentication 1',
+            'CookieAuthFileGroupReadable 1',
+        ]
+
+        old_lines: List[str] = []
+        if os.path.exists(torrc_path):
+            with open(torrc_path, 'r', encoding='utf-8', errors='ignore') as f:
+                old_lines = f.readlines()
+
+        new_lines = _ensure_lines_present(old_lines, required_directives)
+        with open(torrc_path, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+
+        # Add user to debian-tor group
+        user = os.environ.get('SUDO_USER') or os.environ.get('USER')
+        if user:
+            subprocess.run(['usermod', '-aG', 'debian-tor', user], check=False)
+            print(f"✓ Added user '{user}' to 'debian-tor' group (log out/in for it to take effect)")
+
+        # Restart Tor service
+        restarted = False
+        for cmd in [
+            ['systemctl', 'restart', 'tor'],
+            ['service', 'tor', 'restart']
+        ]:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                restarted = True
+                print("✓ Tor service restarted")
+                break
+        if not restarted:
+            print("⚠ Could not restart Tor via service manager. Start manually:")
+            print("  tor --SocksPort 9050 --ControlPort 9051 --CookieAuthentication 1 --RunAsDaemon 1")
+
+        # Verify
+        time.sleep(2)
+        check_tor_running()
+        return True
+    except Exception as e:
+        print(f"Error configuring Tor for renewals: {e}")
+        return False
 
 def install_instructions():
     """Provide installation instructions for different platforms."""
@@ -126,6 +224,8 @@ def main():
                        help='Check Tor installation and status')
     parser.add_argument('--install-help', action='store_true',
                        help='Show installation instructions')
+    parser.add_argument('--setup-renewals', action='store_true',
+                       help='Configure system Tor for control port + cookie auth and restart the service (requires sudo)')
     
     args = parser.parse_args()
     
@@ -133,7 +233,11 @@ def main():
         install_instructions()
         return
     
-    if args.check or not any([args.start, args.install_help]):
+    if args.setup_renewals:
+        setup_control_port_for_renewals()
+        return
+
+    if args.check or not any([args.start, args.install_help, args.setup_renewals]):
         print("=== Tor Status Check ===")
         tor_installed = check_tor_installed()
         tor_running = check_tor_running()
