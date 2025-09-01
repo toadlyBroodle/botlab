@@ -1,4 +1,5 @@
 import requests
+import os
 import socket
 import subprocess
 import time
@@ -104,13 +105,24 @@ def get_tor_ip_for_worker(session: requests.Session, worker_id: Optional[int] = 
 def renew_worker_circuit(worker_id: int) -> bool:
     """Request a new Tor circuit for a specific worker."""
     try:
+        # Read control settings from environment (fallback to defaults)
+        host = os.getenv('TOR_CONTROL_HOST', '127.0.0.1')
+        port = int(os.getenv('TOR_CONTROL_PORT', '9051'))
+        password = os.getenv('TOR_CONTROL_PASSWORD')
+
         # Connect to Tor control port and send NEWNYM signal
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10)
-        sock.connect(('127.0.0.1', 9051))
+        sock.connect((host, port))
         
         # Send authentication command
-        sock.send(b'AUTHENTICATE\r\n')
+        if password:
+            # Quote plain password per Tor control spec
+            auth_cmd = f'AUTHENTICATE "{password}"\r\n'.encode()
+        else:
+            # Cookie or no-auth (legacy)
+            auth_cmd = b'AUTHENTICATE\r\n'
+        sock.send(auth_cmd)
         response = sock.recv(1024)
         
         if b'250 OK' not in response:
@@ -139,13 +151,22 @@ def renew_worker_circuit(worker_id: int) -> bool:
 def renew_tor_circuit() -> bool:
     """Request a new Tor circuit to change IP address."""
     try:
+        # Read control settings from environment (fallback to defaults)
+        host = os.getenv('TOR_CONTROL_HOST', '127.0.0.1')
+        port = int(os.getenv('TOR_CONTROL_PORT', '9051'))
+        password = os.getenv('TOR_CONTROL_PASSWORD')
+
         # Connect to Tor control port and send NEWNYM signal using socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10)
-        sock.connect(('127.0.0.1', 9051))
+        sock.connect((host, port))
         
         # Send authentication command
-        sock.send(b'AUTHENTICATE\r\n')
+        if password:
+            auth_cmd = f'AUTHENTICATE "{password}"\r\n'.encode()
+        else:
+            auth_cmd = b'AUTHENTICATE\r\n'
+        sock.send(auth_cmd)
         response = sock.recv(1024)
         
         if b'250 OK' not in response:
