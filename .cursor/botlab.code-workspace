@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"path": "../../playwright-universal-mcp"
+		},
+		{
+			"path": "../../botlab.dev"
+		}
+	],
+	"settings": {}
+}
