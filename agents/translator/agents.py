@@ -1,5 +1,11 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
+from types import SimpleNamespace
 from agents.utils.gemini.gemini_api import GeminiAPI
+try:
+    from agents.utils.gemini.simple_llm import SimpleLiteLLMModel  # type: ignore
+except Exception:  # pragma: no cover
+    class SimpleLiteLLMModel:  # type: ignore
+        pass
 
 class TranslatorAgent:
     """Agent for translating text between languages using Gemini 2.5."""
@@ -10,6 +16,7 @@ class TranslatorAgent:
         agent_instance: Optional[GeminiAPI] = None,
         system_prompt: Optional[str] = None,
         temperature: float = 0.2,
+        lite_model: Optional[SimpleLiteLLMModel] = None,
     ):
         """Initialize the translator agent.
 
@@ -20,6 +27,7 @@ class TranslatorAgent:
             temperature: Temperature for generation (0.0 to 1.0).
         """
         self._agent_instance = agent_instance
+        self._lite_model = lite_model
         self._model = model or "gemini-2.5-pro-preview-03-25"
         self._temperature = temperature
         
@@ -63,6 +71,36 @@ Provide only the translated text without explanations unless specifically reques
         Returns:
             The translated text
         """
+        # Prefer SimpleLiteLLMModel if provided (no rate-limiting waits)
+        if hasattr(self, "_lite_model") and self._lite_model is not None:
+            system = self._system_prompt
+            user = f"Translate the following text from {source_language} to {target_language}.\n\n"
+            if context:
+                user += f"Context: {context}\n\n"
+            if preserve_formatting:
+                user += "Please preserve the original formatting, including paragraphs, bullet points, and special characters.\n\n"
+            user += f"Text to translate:\n{text}"
+
+            # Use objects with role/content attributes to match LiteLLMModel expectations
+            messages_obj = [
+                SimpleNamespace(role="system", content=system),
+                SimpleNamespace(role="user", content=user),
+            ]
+
+            resp = self._lite_model.generate(messages=messages_obj, temperature=self._temperature)
+            # Extract content from LiteLLM-style response
+            if hasattr(resp, "choices") and resp.choices:
+                choice = resp.choices[0]
+                if hasattr(choice, "message") and hasattr(choice.message, "content"):
+                    return (choice.message.content or "").strip()
+                elif isinstance(choice, dict):
+                    return (choice.get("message", {}).get("content", "") or "").strip()
+            if isinstance(resp, dict):
+                choices = resp.get("choices", [])
+                if choices:
+                    return (choices[0].get("message", {}).get("content", "") or "").strip()
+            return (str(resp) if resp is not None else "").strip()
+
         prompt = f"{self._system_prompt}\n\nTranslate the following text from {source_language} to {target_language}.\n\n"
         
         if context:
@@ -73,7 +111,7 @@ Provide only the translated text without explanations unless specifically reques
             
         prompt += f"Text to translate:\n{text}"
         
-        response, error = self.agent.query(
+        response, error, _ = self.agent.query(
             prompt=prompt,
             model=self._model,
             temperature=self._temperature
@@ -96,7 +134,7 @@ Provide only the translated text without explanations unless specifically reques
         prompt = f"{self._system_prompt}\n\nIdentify the language of the following text. Respond with just the language name.\n\n"
         prompt += f"Text: {text}"
         
-        response, error = self.agent.query(
+        response, error, _ = self.agent.query(
             prompt=prompt,
             model=self._model,
             temperature=0.1  # Lower temperature for more deterministic response

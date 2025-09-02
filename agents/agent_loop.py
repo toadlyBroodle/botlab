@@ -23,6 +23,7 @@ try:
     from .qaqc.agents import QAQCAgent
     from .user_feedback.agents import UserFeedbackAgent
     from .promoter.agents import PromoterAgent
+    from .translator.agents import TranslatorAgent
 except ImportError:
     # For script execution
     from utils.telemetry import start_telemetry, suppress_litellm_logs
@@ -37,6 +38,7 @@ except ImportError:
     from qaqc.agents import QAQCAgent
     from user_feedback.agents import UserFeedbackAgent
     from promoter.agents import PromoterAgent
+    from translator.agents import TranslatorAgent
 
 class AgentLoop:
     """A class that manages a loop of agent calls with state management."""
@@ -112,24 +114,31 @@ class AgentLoop:
         if shared_model is not None:
             self.shared_model = shared_model
         else:
-            # Check if any agents need daily quota fallback
-            enable_fallback = False
-            for agent_type, context in self.agent_contexts.items():
-                if context.get('enable_daily_quota_fallback', False):
-                    enable_fallback = True
-                    print(f"✓ Enabling model fallback for shared model due to {agent_type} agent requesting daily quota fallback")
-                    break
-            
-            if not enable_fallback:
-                print("⚠ Model fallback disabled for shared model - no agents requested daily quota fallback")
-            
-            # Create a shared model instance that all agents can use
-            self.shared_model = RateLimitedLiteLLMModel(
-                model_id=model_id,
-                model_info_path=model_info_path,
-                max_retries=max_retries,
-                enable_fallback=enable_fallback  # Enable fallback if any agent needs it
-            )
+            # If any agent explicitly requests NOT to use rate limiting, build SimpleLiteLLMModel instead
+            any_requests_simple = any(not ctx.get('use_rate_limiting', True) for _, ctx in (self.agent_contexts or {}).items())
+            if any_requests_simple:
+                from .utils.gemini.simple_llm import SimpleLiteLLMModel
+                print("✓ Using SimpleLiteLLMModel for shared model (no rate limiting)")
+                self.shared_model = SimpleLiteLLMModel(model_id=model_id)
+            else:
+                # Check if any agents need daily quota fallback
+                enable_fallback = False
+                for agent_type, context in self.agent_contexts.items():
+                    if context.get('enable_daily_quota_fallback', False):
+                        enable_fallback = True
+                        print(f"✓ Enabling model fallback for shared model due to {agent_type} agent requesting daily quota fallback")
+                        break
+                
+                if not enable_fallback:
+                    print("⚠ Model fallback disabled for shared model - no agents requested daily quota fallback")
+                
+                # Create a shared model instance that all agents can use
+                self.shared_model = RateLimitedLiteLLMModel(
+                    model_id=model_id,
+                    model_info_path=model_info_path,
+                    max_retries=max_retries,
+                    enable_fallback=enable_fallback  # Enable fallback if any agent needs it
+                )
         
         # Initialize state
         self.state = {
@@ -319,6 +328,19 @@ class AgentLoop:
                             system_prompt=self.agent_configs.get('editor_prompt'),
                             fact_checker_description=self.agent_configs.get('fact_checker_description'),
                             fact_checker_prompt=self.agent_configs.get('fact_checker_prompt')
+                        )
+                        self.agents[agent_type] = agent_instance
+                        
+                    elif agent_type.lower() == 'translator':
+                        # TranslatorAgent: choose simple vs rate-limited based on context flag
+                        normalized_model = self.model_id.split('/')[-1] if '/' in self.model_id else self.model_id
+                        use_rate_limiting = agent_context.get('use_rate_limiting', True)
+                        from .utils.gemini.simple_llm import SimpleLiteLLMModel
+                        lite_model = None if use_rate_limiting else SimpleLiteLLMModel(model_id=self.model_id)
+                        agent_instance = TranslatorAgent(
+                            model=normalized_model,
+                            temperature=0.2,
+                            lite_model=lite_model
                         )
                         self.agents[agent_type] = agent_instance
                         
@@ -649,6 +671,21 @@ class AgentLoop:
                             elif agent_type.lower() == 'editor':
                                 # Use edit_content method for EditorAgent
                                 result = agent_instance.edit_content(formatted_prompt)
+                            elif agent_type.lower() == 'translator':
+                                # For translator, use language parameters from agent context if provided
+                                translator_ctx = self.agent_contexts.get('translator', {}) if hasattr(self, 'agent_contexts') else {}
+                                source_lang = translator_ctx.get('source_language', 'Japanese')
+                                target_lang = translator_ctx.get('target_language', 'English')
+                                preserve_fmt = translator_ctx.get('preserve_formatting', True)
+                                extra_context = translator_ctx.get('context')
+
+                                result = agent_instance.translate(
+                                    text=query,
+                                    source_language=source_lang,
+                                    target_language=target_lang,
+                                    preserve_formatting=preserve_fmt,
+                                    context=extra_context
+                                )
                             else:
                                 # Other agents may implement __call__
                                 result = agent_instance(formatted_prompt)
