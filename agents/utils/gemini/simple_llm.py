@@ -150,10 +150,25 @@ class SimpleLiteLLMModel(LiteLLMModel):
         Raises:
             Exception: If the API call fails after all retries or for non-retryable errors.
         """
+        # Normalize messages to plain dicts to avoid issues with SimpleNamespace / Pydantic models
+        def _to_message_dict(msg: Any) -> Dict[str, str]:
+            # If it's already a dict, coerce values to strings as needed
+            if isinstance(msg, dict):
+                role = str(msg.get("role", "user"))
+                content_val = msg.get("content", "")
+                content = str(getattr(content_val, "content", content_val))
+                return {"role": role, "content": content}
+            # If it has attributes like a SimpleNamespace or Pydantic model
+            role = str(getattr(msg, "role", "user"))
+            content_attr = getattr(msg, "content", "")
+            content = str(getattr(content_attr, "content", content_attr))
+            return {"role": role, "content": content}
+
+        messages_normalized: List[Dict[str, str]] = [_to_message_dict(m) for m in messages]
+
         # Estimate input tokens
         estimated_input_tokens = min(
-            sum(len(getattr(m, 'content', '') if hasattr(m, 'content') else m.get("content", "")) 
-                for m in messages) // 4, 
+            sum(len(m.get("content", "")) for m in messages_normalized) // 4,
             self.input_token_limit
         )
         
@@ -170,7 +185,7 @@ class SimpleLiteLLMModel(LiteLLMModel):
             try:
                 # Make the API call using the parent's generate method directly - NO RATE LIMITING
                 # This is the key difference from RateLimitedLiteLLMModel - we call immediately
-                response = super().generate(messages=messages, **current_call_kwargs)
+                response = super().generate(messages=messages_normalized, **current_call_kwargs)
                 
                 # Extract token counts from response
                 input_tokens, output_tokens = self._extract_token_counts(response, estimated_input_tokens)
