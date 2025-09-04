@@ -1,7 +1,7 @@
 from typing import Optional, List, Union
 from ..utils.agents.base_agent import BaseToolCallingAgent
-from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
-from ..utils.gemini.simple_llm import SimpleLiteLLMModel
+from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.simple_llm import SimpleLiteLLMModel
 
 
 class AnimatorAgent(BaseToolCallingAgent):

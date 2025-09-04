@@ -3,8 +3,8 @@ from smolagents.utils import AgentGenerationError
 from .tools import arxiv_search, pdf_to_markdown, check_conversion_status, read_paper_markdown
 from ..utils.agents.tools import web_search, visit_webpage, apply_custom_agent_prompts, save_final_answer
 from ..utils.agents.base_agent import BaseCodeAgent
-from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error
-from ..utils.gemini.simple_llm import SimpleLiteLLMModel
+from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error
+from ..utils.agents.simple_llm import SimpleLiteLLMModel
 from typing import Optional, List, Union
 import os
 import time

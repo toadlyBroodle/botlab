@@ -21,8 +21,8 @@ from typing import Optional, List, Dict, Any, Union
 from smolagents import CodeAgent, ToolCallingAgent
 from smolagents.utils import AgentGenerationError
 
-from ..gemini.rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error, is_per_minute_rate_limit_error, handle_per_minute_rate_limit, DAILY_QUOTA_ID, check_and_handle_search_error_message, safe_search_with_quota_detection, mark_model_daily_quota_exhausted, are_all_fallback_models_exhausted, is_model_daily_quota_exhausted, AllDailySearchRateLimsExhausted
-from ..gemini.simple_llm import SimpleLiteLLMModel
+from .rate_lim_llm import RateLimitedLiteLLMModel, parse_retry_delay_from_error, is_per_minute_rate_limit_error, handle_per_minute_rate_limit, DAILY_QUOTA_ID, check_and_handle_search_error_message, safe_search_with_quota_detection, mark_model_daily_quota_exhausted, are_all_fallback_models_exhausted, is_model_daily_quota_exhausted, AllDailySearchRateLimsExhausted
+from .simple_llm import SimpleLiteLLMModel
 from .tools import apply_custom_agent_prompts, save_final_answer
 
 logger = logging.getLogger(__name__)

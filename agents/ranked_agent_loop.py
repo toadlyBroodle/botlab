@@ -11,7 +11,7 @@ import threading
 
 from dotenv import load_dotenv
 from .utils.telemetry import start_telemetry, suppress_litellm_logs
-from .utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from .utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 from .utils.file_manager.file_manager import FileManager
 from .utils.agents.tools import load_file
 

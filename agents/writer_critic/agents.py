@@ -1,7 +1,7 @@
 """Writer and critic agents."""
 from smolagents import CodeAgent, ToolCallingAgent
 from typing import Optional, List
-from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 from ..utils.agents.tools import apply_custom_agent_prompts, save_final_answer
 from ..utils.agents.base_agent import BaseCodeAgent, BaseToolCallingAgent
 import time

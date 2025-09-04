@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..ranked_agent_loop import RankedAgentLoop
 
 from smolagents import ToolCallingAgent
-from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 from ..utils.agents.tools import apply_custom_agent_prompts, save_final_answer
 from .tools import llm_judge
 
@@ -625,7 +625,7 @@ def main():
     args = parser.parse_args()
     
     # Create a standalone ranking agent
-    from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+    from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
     
     model = RateLimitedLiteLLMModel(
         model_id=args.model,

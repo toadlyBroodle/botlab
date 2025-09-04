@@ -189,7 +189,7 @@ def run_query(self, query):
 ### Sharing Models Between Agents
 
 ```python
-from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from agents.utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 
 # Create shared model
 shared_model = RateLimitedLiteLLMModel(

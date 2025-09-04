@@ -144,7 +144,7 @@ def main():
     
     # Example 3: Sharing a model between agents
     print("3. Sharing model between agents...")
-    from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+    from agents.utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
     
     shared_model = RateLimitedLiteLLMModel(
         model_id="gemini/gemini-2.0-flash",

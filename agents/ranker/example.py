@@ -9,7 +9,7 @@ integrated with a RankedAgentLoop.
 import os
 import argparse
 from dotenv import load_dotenv
-from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 from .agents import RankingAgent
 
 def main():
