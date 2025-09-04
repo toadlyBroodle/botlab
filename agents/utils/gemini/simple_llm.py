@@ -23,9 +23,6 @@ os.environ["LITELLM_LOG_VERBOSE"] = "False"
 logger = logging.getLogger(__name__)
 
 
-
-
-
 class SimpleLiteLLMModel(LiteLLMModel):
     """A simplified wrapper around `smolagents.LiteLLMModel` with cost tracking and basic retry logic.
 
