@@ -20,7 +20,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from agents.utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 from agents.ranker.agents import RankingAgent
 from agents.utils.telemetry import suppress_litellm_logs
 

@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Union, Any
 from types import SimpleNamespace
 from agents.utils.gemini.gemini_api import GeminiAPI
 try:
-    from agents.utils.gemini.simple_llm import SimpleLiteLLMModel  # type: ignore
+    from agents.utils.agents.simple_llm import SimpleLiteLLMModel  # type: ignore
 except Exception:  # pragma: no cover
     class SimpleLiteLLMModel:  # type: ignore
         pass

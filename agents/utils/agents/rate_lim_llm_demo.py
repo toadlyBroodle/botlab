@@ -6,7 +6,7 @@ This script demonstrates how to use the rate-limited LLM client with different m
 including how to specify rate limits and handle retries.
 
 Usage:
-    python -m agents.utils.gemini.rate_lim_llm_demo
+    python -m agents.utils.agents.rate_lim_llm_demo
 """
 
 import os
@@ -26,14 +26,7 @@ suppress_litellm_logs()
 RateLimitedLiteLLMModel.configure_logging(level=logging.WARNING, enable_litellm_logging=False)
 
 def create_demo_agent(model: LiteLLMModel) -> ToolCallingAgent:
-    """Creates a simple agent for demonstration purposes
-    
-    Args:
-        model: The LiteLLM model to use for the agent
-        
-    Returns:
-        A configured demo agent
-    """
+    """Creates a simple agent for demonstration purposes"""
     agent = ToolCallingAgent(
         tools=[],
         model=model,
@@ -47,11 +40,7 @@ def create_demo_agent(model: LiteLLMModel) -> ToolCallingAgent:
     return agent
 
 def test_direct_model_call(model: RateLimitedLiteLLMModel):
-    """Test the model directly without using an agent
-    
-    Args:
-        model: The rate-limited model to test
-    """
+    """Test the model directly without using an agent"""
     print("\n" + "="*80)
     print("Testing direct model call")
     print("="*80)
@@ -94,16 +83,7 @@ def test_direct_model_call(model: RateLimitedLiteLLMModel):
 def run_demo(agent: ToolCallingAgent, model: RateLimitedLiteLLMModel, 
              prompt: str = "Explain the concept of rate limiting in API calls in 3 sentences.", 
              num_requests: int = 16):
-    """Runs multiple requests to demonstrate rate limiting
-    
-    Args:
-        agent: The agent to use for the demo
-        model: The rate-limited model to monitor
-        prompt: The prompt to send to the model
-        num_requests: Number of requests to make
-    Returns:
-        None, prints results to console
-    """
+    """Runs multiple requests to demonstrate rate limiting"""
     print("\n" + "="*80)
     print(f"Starting demo with {num_requests} requests")
     print(f"Prompt: '{prompt}'")
@@ -165,13 +145,7 @@ def run_demo(agent: ToolCallingAgent, model: RateLimitedLiteLLMModel,
     print("="*80)
 
 def test_parallel_model_calls(model_id="gemini/gemini-2.0-flash", num_models=3, num_requests=3):
-    """Test multiple model instances running in parallel to demonstrate shared rate limiting
-    
-    Args:
-        model_id: The model ID to use
-        num_models: Number of model instances to create
-        num_requests: Number of requests per model
-    """
+    """Test multiple model instances running in parallel to demonstrate shared rate limiting"""
     print("\n" + "="*80)
     print(f"Testing shared rate limiting with {num_models} parallel model instances")
     print("="*80)
@@ -249,7 +223,6 @@ def test_parallel_model_calls(model_id="gemini/gemini-2.0-flash", num_models=3, 
 
 def main():
     """Main entry point when run directly"""
-
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -292,3 +265,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

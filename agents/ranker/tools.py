@@ -1,5 +1,5 @@
 from typing import Tuple, Optional
-from ..utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 import re
 
 def llm_judge(

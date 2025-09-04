@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 # Handle imports for both module and script execution
 try:
     from .utils.telemetry import start_telemetry, suppress_litellm_logs
-    from .utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+    from .utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
     from .utils.file_manager.file_manager import FileManager
     from .utils.agents.tools import load_file
     
@@ -27,7 +27,7 @@ try:
 except ImportError:
     # For script execution
     from utils.telemetry import start_telemetry, suppress_litellm_logs
-    from utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+    from utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
     from utils.file_manager.file_manager import FileManager
     from utils.agents.tools import load_file
     
@@ -117,7 +117,7 @@ class AgentLoop:
             # If any agent explicitly requests NOT to use rate limiting, build SimpleLiteLLMModel instead
             any_requests_simple = any(not ctx.get('use_rate_limiting', True) for _, ctx in (self.agent_contexts or {}).items())
             if any_requests_simple:
-                from .utils.gemini.simple_llm import SimpleLiteLLMModel
+                from .utils.agents.simple_llm import SimpleLiteLLMModel
                 print("✓ Using SimpleLiteLLMModel for shared model (no rate limiting)")
                 self.shared_model = SimpleLiteLLMModel(model_id=model_id)
             else:
@@ -335,7 +335,7 @@ class AgentLoop:
                         # TranslatorAgent: choose simple vs rate-limited based on context flag
                         normalized_model = self.model_id.split('/')[-1] if '/' in self.model_id else self.model_id
                         use_rate_limiting = agent_context.get('use_rate_limiting', True)
-                        from .utils.gemini.simple_llm import SimpleLiteLLMModel
+                        from .utils.agents.simple_llm import SimpleLiteLLMModel
                         lite_model = None if use_rate_limiting else SimpleLiteLLMModel(model_id=self.model_id)
                         agent_instance = TranslatorAgent(
                             model=normalized_model,

@@ -24,7 +24,7 @@ import argparse
 from dotenv import load_dotenv
 from typing import Dict, List, Any, Optional
 
-from agents.utils.gemini.rate_lim_llm import RateLimitedLiteLLMModel
+from agents.utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 from agents.utils.telemetry import suppress_litellm_logs
 
 from agents.manager.manager_agent import ManagerAgent
