@@ -96,7 +96,8 @@ class WriterAgent(BaseCodeAgent):
         base_wait_time: float = 2.0,
         max_retries: int = 3,
         critic_description: Optional[str] = None,
-        critic_prompt: Optional[str] = None
+        critic_prompt: Optional[str] = None,
+        additional_tools: Optional[List] = None
     ):
         """Initialize the writer agent.
         
@@ -145,6 +146,7 @@ class WriterAgent(BaseCodeAgent):
             model_info_path=model_info_path,
             base_wait_time=base_wait_time,
             max_retries=max_retries,
+            additional_tools=additional_tools,
             additional_authorized_imports=["json"],
             managed_agents=managed_agents,
             agent_name='writer_agent'

@@ -9,6 +9,10 @@ class AnimatorAgent(BaseToolCallingAgent):
 
     Uses the project's LiteLLM wrappers (Simple or RateLimited) for consistency in cost tracking.
     Exposes tools to create videos from text prompts and optionally seed images.
+
+    For Veo 3 documentation and examples, see: 
+     - api: https://ai.google.dev/gemini-api/docs/video
+     - prompting: https://cloud.google.com/vertex-ai/generative-ai/docs/video/video-gen-prompt-guide
     """
 
     def __init__(
@@ -42,9 +46,10 @@ class AnimatorAgent(BaseToolCallingAgent):
         )
 
     def get_tools(self) -> List:
-        from .tools import generate_video_with_veo3
+        from .tools import generate_video_with_veo3, save_storyboard_metadata
 
-        return [generate_video_with_veo3]
+        # Expose both video generation and storyboard saving utilities
+        return [generate_video_with_veo3, save_storyboard_metadata]
 
     def get_base_description(self) -> str:
         return (
