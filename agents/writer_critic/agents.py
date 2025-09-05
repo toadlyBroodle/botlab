@@ -5,6 +5,7 @@ from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
 from ..utils.agents.tools import apply_custom_agent_prompts, save_final_answer
 from ..utils.agents.base_agent import BaseCodeAgent, BaseToolCallingAgent
 import time
+from ..animator.tools import save_storyboard_metadata
 
 
 class CriticAgent(BaseToolCallingAgent):
@@ -97,7 +98,8 @@ class WriterAgent(BaseCodeAgent):
         max_retries: int = 3,
         critic_description: Optional[str] = None,
         critic_prompt: Optional[str] = None,
-        additional_tools: Optional[List] = None
+        additional_tools: Optional[List] = None,
+        additional_authorized_imports: Optional[List[str]] = None,
     ):
         """Initialize the writer agent.
         
@@ -137,6 +139,12 @@ class WriterAgent(BaseCodeAgent):
         else:
             managed_agents = [critic_agent]
             
+        # Merge authorized imports (default + caller-provided)
+        default_imports: List[str] = ["json", "os", "pathlib", "shutil"]
+        merged_imports: List[str] = (
+            list({*default_imports, *(additional_authorized_imports or [])})
+        )
+
         super().__init__(
             model=model,
             max_steps=max_steps,
@@ -147,14 +155,15 @@ class WriterAgent(BaseCodeAgent):
             base_wait_time=base_wait_time,
             max_retries=max_retries,
             additional_tools=additional_tools,
-            additional_authorized_imports=["json"],
+            additional_authorized_imports=merged_imports,
             managed_agents=managed_agents,
             agent_name='writer_agent'
         )
 
     def get_tools(self) -> List:
         """Return the list of tools for the writer agent."""
-        return []  # Writer uses managed agents instead of tools
+        # Give the writer the ability to persist validated storyboard metadata
+        return [save_storyboard_metadata]
 
     def get_base_description(self) -> str:
         """Return the base description for the writer agent."""

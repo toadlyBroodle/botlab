@@ -29,6 +29,9 @@ class AnimatorAgent(BaseToolCallingAgent):
         use_rate_limiting: bool = False,
         **kwargs,
     ) -> None:
+        # Provide a sensible default set of authorized imports for any code-executing contexts
+        default_authorized_imports = ["json"]
+
         super().__init__(
             model=model,
             max_steps=max_steps,
@@ -39,6 +42,7 @@ class AnimatorAgent(BaseToolCallingAgent):
             base_wait_time=base_wait_time,
             max_retries=max_retries,
             additional_tools=additional_tools,
+            additional_authorized_imports=default_authorized_imports,
             agent_name="animator_agent",
             enable_daily_quota_fallback=False,
             use_rate_limiting=use_rate_limiting,
