@@ -105,49 +105,38 @@ class SimpleLiteLLMModel(LiteLLMModel):
             logger.error(f"Error loading model config from {model_info_path}: {e}. Using defaults.")
             return 32000
 
-    def __call__(self, messages: List[Dict[str, str]], **kwargs) -> Any:
-        """Makes an API call using the current model with cost tracking and exponential backoff retry logic."""
-        # Normalize messages to plain dicts and roles to supported strings
-        def _normalize_role(role_value: Any) -> str:
-            # Extract enum .value if present, then map to allowed set
-            raw = getattr(role_value, "value", role_value)
-            raw_str = str(raw).lower()
-            # Handle cases like "messagerole.system" or "system"
-            if "tool" in raw_str and ("response" in raw_str or "result" in raw_str):
-                return "tool-response"
-            if "tool" in raw_str and ("call" in raw_str or "invoke" in raw_str):
-                return "tool-call"
-            if "system" in raw_str:
-                return "system"
-            if "assistant" in raw_str:
-                return "assistant"
-            if "user" in raw_str:
-                return "user"
-            # Default to user
-            return "user"
+    def __call__(self, messages: List[Any], **kwargs) -> Any:
+        """Makes an API call using the current model with cost tracking and exponential backoff retry logic.
 
-        def _to_message_dict(msg: Any) -> Dict[str, str]:
-            # If it's already a dict, coerce values to strings as needed
+        Note: Do NOT normalize messages to dicts here. smolagents' LiteLLMModel expects ChatMessage-like
+        structures and will clean/flatten them internally. We only estimate tokens defensively.
+        """
+
+        def _extract_text_length(msg: Any) -> int:
+            # Handle dict format {role, content}
             if isinstance(msg, dict):
-                role_val = msg.get("role", "user")
-                role = _normalize_role(role_val)
-                content_val = msg.get("content", "")
-                content = str(getattr(content_val, "content", content_val))
-                return {"role": role, "content": content}
-            # If it has attributes like a SimpleNamespace or Pydantic model
-            role_attr = getattr(msg, "role", "user")
-            role = _normalize_role(role_attr)
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    try:
+                        return sum(len(part.get("text", "")) for part in content if isinstance(part, dict))
+                    except Exception:
+                        return len(str(content))
+                return len(str(getattr(content, "content", content)))
+            # Handle objects with .content
             content_attr = getattr(msg, "content", "")
-            content = str(getattr(content_attr, "content", content_attr))
-            return {"role": role, "content": content}
+            if isinstance(content_attr, list):
+                try:
+                    return sum(len(getattr(part, "text", "")) if not isinstance(part, dict) else len(part.get("text", "")) for part in content_attr)
+                except Exception:
+                    return len(str(content_attr))
+            return len(str(getattr(content_attr, "content", content_attr)))
 
-        messages_normalized: List[Dict[str, str]] = [_to_message_dict(m) for m in messages]
-
-        # Estimate input tokens
-        estimated_input_tokens = min(
-            sum(len(m.get("content", "")) for m in messages_normalized) // 4,
-            self.input_token_limit
-        )
+        # Estimate input tokens conservatively
+        try:
+            total_chars = sum(_extract_text_length(m) for m in messages)
+        except Exception:
+            total_chars = 0
+        estimated_input_tokens = min(total_chars // 4, self.input_token_limit)
         
         # Set default timeout if not provided
         current_call_kwargs = kwargs.copy()
@@ -161,7 +150,8 @@ class SimpleLiteLLMModel(LiteLLMModel):
         for attempt in range(max_retries + 1):
             try:
                 # Make the API call using the parent's generate method directly - NO RATE LIMITING
-                response = super().generate(messages=messages_normalized, **current_call_kwargs)
+                # Pass through messages as-is for smolagents to process
+                response = super().generate(messages=messages, **current_call_kwargs)
                 
                 # Extract token counts from response
                 input_tokens, output_tokens = self._extract_token_counts(response, estimated_input_tokens)
