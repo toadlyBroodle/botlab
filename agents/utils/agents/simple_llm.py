@@ -107,16 +107,36 @@ class SimpleLiteLLMModel(LiteLLMModel):
 
     def __call__(self, messages: List[Dict[str, str]], **kwargs) -> Any:
         """Makes an API call using the current model with cost tracking and exponential backoff retry logic."""
-        # Normalize messages to plain dicts to avoid issues with SimpleNamespace / Pydantic models
+        # Normalize messages to plain dicts and roles to supported strings
+        def _normalize_role(role_value: Any) -> str:
+            # Extract enum .value if present, then map to allowed set
+            raw = getattr(role_value, "value", role_value)
+            raw_str = str(raw).lower()
+            # Handle cases like "messagerole.system" or "system"
+            if "tool" in raw_str and ("response" in raw_str or "result" in raw_str):
+                return "tool-response"
+            if "tool" in raw_str and ("call" in raw_str or "invoke" in raw_str):
+                return "tool-call"
+            if "system" in raw_str:
+                return "system"
+            if "assistant" in raw_str:
+                return "assistant"
+            if "user" in raw_str:
+                return "user"
+            # Default to user
+            return "user"
+
         def _to_message_dict(msg: Any) -> Dict[str, str]:
             # If it's already a dict, coerce values to strings as needed
             if isinstance(msg, dict):
-                role = str(msg.get("role", "user"))
+                role_val = msg.get("role", "user")
+                role = _normalize_role(role_val)
                 content_val = msg.get("content", "")
                 content = str(getattr(content_val, "content", content_val))
                 return {"role": role, "content": content}
             # If it has attributes like a SimpleNamespace or Pydantic model
-            role = str(getattr(msg, "role", "user"))
+            role_attr = getattr(msg, "role", "user")
+            role = _normalize_role(role_attr)
             content_attr = getattr(msg, "content", "")
             content = str(getattr(content_attr, "content", content_attr))
             return {"role": role, "content": content}
