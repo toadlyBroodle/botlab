@@ -20,7 +20,7 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from agents.utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
+from agents.utils.agents.simple_llm import SimpleLiteLLMModel
 from agents.ranker.agents import RankingAgent
 from agents.utils.telemetry import suppress_litellm_logs
 
@@ -188,12 +188,9 @@ def main():
         return 0 # Successful exit for N=1 case.
     
     # Create the model
-    model = RateLimitedLiteLLMModel(
+    model = SimpleLiteLLMModel(
         model_id=args.model,
-        model_info_path=args.model_info_path,
-        base_wait_time=2.0,
-        max_retries=3,
-        enable_fallback=args.use_fallback
+        model_info_path=args.model_info_path
     )
     
     # Create the ranking agent

@@ -43,10 +43,12 @@ def build_writer_prompt(initial_prompt: str, num_scenes: int) -> str:
         "Storyboard JSON fields you must include (and validate):\n"
         "- title (string)\n"
         "- total_duration_seconds (integer == scenes * 8)\n"
-        "- scenes: list of {id, title, duration_seconds=8, veo_prompt, audio_cues, transition_from_previous, seed_instructions, notes}\n\n"
+        "- character_bible (string; concise description of the main character(s), appearance, outfits, props)\n"
+        "- scenes: list of {id, title, duration_seconds=8, veo_prompt, audio_cues, transition_from_previous, continuity, seed_instructions, notes}\n\n"
         f"Constraints:\n- Exactly {num_scenes} scenes; each exactly 8 seconds.\n"
         f"- Strong visual continuity; include carry-over guidance in seed_instructions.\n"
         f"- Transitions explicit in transition_from_previous.\n"
+        f"- continuity must be one of: 'append' (same shot continues; will use last frame as seed) or 'cut' (new shot/angle; optionally seed from last frame).\n"
         "- Default to widescreen 16:9 framing.\n"
         "- For each scene's 'veo_prompt', follow Veo best practices: include Subject, Context, Action, Style (film/visual), Camera motion, Composition, Ambiance.\n"
         "- Clearly state if audio is present and describe it in separate sentences (for example, sound effects, music, or speech).\n"
@@ -123,6 +125,8 @@ def run_storyboard_generation(
         "Do NOT import or use os, pathlib, shutil, posixpath, or open(). The ONLY allowed persistence is via save_storyboard_metadata. "
         "For each scene's 'veo_prompt', adhere to Veo best practices: explicitly include Subject, Context, Action, Style (film/visual), Camera motion, Composition, and Ambiance; "
         "default framing to widescreen 16:9 unless otherwise required; state audio desires in separate sentences (sound effects, music, speech) and, if useful, name elements to avoid as negatives (e.g., 'wall, frame'). "
+        "Include a top-level 'character_bible' string describing the main character(s) so they remain visually consistent across scenes and cuts. "
+        "For each scene, set 'continuity' to 'append' if the shot should directly continue (we will seed from the previous scene's last frame), or 'cut' if it is a new angle/perspective (we may still seed, but rapidly transition to new shot). "
         "Ensure continuity by carrying forward key visual elements in 'seed_instructions' and specify transitions in 'transition_from_previous'."
     )
 
@@ -172,8 +176,13 @@ def run_storyboard_generation(
 def generate_scenes_with_veo(
     storyboard: Dict[str, Any],
     output_prefix: Optional[str] = None,
+    first_scene_path: Optional[str] = None,
 ) -> List[str]:
     """Generate each 8s scene with Veo 3, injecting last frame as seed for continuity.
+
+    If ``first_scene_path`` is provided, it is used as the first scene output instead of
+    generating it. The function ensures the last frame PNG for scene 1 exists, creating
+    it if missing, so it can be used to seed scene 2.
 
     Returns a list of absolute file paths to the generated scene mp4 files.
     """
@@ -186,24 +195,65 @@ def generate_scenes_with_veo(
     scene_files: List[str] = []
     last_frame_path: Optional[str] = None
 
+    character_bible: str = str(storyboard.get("character_bible", "")).strip()
+
     for i, scene in enumerate(storyboard["scenes"], start=1):
         veo_prompt: str = scene.get("veo_prompt", "").strip()
         if not veo_prompt:
             raise ValueError(f"Scene {i} missing 'veo_prompt'")
 
+        # Continuity: default to 'append' unless explicitly a cut or transition says hard cut
+        continuity: str = str(scene.get("continuity") or "").strip().lower()
+        if not continuity:
+            t = str(scene.get("transition_from_previous", "")).strip().lower()
+            continuity = "cut" if t == "cut" else "append"
+
+        audio_cues: str = str(scene.get("audio_cues", "")).strip()
+        seed_instructions: str = str(scene.get("seed_instructions", "")).strip()
+
+        # Build effective prompt per Vertex guide: keep core prompt concise; add audio separately; reinforce character consistency on cuts
+        effective_prompt_parts = [veo_prompt]
+        if continuity == "cut" and character_bible:
+            effective_prompt_parts.append(
+                f"Maintain the same main character(s) as previously established: {character_bible}."
+            )
+        if seed_instructions:
+            effective_prompt_parts.append(f"Continuity notes: {seed_instructions}.")
+        if audio_cues:
+            effective_prompt_parts.append(f"Audio: {audio_cues}.")
+        effective_prompt = " \n".join(p for p in effective_prompt_parts if p)
+
         output_filename = f"{movie_basename}_scene_{i:02d}.mp4"
-        output_path = generate_video_with_veo3(
-            prompt=veo_prompt,
-            output_filename=output_filename,
-            seed_image_path=last_frame_path,
-        )
 
-        abs_output_path = output_path if os.path.isabs(output_path) else os.path.join(data_dir, output_path)
-        scene_files.append(abs_output_path)
+        # If a preexisting first scene video is provided, use it for scene 1
+        if i == 1 and first_scene_path and os.path.exists(first_scene_path):
+            # Respect absolute paths; resolve relative paths from current working directory
+            abs_output_path = first_scene_path if os.path.isabs(first_scene_path) else os.path.abspath(first_scene_path)
+            scene_files.append(abs_output_path)
 
-        # Extract last frame for next scene
-        last_frame_path = os.path.join(data_dir, f"{movie_basename}_scene_{i:02d}_last.png")
-        extract_last_frame(abs_output_path, last_frame_path)
+            # Ensure last frame for scene 1 exists (create if missing)
+            last_frame_path_candidate = os.path.join(data_dir, f"{movie_basename}_scene_{i:02d}_last.png")
+            if not os.path.exists(last_frame_path_candidate):
+                extract_last_frame(abs_output_path, last_frame_path_candidate)
+            last_frame_path = last_frame_path_candidate
+            continue
+
+        try:
+            output_path = generate_video_with_veo3(
+                prompt=effective_prompt,
+                output_filename=output_filename,
+                seed_image_path=last_frame_path,
+            )
+
+            abs_output_path = output_path if os.path.isabs(output_path) else os.path.join(data_dir, output_path)
+            scene_files.append(abs_output_path)
+
+            # Extract last frame for next scene
+            last_frame_path = os.path.join(data_dir, f"{movie_basename}_scene_{i:02d}_last.png")
+            extract_last_frame(abs_output_path, last_frame_path)
+        except Exception as e:
+            print(f"⚠ Scene {i} generation failed: {e}. Saving partial progress and stopping.")
+            break
 
     return scene_files
 
@@ -262,8 +312,8 @@ def regenerate_scenes_from_manifest(
 
     if not isinstance(scenes, list) or not scenes:
         raise ValueError("Storyboard scenes missing or invalid in manifest/override")
-    if not isinstance(outputs, list) or len(outputs) != len(scenes):
-        raise ValueError("Manifest outputs do not align with storyboard scenes count")
+    if not isinstance(outputs, list):
+        raise ValueError("Manifest outputs must be a list if present")
 
     num_scenes = len(scenes)
     if start_scene < 1 or start_scene > num_scenes:
@@ -274,7 +324,14 @@ def regenerate_scenes_from_manifest(
     # Build ordered list of scene files from manifest
     # Ensure sorted by index (manifest stores index 1-based)
     outputs_sorted = sorted(outputs, key=lambda o: int(o.get("index", 0)))
-    scene_files: List[str] = [o.get("file") for o in outputs_sorted]
+    scene_files: List[str] = [""] * num_scenes
+    for o in outputs_sorted:
+        try:
+            idx = int(o.get("index", 0))
+        except Exception:
+            idx = 0
+        if 1 <= idx <= num_scenes:
+            scene_files[idx - 1] = o.get("file") or ""
 
     data_dir = _ensure_animator_data_dir()
 
@@ -310,11 +367,32 @@ def regenerate_scenes_from_manifest(
         ts = _timestamp()
         movie_basename = (storyboard.get("title", "story").replace(" ", "_") or "story") + f"_{ts}"
 
+    character_bible: str = str(storyboard.get("character_bible", "")).strip()
+
     for idx in indices_to_regen:
         scene = scenes[idx - 1]
         veo_prompt: str = str(scene.get("veo_prompt", "")).strip()
         if not veo_prompt:
             raise ValueError(f"Scene {idx} missing 'veo_prompt'")
+
+        continuity: str = str(scene.get("continuity") or "").strip().lower()
+        if not continuity:
+            t = str(scene.get("transition_from_previous", "")).strip().lower()
+            continuity = "cut" if t == "cut" else "append"
+
+        audio_cues: str = str(scene.get("audio_cues", "")).strip()
+        seed_instructions: str = str(scene.get("seed_instructions", "")).strip()
+
+        effective_prompt_parts = [veo_prompt]
+        if continuity == "cut" and character_bible:
+            effective_prompt_parts.append(
+                f"Maintain the same main character(s) as previously established: {character_bible}."
+            )
+        if seed_instructions:
+            effective_prompt_parts.append(f"Continuity notes: {seed_instructions}.")
+        if audio_cues:
+            effective_prompt_parts.append(f"Audio: {audio_cues}.")
+        effective_prompt = " \n".join(p for p in effective_prompt_parts if p)
 
         # Prefer overwriting the existing file path if available for this index
         existing_path = scene_files[idx - 1]
@@ -323,9 +401,9 @@ def regenerate_scenes_from_manifest(
         else:
             output_filename = f"{movie_basename}_scene_{idx:02d}.mp4"
 
-        # Generate with optional seed for continuity
+        # Generate with last-frame seed for all scenes (append and cut)
         output_path = generate_video_with_veo3(
-            prompt=veo_prompt,
+            prompt=effective_prompt,
             output_filename=output_filename,
             seed_image_path=last_frame_path,
         )
@@ -346,7 +424,9 @@ def regenerate_scenes_from_manifest(
         final_movie_basename = (storyboard.get("title", "story").replace(" ", "_")) + "_final.mp4"
         final_movie_path = os.path.join(data_dir, final_movie_basename)
 
-    concatenated_path = _concat_videos_ffmpeg(scene_files, final_movie_path)
+    # Only concatenate if all scene files are present
+    all_present = all(isinstance(p, str) and p and os.path.exists(p) for p in scene_files)
+    concatenated_path = _concat_videos_ffmpeg(scene_files, final_movie_path) if all_present else None
 
     # Persist updated manifest in place
     manifest_obj["title"] = storyboard.get("title", manifest_obj.get("title"))
@@ -442,18 +522,30 @@ def main(args: argparse.Namespace) -> None:
         )
         return
 
-    # Guard: fresh run requires a prompt
-    if not args.prompt:
-        raise ValueError("--prompt is required unless --existing-manifest is provided")
+    # Guard: require either a storyboard path or a prompt (unless continuing manifest)
+    if not getattr(args, "storyboard_path", None) and not args.prompt:
+        raise ValueError("Provide --storyboard-path or --prompt (unless using --existing-manifest)")
 
-    storyboard = run_storyboard_generation(
-        initial_prompt=args.prompt,
-        num_scenes=args.num_scenes,
-        max_iterations=args.max_iterations,
-        model_id=args.model_id,
-        model_info_path=args.model_info_path,
-        use_custom_prompts=True,
-    )
+    # Load or generate storyboard
+    if getattr(args, "storyboard_path", None):
+        with open(args.storyboard_path, "r", encoding="utf-8") as f:
+            storyboard = json.load(f)
+        # Basic validation similar to run_storyboard_generation
+        scenes = storyboard.get("scenes")
+        if not isinstance(scenes, list) or len(scenes) == 0:
+            raise ValueError("Storyboard at --storyboard-path has no scenes")
+        for idx, scene in enumerate(scenes, start=1):
+            if int(scene.get("duration_seconds", 0)) != 8:
+                raise ValueError(f"Scene {idx} duration is not 8 seconds")
+    else:
+        storyboard = run_storyboard_generation(
+            initial_prompt=args.prompt,
+            num_scenes=args.num_scenes,
+            max_iterations=args.max_iterations,
+            model_id=args.model_id,
+            model_info_path=args.model_info_path,
+            use_custom_prompts=True,
+        )
 
     # Persist storyboard immediately
     data_dir = _ensure_animator_data_dir()
@@ -467,18 +559,27 @@ def main(args: argparse.Namespace) -> None:
         print("Skipping video generation and concatenation; storyboard-only mode enabled.")
         return
 
-    # Generate scenes
-    scene_files = generate_scenes_with_veo(storyboard, output_prefix=args.output_prefix)
+    # Generate scenes (resilient: returns partial results if a scene fails)
+    scene_files = generate_scenes_with_veo(
+        storyboard,
+        output_prefix=args.output_prefix,
+        first_scene_path=getattr(args, "first_scene_path", None),
+    )
 
-    # Concatenate scenes into final movie (if ffmpeg available)
+    # Concatenate scenes into final movie only if all scenes present
     data_dir = _ensure_animator_data_dir()
     final_movie_basename = (args.output_prefix or storyboard.get("title", "story")).replace(" ", "_")
     final_movie_path = os.path.join(data_dir, f"{final_movie_basename}_final.mp4")
-    concatenated_path = _concat_videos_ffmpeg(scene_files, final_movie_path)
+    num_expected = len(storyboard.get("scenes", []))
+    all_present = len(scene_files) == num_expected and all(os.path.exists(p) for p in scene_files)
+    concatenated_path = _concat_videos_ffmpeg(scene_files, final_movie_path) if all_present else None
     if concatenated_path:
         print(f"Saved final movie to {concatenated_path}")
     else:
-        print("⚠ Skipped saving final movie (ffmpeg unavailable or concat failed).")
+        if not all_present:
+            print("⚠ Final movie not concatenated because not all scenes were generated. Saving partial manifest.")
+        else:
+            print("⚠ Skipped saving final movie (ffmpeg unavailable or concat failed).")
 
     # Save manifest (include final movie if present)
     manifest_path = save_metadata(storyboard, scene_files)
@@ -500,11 +601,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Storyboard to Veo pipeline with writer-critic and continuity seeding")
     parser.add_argument("--prompt", type=str, required=False, help="Initial concept prompt for the story (omit when using --existing-manifest)")
     parser.add_argument("--num-scenes", type=int, default=4, help="Number of 8-second scenes to create")
+    parser.add_argument("--storyboard-path", type=str, default=None, help="Path to an existing storyboard JSON to use directly")
     parser.add_argument("--max-iterations", type=int, default=10, help="Writer improvement iterations/steps with critic")
     parser.add_argument("--output-prefix", type=str, default=None, help="Prefix for output scene filenames")
     parser.add_argument("--model-id", type=str, default="gemini/gemini-2.0-flash", help="Model ID for writer/critic agents")
     parser.add_argument("--model-info-path", type=str, default="agents/utils/gemini/gem_llm_info.json", help="Path to model info JSON file")
     parser.add_argument("--storyboard-only", action="store_true", help="Only generate and save the storyboard JSON; skip video generation")
+    parser.add_argument("--first-scene-path", type=str, default=None, help="Optional path to an existing MP4 to use as scene 1")
     # Partial regeneration options
     parser.add_argument("--existing-manifest", type=str, help="Path to an existing manifest JSON to continue from")
     parser.add_argument("--existing-storyboard", type=str, help="Optional path to a storyboard JSON to override scene prompts")

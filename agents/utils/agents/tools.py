@@ -26,10 +26,10 @@ from io import BytesIO
 import base64
 
 # Import daily quota constant
-from ..gemini.rate_lim_llm import DAILY_QUOTA_ID
+from .rate_lim_llm import DAILY_QUOTA_ID
 
 # Import the new exception for search failures
-from ..gemini.rate_lim_llm import AllDailySearchRateLimsExhausted
+from .rate_lim_llm import AllDailySearchRateLimsExhausted
 
 # Added for user feedback tools
 import subprocess
@@ -296,7 +296,7 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
             logger.error(f"Google Search API daily quota error detected: {error_str[:300]}...")
             
             # Import the search quota handling functions
-            from ..gemini.rate_lim_llm import handle_google_search_quota_error
+            from .rate_lim_llm import handle_google_search_quota_error
             
             # Handle the Google search quota error (this will disable Google search for 24 hours)
             handle_google_search_quota_error(error_str)
@@ -349,7 +349,7 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     logger.info(f"Fallback state: _using_gemini_fallback={_using_gemini_fallback}, _gemini_fallback_until={_gemini_fallback_until}, current_time={time.time()}")
 
     # Check if Google search is disabled due to daily quota exhaustion
-    from ..gemini.rate_lim_llm import is_google_search_disabled
+    from .rate_lim_llm import is_google_search_disabled
     
     google_search_disabled = is_google_search_disabled()
     

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..ranked_agent_loop import RankedAgentLoop
 
 from smolagents import ToolCallingAgent
-from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
+from ..utils.agents.simple_llm import SimpleLiteLLMModel
 from ..utils.agents.tools import apply_custom_agent_prompts, save_final_answer
 from .tools import llm_judge
 
@@ -20,7 +20,7 @@ class RankingAgent:
     
     def __init__(
         self,
-        model: Optional[RateLimitedLiteLLMModel] = None,
+        model: Optional[SimpleLiteLLMModel] = None,
         agent_description: Optional[str] = None,
         system_prompt: Optional[str] = None,
         max_steps: int = 3,
@@ -54,11 +54,9 @@ class RankingAgent:
         """
         # Create a model if one wasn't provided
         if model is None:
-            self.model = RateLimitedLiteLLMModel(
+            self.model = SimpleLiteLLMModel(
                 model_id=model_id,
                 model_info_path=model_info_path,
-                base_wait_time=base_wait_time,
-                max_retries=max_retries,
             )
         else:
             self.model = model
@@ -625,13 +623,11 @@ def main():
     args = parser.parse_args()
     
     # Create a standalone ranking agent
-    from ..utils.agents.rate_lim_llm import RateLimitedLiteLLMModel
+    from ..utils.agents.simple_llm import SimpleLiteLLMModel
     
-    model = RateLimitedLiteLLMModel(
+    model = SimpleLiteLLMModel(
         model_id=args.model,
         model_info_path=args.model_info_path,
-        base_wait_time=2.0,
-        max_retries=3
     )
     
     ranking_agent = RankingAgent(model=model)

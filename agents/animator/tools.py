@@ -94,6 +94,9 @@ def save_storyboard_metadata(data: str | dict, expected_num_scenes: Optional[int
     - total_duration_seconds: integer
     - scenes: list of scene objects
 
+    Optional top-level fields:
+    - character_bible: string (concise description of main character(s), outfits, props)
+
     Each scene object must include:
     - id: integer (1-based index preferred)
     - title: string
@@ -103,6 +106,14 @@ def save_storyboard_metadata(data: str | dict, expected_num_scenes: Optional[int
     - transition_from_previous: string (e.g., cut, match cut, whip pan, dissolve)
     - seed_instructions: string (describe what to carry from the previous scene's last frame)
     - notes: string
+
+    Optional per-scene fields:
+    - continuity: string ("append" to continue from last frame; "cut" for new angle)
+
+    Notes:
+    - When continuity == "append", the pipeline will seed the next scene with the previous
+      scene's last frame to create a direct continuation.
+    - When continuity == "cut" or omitted, the pipeline will not necessarily seed from the previous scene's last frame.
 
     If expected_num_scenes is provided, the number of scenes must match.
     Saves to agents/animator/data/storyboard_YYYY-MM-DD_HH-MM-SS.json.
