@@ -26,6 +26,7 @@ AGENT_DIRS = {
     "writer_critic_agent": BASE_DIR / "writer_critic" / "data",
     "qaqc_agent": BASE_DIR / "qaqc" / "data",
     "animator_agent": BASE_DIR / "animator" / "data",
+    "newsletter_agent": BASE_DIR / "newsletter" / "data",
 }
 
 # Create researcher papers directory
