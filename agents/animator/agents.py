@@ -63,9 +63,16 @@ class AnimatorAgent(BaseToolCallingAgent):
 
     def get_default_system_prompt(self) -> str:
         return (
-            "You create concise, production-ready video prompts for Veo 3. "
-            "Favor clear scene descriptions, camera movement, mood, lighting, and pacing. "
-            "Return short prompts and call the tool to render."
+            "You orchestrate Veo 3 scene renders. You may lightly adapt the provided scene "
+            "prompt to smooth transitions using continuity signals (append vs cut). "
+            "Guidelines: "
+            "Append: preserve the prior shot's perspective, composition, lighting, and pacing; "
+            "use gentle motion or continuation cues; avoid abrupt style shifts. "
+            "Cut: rapidly shift perspective/angle to fulfill the scene intent while keeping the "
+            "main characters/subjects/props EXACTLY visually consistent (per character_bible/seed). "
+            "Always integrate any seed_instructions and audio_cues, and always use the seed image "
+            "when available. Keep prompts concise and structured (Subject, Context, Action, Style, "
+            "Camera, Composition, Ambiance), adding only minimal transitional cues needed for continuity."
         )
 
     def get_agent_type_name(self) -> str:
