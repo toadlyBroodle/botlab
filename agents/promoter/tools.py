@@ -42,6 +42,19 @@ def _tor_enabled() -> bool:
     return value not in ('0', 'false', 'no', 'off')
 
 
+def _viewport_size() -> Dict[str, int]:
+    """Compute viewport size from environment variables, with sensible defaults."""
+    try:
+        width = int(os.getenv('PROMOTER_PLAYWRIGHT_VIEWPORT_WIDTH', '1280'))
+    except Exception:
+        width = 1280
+    try:
+        height = int(os.getenv('PROMOTER_PLAYWRIGHT_VIEWPORT_HEIGHT', '800'))
+    except Exception:
+        height = 800
+    return {'width': width, 'height': height}
+
+
 class _BrowserWorker:
     def __init__(self) -> None:
         self._thread: Optional[threading.Thread] = None
@@ -102,7 +115,7 @@ class _BrowserWorker:
                 proxy=proxy_settings,
             )
             context: BrowserContext = browser.new_context(
-                viewport={'width': 1280, 'height': 800},
+                viewport=_viewport_size(),
                 ignore_https_errors=True,
             )
             page: Page = context.new_page()
@@ -276,9 +289,23 @@ def pw_click(selector: str) -> str:
     worker = _ensure_worker()
     def _task(state: Dict[str, Any]):
         try:
-            state['page'].locator(selector).first.click()
+            loc = state['page'].locator(selector).first
+            try:
+                # Best-effort wait for element to become visible before clicking
+                loc.wait_for(state="visible", timeout=10000)
+            except Exception:
+                pass
+            loc.click()
             return json.dumps({"ok": True, "action": "click", "selector": selector})
         except Exception as e:
+            # Fallback: JS click the first matching element if present
+            try:
+                script = "(sel)=>{ const el=document.querySelector(sel); if(!el) return {ok:false,err:'not_found'}; el.scrollIntoView({block:'center'}); el.click(); return {ok:true}; }"
+                res = state['page'].evaluate(script, selector)
+                if isinstance(res, dict) and res.get('ok'):
+                    return json.dumps({"ok": True, "action": "click_js", "selector": selector})
+            except Exception:
+                pass
             logger.error(f"pw_click error: {e}")
             return json.dumps({"ok": False, "error": str(e), "selector": selector})
     return worker.call(_task)
@@ -326,8 +353,34 @@ def pw_fill(selector: str, value: str) -> str:
                         return json.dumps({"ok": True, "action": "fill", "selector": selector, "mode": "shadow"})
                 except Exception:
                     pass
-            state['page'].fill(selector, value)
-            return json.dumps({"ok": True, "action": "fill", "selector": selector, "mode": "normal"})
+            try:
+                state['page'].fill(selector, value)
+                return json.dumps({"ok": True, "action": "fill", "selector": selector, "mode": "normal"})
+            except Exception:
+                # Fallback for contenteditable (e.g., DraftJS): click then insert text
+                try:
+                    loc = state['page'].locator(selector).first
+                    loc.click()
+                    is_ce = state['page'].evaluate("(sel)=>{ const el=document.querySelector(sel); return !!el && (el.isContentEditable || el.getAttribute('contenteditable')==='true'); }", selector)
+                    if is_ce:
+                        state['page'].keyboard.insert_text(value)
+                        # Dispatch input event to ensure React/DraftJS notices
+                        try:
+                            state['page'].evaluate("(sel)=>{ const el=document.querySelector(sel); if(!el) return; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }", selector)
+                        except Exception:
+                            pass
+                        return json.dumps({"ok": True, "action": "fill", "selector": selector, "mode": "contenteditable"})
+                except Exception:
+                    pass
+                # Last-resort: JS set innerText/value
+                try:
+                    script2 = "(sel,val)=>{ const el=document.querySelector(sel); if(!el) return {ok:false, error:'not_found'}; el.focus && el.focus(); if (el.isContentEditable) { el.innerText = val; } else { el.value = val; } el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return {ok:true}; }"
+                    res2 = state['page'].evaluate(script2, selector, value)
+                    if isinstance(res2, dict) and res2.get('ok'):
+                        return json.dumps({"ok": True, "action": "fill", "selector": selector, "mode": "js"})
+                except Exception:
+                    pass
+                raise
         except Exception as e:
             logger.error(f"pw_fill error: {e}")
             return json.dumps({"ok": False, "error": str(e), "selector": selector})
@@ -457,7 +510,11 @@ def pw_evaluate(script: str, args: Optional[Any] = None) -> str:
             except Exception:
                 return json.dumps({"repr": repr(result)})
         except Exception as e:
-            logger.error(f"pw_evaluate error: {e}")
+            try:
+                preview = script.strip().replace("\n", " ")[:160]
+            except Exception:
+                preview = "<unavailable>"
+            logger.error(f"pw_evaluate error: {e} | script_preview=" + preview)
             return f"Error: {e}"
     return worker.call(_task)
 
@@ -659,6 +716,34 @@ def mcp_playwright_playwright_console_logs(limit: int = 50, clear: bool = False)
         JSON array string of console log entries.
     """
     return pw_console_logs(limit=limit, clear=clear)
+
+
+# --- Simple status logging tool for human-overview updates ---
+@tool
+def status_log(message: str, log_path: Optional[str] = None) -> str:
+    """Append a brief, timestamped status line to a human-readable log file.
+
+    Args:
+        message: One-line summary of what the promoter is about to do or just did.
+        log_path: Optional explicit path to a log file. If omitted, defaults to agents/promoter/data/x-engage-agent-status.log
+
+    Returns:
+        JSON string: {"ok": true, "path": <log_path>} or error string.
+    """
+    try:
+        default_path = os.path.join(os.path.dirname(__file__), "data", "x-engage-agent-status.log")
+        path = (log_path or os.getenv("PROMOTER_STATUS_LOG") or default_path)
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        from datetime import datetime
+        # Sanitize to a single line
+        msg = (message or "").replace("\r", " ").replace("\n", " ").strip()
+        line = f"{datetime.utcnow().isoformat()} | {msg}\n"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line)
+        return json.dumps({"ok": True, "path": path})
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)})
 
 
 @tool
