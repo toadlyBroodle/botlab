@@ -26,8 +26,22 @@ _state: Dict[str, Any] = {
 
 
 def _headless() -> bool:
-    """Headless mode is fixed to default (headed) for promoter tools."""
-    return False
+    """Resolve headless mode; default to headless unless explicitly disabled via env.
+
+    PROMOTER_PLAYWRIGHT_HEADLESS values:
+      - '0','false','no','off' => headed (False)
+      - '1','true','yes','on'  => headless (True)
+      - unset => headless (True)
+    """
+    try:
+        val = os.getenv('PROMOTER_PLAYWRIGHT_HEADLESS', '').strip().lower()
+        if val in ('0', 'false', 'no', 'off'):
+            return False
+        if val in ('1', 'true', 'yes', 'on'):
+            return True
+    except Exception:
+        pass
+    return True
 
 
 def _slow_mo_ms() -> int:
@@ -114,9 +128,9 @@ class _BrowserWorker:
             launch_args = [
                 "--disable-quic",  # ensure no UDP/HTTP3 that could bypass transparent proxy
                 "--disable-features=AsyncDNS,UseDnsHttpsSvcb,UseDnsHttpsSvcbAlpn",  # prefer system DNS (redirected by iptables)
+                "--disable-gpu",
+                "--no-sandbox",
             ]
-            if not headless_flag:
-                launch_args.extend(["--disable-gpu", "--no-sandbox"])  # friendly flags for WSL/X11
 
             user_data = _user_data_dir()
             browser: Optional[Browser] = None
@@ -129,6 +143,9 @@ class _BrowserWorker:
                     args=launch_args or None,
                     proxy=proxy_settings,
                     viewport=_viewport_size(),
+                    user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    locale="en-US",
+                    timezone_id="UTC",
                     ignore_https_errors=True,
                 )
                 try:
@@ -145,9 +162,17 @@ class _BrowserWorker:
                 )
                 context: BrowserContext = browser.new_context(
                     viewport=_viewport_size(),
+                    user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    locale="en-US",
+                    timezone_id="UTC",
                     ignore_https_errors=True,
                 )
             page: Page = context.new_page()
+            # Ensure navigator.webdriver is False to reduce bot detection in headless
+            try:
+                page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+            except Exception:
+                pass
 
             # Prevent multiple tabs/windows: close any extra pages and force same-tab navigation
             def _close_extra_page(p: Page) -> None:
@@ -199,6 +224,11 @@ class _BrowserWorker:
                 except Exception:
                     pass
             page.on("console", _on_console)
+            # Maximize stealth: set platform and permissions similar to real session
+            try:
+                context.grant_permissions(["clipboard-read", "clipboard-write", "geolocation"], origin="https://x.com")
+            except Exception:
+                pass
 
             # Publish state
             _state['playwright'] = pw
@@ -345,6 +375,35 @@ def pw_click(selector: str) -> str:
                 pass
             logger.error(f"pw_click error: {e}")
             return json.dumps({"ok": False, "error": str(e), "selector": selector})
+    return worker.call(_task)
+
+
+@tool
+def pw_click_in_frame(frame_selector: str, inner_selector: str, timeout_ms: int = 20000) -> str:
+    """Click an element inside an iframe.
+
+    Args:
+        frame_selector: CSS selector to locate the iframe (e.g., "iframe[title*='checkbox']").
+        inner_selector: CSS selector of the element inside that iframe to click.
+        timeout_ms: Maximum time to wait for the element to be visible before clicking.
+
+    Returns:
+        A JSON string indicating success or error.
+    """
+    worker = _ensure_worker()
+    def _task(state: Dict[str, Any]):
+        try:
+            fl = state['page'].frame_locator(frame_selector)
+            loc = fl.locator(inner_selector).first
+            try:
+                loc.wait_for(state="visible", timeout=timeout_ms)
+            except Exception:
+                pass
+            loc.click(timeout=timeout_ms)
+            return json.dumps({"ok": True, "action": "click_iframe", "frame": frame_selector, "selector": inner_selector})
+        except Exception as e:
+            logger.error(f"pw_click_in_frame error: {e}")
+            return json.dumps({"ok": False, "error": str(e), "frame": frame_selector, "selector": inner_selector})
     return worker.call(_task)
 
 

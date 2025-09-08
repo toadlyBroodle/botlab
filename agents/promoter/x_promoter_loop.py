@@ -38,6 +38,7 @@ from dotenv import load_dotenv
 from .tools import (
     pw_navigate,
     pw_click,
+    pw_click_in_frame,
     pw_fill,
     pw_press_key,
     pw_get_visible_text,
@@ -156,6 +157,8 @@ class XPromoterLoop:
         self.replied_urls: set[str] = set()
         self.engaged_authors: set[str] = set()
         self.seen_urls: set[str] = self._load_seen_set()
+        # One-shot attempt to bypass Cloudflare verify-human checkbox if shown
+        self._cf_checkbox_attempted: bool = False
 
     # --- Public entrypoint ---
     def run(self) -> Dict[str, Any]:
@@ -341,6 +344,117 @@ class XPromoterLoop:
             pass
         return False
 
+    def _current_url(self) -> str:
+        """Return the current page URL from the browser."""
+        try:
+            res = _json_loads_safe(pw_evaluate("() => location.href"))
+            if isinstance(res, str):
+                return res
+            if isinstance(res, dict) and isinstance(res.get("repr"), str):
+                return res.get("repr", "")
+        except Exception:
+            pass
+        return ""
+
+    def _abort_if_account_access_block(self) -> None:
+        """Abort the run if redirected to X account access/captcha page."""
+        try:
+            url = (self._current_url() or "").lower()
+            has_block_url = ("/account/access" in url) and (("x.com" in url) or ("twitter.com" in url))
+            has_widget = self._has_verify_human_widget()
+            if has_block_url or has_widget:
+                # Try checkbox once before aborting
+                if not self._cf_checkbox_attempted:
+                    self._cf_checkbox_attempted = True
+                    if self._try_bypass_verify_human():
+                        return
+                try:
+                    self._log_error("account_access_block")
+                except Exception:
+                    pass
+                raise RuntimeError("Failed captcha encountered: redirected to X account access page")
+        except Exception:
+            # If URL can't be read, skip abort here
+            pass
+
+    def _has_verify_human_widget(self) -> bool:
+        script = (
+            "() => {\n"
+            "  try {\n"
+            "    const txt = (document.body && document.body.innerText || '').toLowerCase();\n"
+            "    if (txt.includes('verify you are human')) return true;\n"
+            "    const cb = document.querySelector('label.cb-lb input[type=\\'checkbox\\']');\n"
+            "    const success = document.querySelector('#success, #success-text');\n"
+            "    return !!cb && !success;\n"
+            "  } catch(e) { return false }\n"
+            "}"
+        )
+        try:
+            res = _json_loads_safe(pw_evaluate(script))
+            if isinstance(res, bool):
+                return res
+            if isinstance(res, dict) and isinstance(res.get("repr"), str):
+                return res.get("repr", "").lower() == "true"
+        except Exception:
+            pass
+        return False
+
+    def _try_bypass_verify_human(self) -> bool:
+        """Click the Cloudflare/turnstile checkbox once and wait briefly. Return True if unblocked."""
+        try:
+            # Wait up to 12s for the checkbox to appear
+            deadline = time.time() + 12.0
+            while time.time() < deadline:
+                exists = _json_loads_safe(pw_evaluate(
+                    "() => !!document.querySelector(\"label.cb-lb input[type='checkbox'], input[type='checkbox']\")"
+                ))
+                if (exists is True) or (isinstance(exists, dict) and str(exists.get('repr','')).lower()=='true'):
+                    break
+                time.sleep(0.25)
+
+            # Click the checkbox if present
+            clicked = False
+            # Try common iframe-based turnstile widgets first
+            for frame_sel in [
+                "iframe[title*='checkbox']",
+                "iframe[src*='challenge']",
+                "iframe[src*='turnstile']",
+            ]:
+                res = _json_loads_safe(pw_click_in_frame(frame_sel, "input[type='checkbox']"))
+                if isinstance(res, dict) and res.get('ok'):
+                    clicked = True
+                    break
+            for sel in [
+                "label.cb-lb input[type='checkbox']",
+                "input[type='checkbox']",
+            ]:
+                if self._click(sel):
+                    clicked = True
+                    break
+            # If not clickable via native, try JS click
+            if not clicked:
+                script = (
+                    "() => { const el = document.querySelector(\"label.cb-lb input[type='checkbox'], input[type='checkbox']\");\n"
+                    "  if (!el) return false; try { el.click(); return true; } catch(e) { return false } }"
+                )
+                res = _json_loads_safe(pw_evaluate(script))
+                clicked = bool(res is True or (isinstance(res, dict) and res.get('repr','').lower()=='true'))
+            # Wait up to 10s for verification to complete
+            verify_deadline = time.time() + 10.0
+            while time.time() < verify_deadline:
+                # If URL changed away from account/access, consider it cleared
+                url = (self._current_url() or "").lower()
+                if "/account/access" not in url:
+                    return True
+                # If success banner is visible, consider cleared
+                has_success = _json_loads_safe(pw_evaluate("() => !!document.querySelector('#success, #success-text')"))
+                if (has_success is True) or (isinstance(has_success, dict) and str(has_success.get('repr','')).lower()== 'true'):
+                    return True
+                time.sleep(0.5)
+        except Exception:
+            pass
+        return False
+
     def _fill(self, selector: str, value: str) -> bool:
         res = _json_loads_safe(pw_fill(selector, value))
         if not bool(res.get("ok")):
@@ -492,10 +606,8 @@ class XPromoterLoop:
     def _human_sleep(self) -> None:
         if self.dry_run:
             return
-        if self.post_wait_seconds is not None:
-            time.sleep(max(0, int(self.post_wait_seconds)))
-        else:
-            time.sleep(random.randint(20, 60))
+        # Always add a human-like delay between actions (10–30s)
+        time.sleep(random.randint(10, 30))
 
     # --- X specific flows ---
 
@@ -505,10 +617,13 @@ class XPromoterLoop:
             self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
         except Exception:
             pass
+        # Abort if we hit account access/captcha interstitial
+        self._abort_if_account_access_block()
         if self._is_logged_in():
             return
         # Go to explicit login page
         self._navigate("https://x.com/login", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+        self._abort_if_account_access_block()
 
         # Username step
         filled = False
@@ -527,6 +642,7 @@ class XPromoterLoop:
         # Prefer pressing Enter to advance
         self._press_key("Enter", selector="input[name='text']")
         time.sleep(1)
+        self._abort_if_account_access_block()
 
         # Password step
         filled = False
@@ -544,6 +660,7 @@ class XPromoterLoop:
         # Prefer pressing Enter to submit
         self._press_key("Enter", selector="input[name='password']")
         time.sleep(2)
+        self._abort_if_account_access_block()
 
         # Handle possible verification challenge
         self._maybe_handle_login_challenges()
@@ -553,6 +670,7 @@ class XPromoterLoop:
             self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
         except Exception:
             pass
+        self._abort_if_account_access_block()
         # Final check: if still not logged in, let caller proceed (actions may log errors/log out)
         # No exception here to avoid hard-stopping the loop unnecessarily
 
@@ -585,6 +703,7 @@ class XPromoterLoop:
         # Prefer direct navigation to avoid brittle click selectors
         try:
             self._navigate("https://x.com/explore", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+            self._human_sleep()
         except Exception:
             # Best-effort click fallbacks if direct navigation fails
             if not self._click("a[data-testid='AppTabBar_Explore_Link']"):
@@ -594,6 +713,7 @@ class XPromoterLoop:
         """Navigate to an Explore tab (e.g., 'trending', 'news') via direct URL to avoid click timeouts."""
         try:
             self._navigate(f"https://x.com/explore/tabs/{tab}", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+            self._human_sleep()
             return True
         except Exception:
             try:
@@ -739,11 +859,13 @@ class XPromoterLoop:
             try:
                 if topic == "feed":
                     self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+                    self._human_sleep()
                     self._infinite_scroll(iterations=4)
                     self._capture_page_context()
                 else:
                     url = self._search_live_url(topic)
                     self._navigate(url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+                    self._human_sleep()
                     # Scroll deeper to fetch more unique items
                     self._infinite_scroll(iterations=5)
                     self._capture_page_context()
@@ -1627,7 +1749,7 @@ def parse_args():
     parser.add_argument("--use_tor", action="store_true", help="Use Tor via tor_manager (proxied Playwright)")
     parser.add_argument("--no-use_tor", dest="use_tor", action="store_false", help="Disable Tor explicitly")
     parser.set_defaults(use_tor=None)
-    # Headless mode is now fixed to default behavior; flags removed
+    parser.add_argument("--headed", action="store_true", help="Run Playwright with visible browser (overrides default headless)")
     parser.add_argument("--dry_run", action="store_true", help="Do everything except actually posting/engaging")
     parser.add_argument("--keep_browser_open", action="store_true", help="Keep browser open after run (do not exit)")
     parser.add_argument("--browser_height", type=int, default=None, help="Viewport height for browser window")
@@ -1648,7 +1770,11 @@ def main(args: argparse.Namespace):
     if use_tor_val is not None:
         os.environ["PROMOTER_USE_TOR"] = "1" if bool(use_tor_val) else "0"
 
-    # Headless is fixed to default (headed). No environment override.
+    # Headless default with optional --headed override
+    if bool(args.headed):
+        os.environ["PROMOTER_PLAYWRIGHT_HEADLESS"] = "0"
+    else:
+        os.environ["PROMOTER_PLAYWRIGHT_HEADLESS"] = "1"
 
     # Viewport height
     browser_height_val = pick("browser_height", None)
