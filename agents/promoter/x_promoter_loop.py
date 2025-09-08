@@ -1795,7 +1795,10 @@ class XPromoterLoop:
             pass
 
     def _log_debug(self, message: str) -> None:
-        if not self.verbose:
+        # Always log lifecycle boundaries (run:start/run:end) even when not verbose
+        msg = str(message or "")
+        always_log = msg.startswith("run:start") or msg.startswith("run:end")
+        if (not self.verbose) and (not always_log):
             return
         try:
             exists = os.path.exists(self.log_csv_path)
