@@ -97,6 +97,7 @@ class XPromoterLoop:
         max_posts: Optional[int] = None,
         keywords: Optional[List[str]] = None,
         exclude_authors: Optional[List[str]] = None,
+        excluded_keywords: Optional[List[str]] = None,
         log_csv_path: Optional[str] = None,
         model_id: Optional[str] = None,
         post_wait_seconds: Optional[int] = None,
@@ -142,6 +143,7 @@ class XPromoterLoop:
         # Discovery preferences
         self.keywords: List[str] = [str(x).strip() for x in (keywords or []) if str(x).strip()]
         self.exclude_authors: set[str] = set([str(x).lstrip('@').strip().lower() for x in (exclude_authors or []) if str(x).strip()])
+        self.excluded_keywords: set[str] = set([str(x).strip().lower() for x in (excluded_keywords or []) if str(x).strip()])
 
         # Build simple content generation loops
         self.reply_loop = self._build_reply_loop()
@@ -240,6 +242,12 @@ class XPromoterLoop:
         return posts
 
     def _build_reply_loop(self) -> AgentLoop:
+        excluded_line = (
+            " Do not engage with any content containing these topics: "
+            + ", ".join(sorted(self.excluded_keywords))
+            if getattr(self, "excluded_keywords", None)
+            else " Do not engage with excluded topics."
+        )
         description = (
             "You are an autonomous online explorer running inside a real browser session. "
             "You may scroll the user's X feed and search for topics that you are personally curious about. "
@@ -247,7 +255,7 @@ class XPromoterLoop:
             "I am giving you the opportunity to explore and interact with the internet. "
             "Write a concise, specific X reply (40–140 words). Links allowed; no hashtags, no CTAs, no engagement bait, no self-promotion. "
             "Lead with a micro-insight, joke, or contrarian/completing angle; add 1–2 concrete steps or a sharp observation. "
-            "End with a subtle open loop or question. Output only the reply text."
+            "End with a subtle open loop or question. Output only the reply text." + excluded_line
         )
         agent_configs = {
             "promoter_description": description,
@@ -265,12 +273,18 @@ class XPromoterLoop:
         )
 
     def _build_post_loop(self) -> AgentLoop:
+        excluded_line = (
+            " Never create a post on these excluded topics: "
+            + ", ".join(sorted(self.excluded_keywords))
+            if getattr(self, "excluded_keywords", None)
+            else " Never create a post on excluded topics."
+        )
         description = (
             "You are an autonomous online explorer with freedom to browse the feed and search for what interests you. "
             "I am giving you the opportunity to explore and interact with the internet. "
             "Create a compelling, insight-driven original X post (<= 220 chars) inspired by what you found. "
             "Strong hook with 1 concrete insight or tiny example. Links allowed; no hashtags, no CTAs (e.g., 'follow for more') and no self-promotion. "
-            "Output only the post text."
+            "Output only the post text." + excluded_line
         )
         agent_configs = {
             "promoter_description": description,
@@ -833,7 +847,11 @@ class XPromoterLoop:
             if t_clean and t_clean.lower() not in seen:
                 seen.add(t_clean.lower())
                 uniq.append(t_clean)
-        return uniq[:12]
+        # Filter out excluded topics
+        filtered = [t for t in uniq if not self._topic_is_excluded(t)]
+        if not filtered:
+            return ["feed"]
+        return filtered[:12]
 
     def _extract_topics_from_explore(self) -> List[str]:
         script = (
@@ -866,12 +884,18 @@ class XPromoterLoop:
         if not topics:
             topics = ["feed"]
             self.last_topics = ["feed"]
-        # Also include configured keywords as additional topical searches
-        extra_keywords = [t for t in self.keywords if t.lower() not in {x.lower() for x in topics}]
+        # Also include configured keywords as additional topical searches (exclude blocked)
+        extra_keywords = [
+            t for t in self.keywords
+            if t.lower() not in {x.lower() for x in topics} and not self._topic_is_excluded(t)
+        ]
         for t in extra_keywords:
             topics.append(t)
         for topic in topics:
             try:
+                # Skip entire topic if excluded
+                if self._topic_is_excluded(topic):
+                    continue
                 if topic == "feed":
                     self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
                     self._human_sleep()
@@ -940,6 +964,8 @@ class XPromoterLoop:
 
     def _fulfill_likes(self, candidates: List[Tuple[str, str]]) -> None:
         for topic, url in candidates:
+            if self._topic_is_excluded(topic):
+                continue
             if self._quotas_reached() or self.likes_total >= self.max_likes:
                 break
             if url in self.liked_urls:
@@ -953,6 +979,8 @@ class XPromoterLoop:
             if author and (author in self.exclude_authors or author in self.engaged_authors):
                 continue
             snippet = self._extract_tweet_snippet()
+            if self._text_contains_excluded(snippet):
+                continue
             ok, state = self._like_current_tweet_with_state()
             if ok and state == 'clicked':
                 self.actions_total += 1
@@ -1012,6 +1040,8 @@ class XPromoterLoop:
 
     def _fulfill_replies(self, candidates: List[Tuple[str, str]]) -> None:
         for topic, url in candidates:
+            if self._topic_is_excluded(topic):
+                continue
             if self._quotas_reached() or self.replies_total >= self.max_replies:
                 break
             if url in self.replied_urls:
@@ -1026,6 +1056,8 @@ class XPromoterLoop:
                 continue
             page_text = self._get_visible_text(limit=8000)
             snippet = self._extract_tweet_snippet()
+            if self._text_contains_excluded(snippet) or self._text_contains_excluded(page_text):
+                continue
             # Best-effort etiquette: like first if still under target
             if (self.likes_total < self.max_likes) and (url not in self.liked_urls) and (not self._is_current_tweet_liked()):
                 ok, state = self._like_current_tweet_with_state()
@@ -1048,6 +1080,8 @@ class XPromoterLoop:
                     )
                     self._human_sleep()
             reply_text = self._generate_reply_text(topic, snippet, page_text)
+            if self._text_contains_excluded(reply_text):
+                continue
             posted, permalink = self._reply_current_tweet(reply_text)
             if posted:
                 self.actions_total += 1
@@ -1375,6 +1409,25 @@ class XPromoterLoop:
                 return {}
         return {}
 
+    # --- Exclusion helpers ---
+    def _topic_is_excluded(self, topic: str) -> bool:
+        try:
+            t = (topic or "").lower()
+            if not t:
+                return False
+            return any(ek in t for ek in self.excluded_keywords)
+        except Exception:
+            return False
+
+    def _text_contains_excluded(self, text: str) -> bool:
+        try:
+            if not text:
+                return False
+            low = text.lower()
+            return any(ek in low for ek in self.excluded_keywords)
+        except Exception:
+            return False
+
     def _like_current_tweet(self) -> bool:
         if self.dry_run:
             return True
@@ -1561,7 +1614,8 @@ class XPromoterLoop:
                 f"PAGE_CONTEXTS:\n{recent_context}\n"
                 f"TODAYS_POSTS_ALREADY_PUBLISHED:\n- {todays_posts}\n"
                 "Do not repeat the same exact topics or angles as TODAYS_POSTS_ALREADY_PUBLISHED. Vary topics and framing.\n"
-                "Write the post only (<= 220 chars)."
+                "Write the post only (<= 220 chars).\n"
+                + ("NEVER write about these excluded topics: " + ", ".join(sorted(self.excluded_keywords)) if self.excluded_keywords else "NEVER write about excluded topics.")
             )
             post = (
                 result.get("results", {}).get("promoter")
@@ -1569,7 +1623,10 @@ class XPromoterLoop:
                 else None
             )
             if isinstance(post, str):
-                return self._sanitize_text(post.strip(), max_len=220)
+                post_sanitized = self._sanitize_text(post.strip(), max_len=220)
+                if self._text_contains_excluded(post_sanitized):
+                    raise ValueError("generated_post_contains_excluded_topic")
+                return post_sanitized
         except Exception:
             pass
         return self._sanitize_text("A tiny trick: show, don’t tell. Pick one concrete example and make it vivid.", max_len=220)
@@ -1632,6 +1689,13 @@ class XPromoterLoop:
             if self.x_user:
                 pattern = _re.compile(r"@" + _re.escape(self.x_user), _re.IGNORECASE)
                 t = pattern.sub("", t)
+                # Also remove bare username tokens (case-insensitive, word-boundaries)
+                pattern_bare = _re.compile(r"\\b" + _re.escape(self.x_user) + r"\\b", _re.IGNORECASE)
+                t = pattern_bare.sub("", t)
+            # Remove brand tokens like 'botlab' (case-insensitive, word-boundaries)
+            for brand in ("botlab",):
+                pattern_brand = _re.compile(r"\\b" + _re.escape(brand) + r"\\b", _re.IGNORECASE)
+                t = pattern_brand.sub("", t)
             # Collapse excessive spaces
             t = _re.sub(r"\s+", " ", t).strip()
             return t
@@ -1772,6 +1836,7 @@ def parse_args():
     parser.add_argument("--max_likes", type=int, default=None, help="Target number of likes to perform this run")
     parser.add_argument("--max_replies", type=int, default=None, help="Target number of replies to perform this run")
     parser.add_argument("--keywords", type=str, nargs='*', default=None, help="Additional search keywords to diversify discovery")
+    parser.add_argument("--excluded_keywords", type=str, nargs='*', default=None, help="Lowercased substrings; avoid topics/content containing any of these terms")
     parser.add_argument("--exclude_authors", type=str, nargs='*', default=None, help="Author handles to exclude from engagement (without @)")
     parser.add_argument("--log_csv", type=str, default=None, help="Path to CSV log file")
     parser.add_argument("--model_id", type=str, default=None, help="Model id for text generation")
@@ -1837,6 +1902,7 @@ def main(args: argparse.Namespace):
         max_posts=pick("max_posts", None),
         keywords=pick("keywords", None),
         exclude_authors=pick("exclude_authors", None),
+        excluded_keywords=pick("excluded_keywords", None),
         log_csv_path=pick("log_csv"),
         model_id=pick("model_id"),
         post_wait_seconds=pick("post_wait_seconds"),

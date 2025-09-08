@@ -20,6 +20,7 @@
   "dry_run": false,
   "browser_height": 720,
   "keywords": [],
+  "excluded_keywords": [],
   "exclude_authors": []
 }
 
