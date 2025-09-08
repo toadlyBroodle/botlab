@@ -51,8 +51,9 @@ def generate_video_with_veo3(prompt: str, output_filename: Optional[str] = None,
             image_bytes = f.read()
         image_arg = types.Image(image_bytes=image_bytes, mime_type="image/png")
 
+    # models: veo-3.0-generate-preview, veo-3.0-fast-generate-preview
     operation = client.models.generate_videos(
-        model="veo-3.0-generate-preview",
+        model="veo-3.0-fast-generate-preview",
         prompt=prompt,
         image=image_arg,
     )

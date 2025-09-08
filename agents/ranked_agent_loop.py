@@ -23,6 +23,8 @@ from .qaqc.agents import QAQCAgent
 from .user_feedback.agents import UserFeedbackAgent
 from .ranker.agents import RankingAgent
 from .ranker.tools import llm_judge
+from .promoter.agents import PromoterAgent
+from .translator.agents import TranslatorAgent
 
 class RankedAgentLoop:
     """A class that manages a loop of agent calls with state management,
@@ -212,12 +214,23 @@ class RankedAgentLoop:
             self.agent_configs = default_configs
             
         # Create LLM models BEFORE initializing agents
-        # Create main model for agents
-        self.main_llm_model = RateLimitedLiteLLMModel(
+        # Shared model for agents with optional fallback based on agent contexts
+        enable_fallback = False
+        for ctx_agent_type, ctx in self.agent_contexts.items():
+            if ctx.get('enable_daily_quota_fallback', False):
+                enable_fallback = True
+                print(f"✓ Enabling model fallback for shared model due to {ctx_agent_type} agent requesting daily quota fallback")
+                break
+
+        if not enable_fallback:
+            print("⚠ Model fallback disabled for shared model - no agents requested daily quota fallback")
+
+        self.shared_model = RateLimitedLiteLLMModel(
             model_id=self.model_id,
             model_info_path=self.model_info_path,
             base_wait_time=2.0,
-            max_retries=self.max_retries
+            max_retries=self.max_retries,
+            enable_fallback=enable_fallback
         )
         
         # Store ranking configuration
@@ -333,22 +346,59 @@ class RankedAgentLoop:
                             self.research_parameters = agent_context.pop('research_parameters')
                         if 'original_row' in agent_context:
                             self.original_row = agent_context.pop('original_row')
-                        
-                        # Extract additional_tools if provided
+
+                        # Extract flags and options
                         additional_tools = agent_context.get('additional_tools')
-                        
+                        enable_daily_quota_fallback = agent_context.get('enable_daily_quota_fallback', True)
+                        use_rate_limiting = agent_context.get('use_rate_limiting', True)
+                        disable_default_web_search = agent_context.get('disable_default_web_search', False)
+                        web_search_disabled = agent_context.get('web_search_disabled', False)
+
+                        # Pass None as model to let agent create its own SimpleLiteLLMModel when rate limiting disabled
+                        model_to_use = None if not use_rate_limiting else self.shared_model
+                        model_type = "individual SimpleLiteLLMModel" if not use_rate_limiting else "shared RateLimitedLiteLLMModel"
+                        print(f"Creating ResearcherAgent with {model_type} (use_rate_limiting={use_rate_limiting})")
+
                         agent_instance = ResearcherAgent(
-                            model=self.main_llm_model,
+                            model=model_to_use,
                             max_steps=max_steps,
                             researcher_description=self.agent_configs.get('researcher_description'),
                             researcher_prompt=self.agent_configs.get('researcher_prompt'),
-                            additional_tools=additional_tools
+                            additional_tools=additional_tools,
+                            enable_daily_quota_fallback=enable_daily_quota_fallback,
+                            use_rate_limiting=use_rate_limiting,
+                            model_id=self.model_id,
+                            model_info_path=self.model_info_path,
+                            disable_default_web_search=disable_default_web_search,
+                            web_search_disabled=web_search_disabled
                         )
                         self.agents[agent_type] = agent_instance
                         
+                    elif agent_type.lower() == 'promoter':
+                        additional_tools = agent_context.get('additional_tools')
+                        use_rate_limiting = agent_context.get('use_rate_limiting', True)
+                        model_to_use = None if not use_rate_limiting else self.shared_model
+                        agent_instance = PromoterAgent(
+                            model=model_to_use,
+                            max_steps=max_steps,
+                            description=self.agent_configs.get('promoter_description'),
+                            system_prompt=self.agent_configs.get('promoter_prompt'),
+                            additional_tools=additional_tools,
+                        )
+                        self.agents[agent_type] = agent_instance
+
                     elif agent_type.lower() == 'writer':
+                        # Allow opting out of rate limiting to use SimpleLiteLLMModel for the writer
+                        use_rate_limiting = agent_context.get('use_rate_limiting', True)
+                        model_to_use = self.shared_model
+                        if not use_rate_limiting:
+                            from .utils.agents.simple_llm import SimpleLiteLLMModel
+                            model_to_use = SimpleLiteLLMModel(
+                                model_id=self.model_id,
+                                model_info_path=self.model_info_path,
+                            )
                         agent_instance = WriterAgent(
-                            model=self.main_llm_model,
+                            model=model_to_use,
                             max_steps=max_steps,
                             agent_description=self.agent_configs.get('writer_description'),
                             system_prompt=self.agent_configs.get('writer_prompt'),
@@ -359,7 +409,7 @@ class RankedAgentLoop:
                         
                     elif agent_type.lower() == 'editor':
                         agent_instance = EditorAgent(
-                            model=self.main_llm_model,
+                            model=self.shared_model,
                             max_steps=max_steps,
                             agent_description=self.agent_configs.get('editor_description'),
                             system_prompt=self.agent_configs.get('editor_prompt'),
@@ -368,13 +418,26 @@ class RankedAgentLoop:
                         )
                         self.agents[agent_type] = agent_instance
                         
+                    elif agent_type.lower() == 'translator':
+                        # Translator supports either shared rate-limited model or an internal simple model
+                        normalized_model = self.model_id.split('/')[-1] if '/' in self.model_id else self.model_id
+                        use_rate_limiting = agent_context.get('use_rate_limiting', True)
+                        from .utils.agents.simple_llm import SimpleLiteLLMModel
+                        lite_model = None if use_rate_limiting else SimpleLiteLLMModel(model_id=self.model_id)
+                        agent_instance = TranslatorAgent(
+                            model=normalized_model,
+                            temperature=0.2,
+                            lite_model=lite_model
+                        )
+                        self.agents[agent_type] = agent_instance
+
                     elif agent_type.lower() == 'qaqc':
                         # Also remove original_row for QAQC agent if present
                         if 'original_row' in agent_context:
                             agent_context.pop('original_row')
                         
                         agent_instance = QAQCAgent(
-                            model=self.main_llm_model,
+                            model=self.shared_model,
                             max_steps=max_steps,
                             agent_description=self.agent_configs.get('qaqc_description'),
                             system_prompt=self.agent_configs.get('qaqc_prompt')
@@ -387,7 +450,7 @@ class RankedAgentLoop:
                         report_frequency = self.agent_configs.get('report_frequency', 1)
                         
                         agent_instance = UserFeedbackAgent(
-                            model=self.main_llm_model,
+                            model=self.shared_model,
                             max_steps=max_steps, # Max steps for the internal report_generator_agent
                             user_email=remote_email,
                             report_frequency=report_frequency,
@@ -891,7 +954,7 @@ class RankedAgentLoop:
                  print(f"Could not resolve path for artifact ID: {artifact_id}")
             return None
 
-    def _save_artifact(self, content: str, logical_artifact_id: str, agent_type: str, iteration: int) -> str:
+    def _save_artifact(self, content: Any, logical_artifact_id: str, agent_type: str, iteration: int) -> str:
         """
         Saves artifact content to a unique file, logs metadata.
         Returns the unique artifact_id.
@@ -903,9 +966,34 @@ class RankedAgentLoop:
         logical_id_short = "".join(c if c.isalnum() else "_" for c in logical_artifact_id)[:20]
         artifact_id_short = new_artifact_id[:8]
 
+        # Normalize content to a string and choose a sensible extension
+        content_str = None
+        is_json_like = False
+        try:
+            # If it's already a string, keep it
+            if isinstance(content, str):
+                content_str = content
+                # Heuristic to detect JSON content
+                stripped = content.lstrip()
+                is_json_like = stripped.startswith("{") or stripped.startswith("[")
+            # If it's a dict or list (e.g., storyboard JSON), dump to JSON
+            elif isinstance(content, (dict, list)):
+                content_str = json.dumps(content, ensure_ascii=False, indent=2)
+                is_json_like = True
+            else:
+                # Fallback to string conversion
+                content_str = str(content)
+        except Exception:
+            content_str = str(content)
+
         # Recommended Naming Convention: iter<N>_<agent_type>_<logical_id_short>_<artifact_id_short>.<ext>
-        # For simplicity, using .txt, can be made more dynamic
-        ext = "md" if "report" in logical_artifact_id or "draft" in logical_artifact_id else "txt"
+        # Use .json for storyboards and JSON content; .md for reports/drafts; else .txt
+        if "storyboard" in logical_artifact_id.lower() or is_json_like:
+            ext = "json"
+        elif "report" in logical_artifact_id or "draft" in logical_artifact_id:
+            ext = "md"
+        else:
+            ext = "txt"
         filename = f"iter{iteration}_{agent_type}_{logical_id_short}_{artifact_id_short}.{ext}"
         relative_path = os.path.join("artifacts", filename) # Relative to run_dir
         full_path = os.path.join(self.run_dir, relative_path)
@@ -916,7 +1004,7 @@ class RankedAgentLoop:
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             
             with open(full_path, 'w', encoding='utf-8') as f:
-                f.write(content)
+                f.write(content_str)
             print(f"Saved new artifact version: {full_path} (ID: {new_artifact_id})")
         except Exception as e:
             print(f"Error saving artifact {full_path}: {e}")
@@ -925,13 +1013,19 @@ class RankedAgentLoop:
             # Decide how to handle this error - re-raise?
             raise
 
+        # Compute a simple word count from the serialized content string
+        try:
+            word_count_val = len((content_str or "").split())
+        except Exception:
+            word_count_val = 0
+
         metadata_entry = {
             "artifact_id": new_artifact_id,
             "logical_artifact_id": logical_artifact_id,
             "relative_path": relative_path,
             "agent_type": agent_type,
             "timestamp": timestamp,
-            "word_count": len(content.split()), # Example simple metadata
+            "word_count": word_count_val, # Example simple metadata
             "iteration": iteration # Track which iteration produced it
         }
 
