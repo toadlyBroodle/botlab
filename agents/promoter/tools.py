@@ -26,7 +26,7 @@ _state: Dict[str, Any] = {
 
 
 def _headless() -> bool:
-    # Force headed mode so the user can follow along visually
+    """Headless mode is fixed to default (headed) for promoter tools."""
     return False
 
 

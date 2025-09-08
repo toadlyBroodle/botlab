@@ -1068,10 +1068,62 @@ class XPromoterLoop:
         
 
     def _extract_tweet_snippet(self) -> str:
+        """Extract a concise snippet from the currently visible tweet article, filtering UI boilerplate."""
+        # Attempt precise extraction from the visible article
+        script = (
+            "() => {\n"
+            "  const arts = Array.from(document.querySelectorAll(\"article[role='article']\"));\n"
+            "  if (!arts.length) return JSON.stringify([]);\n"
+            "  const inView = (el)=>{ const r = el.getBoundingClientRect(); return r.bottom>0 && r.top < (window.innerHeight||0); };\n"
+            "  let art = arts.find(inView) || arts[0];\n"
+            "  const nodes = Array.from(art.querySelectorAll(\"[data-testid='tweetText'], div[lang]\"));\n"
+            "  let texts = nodes.map(n => (n.innerText||'').trim()).filter(Boolean);\n"
+            "  if (!texts.length) {\n"
+            "    texts = (art.innerText||'').split(/\\n+/).map(t=>t.trim()).filter(Boolean);\n"
+            "  }\n"
+            "  const boiler = [\n"
+            "    'to view keyboard shortcuts', 'view keyboard shortcuts', 'see new posts', 'your home timeline',\n"
+            "    'subscribe to premium', 'trending now', 'what’s happening', 'whats happening', 'terms of service',\n"
+            "    'privacy policy', 'cookie policy', 'accessibility', 'ads info', 'relevant people', '© 202'\n"
+            "  ];\n"
+            "  const filtered = texts.filter(t => !boiler.some(b => t.toLowerCase().includes(b)));\n"
+            "  return JSON.stringify(filtered.slice(0, 5));\n"
+            "}"
+        )
+        try:
+            res = _json_loads_safe(pw_evaluate(script))
+            lines: List[str] = []
+            if isinstance(res, list):
+                lines = [str(x) for x in res]
+            elif isinstance(res, dict) and isinstance(res.get("repr"), str):
+                try:
+                    arr = json.loads(res["repr"]) or []
+                    lines = [str(x) for x in arr]
+                except Exception:
+                    lines = []
+            if lines:
+                out = " ".join(lines).strip()
+                return out[:200]
+        except Exception:
+            pass
+
+        # Fallback: use visible text with basic boilerplate filtering
         text = pw_get_visible_text(limit=8000) or ""
-        snippet = (text or "").strip().split("\n")
-        joined = " ".join([s.strip() for s in snippet if s.strip()])
-        return joined[:200]
+        parts = [s.strip() for s in (text or "").split("\n") if s.strip()]
+        boiler_substrings = [
+            "to view keyboard shortcuts", "view keyboard shortcuts", "see new posts", "your home timeline",
+            "subscribe to premium", "trending now", "what’s happening", "whats happening", "terms of service",
+            "privacy policy", "cookie policy", "accessibility", "ads info", "relevant people", "© 202",
+            "conversation", "post",
+        ]
+        def is_noise(p: str) -> bool:
+            low = p.lower()
+            if any(b in low for b in boiler_substrings):
+                return True
+            # Drop short numeric-only tokens like "10"
+            return len(p) <= 3 and p.isdigit()
+        filtered = [p for p in parts if not is_noise(p)]
+        return (" ".join(filtered)[:200]).strip()
 
     def _get_visible_text(self, limit: int = 12000) -> str:
         """Return current page's visible text up to a limit."""
@@ -1575,9 +1627,7 @@ def parse_args():
     parser.add_argument("--use_tor", action="store_true", help="Use Tor via tor_manager (proxied Playwright)")
     parser.add_argument("--no-use_tor", dest="use_tor", action="store_false", help="Disable Tor explicitly")
     parser.set_defaults(use_tor=None)
-    parser.add_argument("--headless", action="store_true", help="Run Playwright in headless mode")
-    parser.add_argument("--no-headless", dest="headless", action="store_false", help="Run with visible browser")
-    parser.set_defaults(headless=None)
+    # Headless mode is now fixed to default behavior; flags removed
     parser.add_argument("--dry_run", action="store_true", help="Do everything except actually posting/engaging")
     parser.add_argument("--keep_browser_open", action="store_true", help="Keep browser open after run (do not exit)")
     parser.add_argument("--browser_height", type=int, default=None, help="Viewport height for browser window")
@@ -1598,9 +1648,7 @@ def main(args: argparse.Namespace):
     if use_tor_val is not None:
         os.environ["PROMOTER_USE_TOR"] = "1" if bool(use_tor_val) else "0"
 
-    headless_val = pick("headless", None)
-    if headless_val is not None:
-        os.environ["PROMOTER_PLAYWRIGHT_HEADLESS"] = "1" if bool(headless_val) else "0"
+    # Headless is fixed to default (headed). No environment override.
 
     # Viewport height
     browser_height_val = pick("browser_height", None)

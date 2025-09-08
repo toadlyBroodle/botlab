@@ -1,0 +1,26 @@
+{
+  "x_user": "",
+  "x_pass": "",
+  "max_likes": 0,
+  "max_replies": 0,
+  "max_posts": 0,
+  "max_actions_total": 0,
+  "log_csv": "agents/promoter/data/x-engage-agent-log.csv",
+  "model_id": "gemini/gemini-2.0-flash",
+  "post_wait_seconds": 30,
+  "page_settle_seconds": 2.0,
+  "action_settle_seconds": 0.5,
+  "otp_fetch_cmd": "",
+  "otp_regex": "^([A-Za-z0-9]{6,12})$",
+  "otp_code": "",
+  "use_tor": false,
+  "headless": false,
+  "keep_browser_open": false,
+  "user_data_dir": "agents/promoter/data/x_profile",
+  "dry_run": false,
+  "browser_height": 720,
+  "keywords": [],
+  "exclude_authors": []
+}
+
+
