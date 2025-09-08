@@ -162,22 +162,32 @@ class XPromoterLoop:
 
     # --- Public entrypoint ---
     def run(self) -> Dict[str, Any]:
+        self._log_debug(
+            f"run:start max_actions_total={self.max_actions_total} max_likes={self.max_likes} max_replies={self.max_replies} max_posts={self.max_posts} dry_run={self.dry_run}"
+        )
         if not self.x_user or not self.x_pass:
             raise ValueError("Missing x_user/x_pass")
 
         self._login()
+        self._log_debug("login:completed")
 
         # Fulfill likes first with re-scraping per pass to avoid duplicates
         if self.max_likes > 0 and not self._quotas_reached():
+            self._log_debug("likes:fulfill:start")
             self._fulfill_likes_until_quota()
+            self._log_debug(f"likes:fulfill:end likes_total={self.likes_total}")
 
         # Then fulfill posts (no need to scrape links)
         if self.max_posts > 0 and not self._quotas_reached():
+            self._log_debug("posts:fulfill:start")
             self._fulfill_posts()
+            self._log_debug(f"posts:fulfill:end posts_total={self.original_posts}")
 
         # Finally, fulfill replies with re-scraping per pass to avoid duplicates
         if self.max_replies > 0 and not self._quotas_reached():
+            self._log_debug("replies:fulfill:start")
             self._fulfill_replies_until_quota()
+            self._log_debug(f"replies:fulfill:end replies_total={self.replies_total}")
 
         # Persist seen URLs to avoid repeating across runs
         try:
@@ -187,7 +197,7 @@ class XPromoterLoop:
         except Exception:
             pass
 
-        return {
+        result = {
             "status": "completed" if self._quotas_reached() or self.actions_total > 0 else "no_actions",
             "actions_total": int(self.actions_total),
             "likes_total": int(self.likes_total),
@@ -195,6 +205,10 @@ class XPromoterLoop:
             "posts_total": int(self.original_posts),
             "log_csv": self.log_csv_path,
         }
+        self._log_debug(
+            f"run:end status={result['status']} actions_total={self.actions_total} likes_total={self.likes_total} replies_total={self.replies_total} posts_total={self.original_posts}"
+        )
+        return result
 
     # --- Internal helpers ---
     def _load_todays_posts_from_log(self) -> List[str]:
@@ -671,6 +685,7 @@ class XPromoterLoop:
         except Exception:
             pass
         self._abort_if_account_access_block()
+        # login completion is logged by caller
         # Final check: if still not logged in, let caller proceed (actions may log errors/log out)
         # No exception here to avoid hard-stopping the loop unnecessarily
 
@@ -1602,6 +1617,26 @@ class XPromoterLoop:
             return (text or "")[:max_len]
 
     # --- CSV logging ---
+    def _clean_snippet(self, text: str) -> str:
+        """Strip common X UI header boilerplate and own handle from snippets."""
+        try:
+            import re as _re
+            t = (text or "")
+            low = t.lower().strip()
+            header = "home explore notifications messages grok communities premium verified orgs profile more"
+            if low.startswith(header):
+                # Remove the prefix using original length to preserve case for remainder
+                t = t[len(text) - len(text.lstrip()):]  # align leading spaces
+                t = t[len(header):].lstrip()
+            # Remove @<username> anywhere (case-insensitive)
+            if self.x_user:
+                pattern = _re.compile(r"@" + _re.escape(self.x_user), _re.IGNORECASE)
+                t = pattern.sub("", t)
+            # Collapse excessive spaces
+            t = _re.sub(r"\s+", " ", t).strip()
+            return t
+        except Exception:
+            return (text or "")
     def _log_action(
         self,
         action_type: str,
@@ -1640,7 +1675,7 @@ class XPromoterLoop:
                 "action_type": one_line(action_type),
                 "keyword_or_source": one_line(keyword_or_source),
                 "author_handle": one_line(author_handle),
-                "tweet_title_or_snippet": one_line(tweet_title_or_snippet),
+                "tweet_title_or_snippet": one_line(self._clean_snippet(tweet_title_or_snippet)),
                 "tweet_url": one_line(tweet_url),
                 "reason_if_skipped": one_line(reason_if_skipped),
                 "content_prefix": one_line(content_prefix),
