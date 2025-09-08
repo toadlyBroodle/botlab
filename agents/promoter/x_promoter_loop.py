@@ -1680,24 +1680,33 @@ class XPromoterLoop:
             import re as _re
             t = (text or "")
             low = t.lower().strip()
+
+            # Remove known UI header if it appears as a prefix
             header = "home explore notifications messages grok communities premium verified orgs profile more"
             if low.startswith(header):
-                # Remove the prefix using original length to preserve case for remainder
-                t = t[len(text) - len(text.lstrip()):]  # align leading spaces
+                t = t[len(text) - len(text.lstrip()):]  # preserve original leading spaces
                 t = t[len(header):].lstrip()
-            # Remove @<username> anywhere (case-insensitive)
-            if self.x_user:
-                pattern = _re.compile(r"@" + _re.escape(self.x_user), _re.IGNORECASE)
-                t = pattern.sub("", t)
-                # Also remove bare username tokens (case-insensitive, word-boundaries)
-                pattern_bare = _re.compile(r"\\b" + _re.escape(self.x_user) + r"\\b", _re.IGNORECASE)
-                t = pattern_bare.sub("", t)
-            # Remove brand tokens like 'botlab' (case-insensitive, word-boundaries)
+
+            # Remove own handle in multiple forms anywhere (case-insensitive)
+            user = (self.x_user or "").lstrip("@")
+            if user:
+                # @user, user as a standalone token, and with trailing punctuation like : , - ·
+                patterns = [
+                    rf"(?i)(^|[\s\W])@{_re.escape(user)}(?=$|[\s\W])",
+                    rf"(?i)(^|[\s\W]){_re.escape(user)}(?=$|[\s\W])",
+                ]
+                for p in patterns:
+                    t = _re.sub(p, " ", t)
+
+            # Remove brand tokens like 'botlab' anywhere (case-insensitive)
             for brand in ("botlab",):
-                pattern_brand = _re.compile(r"\\b" + _re.escape(brand) + r"\\b", _re.IGNORECASE)
-                t = pattern_brand.sub("", t)
-            # Collapse excessive spaces
-            t = _re.sub(r"\s+", " ", t).strip()
+                p = _re.compile(rf"(?i)(^|[\s\W]){_re.escape(brand)}(?=$|[\s\W])")
+                t = p.sub(" ", t)
+
+            # Collapse excessive spaces and punctuation leftovers
+            t = _re.sub(r"\s+", " ", t)
+            t = _re.sub(r"\s+([,;:\-·])", r" \1", t)
+            t = t.strip(" \t\r\n-·,;:")
             return t
         except Exception:
             return (text or "")
