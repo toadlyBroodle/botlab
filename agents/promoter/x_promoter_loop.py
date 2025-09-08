@@ -60,10 +60,19 @@ def _ensure_dir(path: str) -> None:
 
 
 def _load_config(path: Optional[str]) -> Dict[str, Any]:
-    if not path:
+    """Load JSON config from provided path or default location if not given.
+
+    Default location: agents/promoter/data/x_promoter_config.json (relative to this file).
+    """
+    def _default_config_path() -> str:
+        return os.path.join(os.path.dirname(__file__), "data", "x_promoter_config.json")
+
+    candidate = path or _default_config_path()
+    try:
+        with open(candidate, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
         return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 class XPromoterLoop:
@@ -81,6 +90,7 @@ class XPromoterLoop:
         x_user: str,
         x_pass: str,
         max_actions_total: int = 8,
+        max_original_posts: int = 3,
         log_csv_path: Optional[str] = None,
         model_id: Optional[str] = None,
         post_wait_seconds: Optional[int] = None,
@@ -90,6 +100,7 @@ class XPromoterLoop:
         otp_regex: Optional[str] = None,
         otp_code: Optional[str] = None,
         dry_run: bool = False,
+        verbose: bool = False,
     ) -> None:
         load_dotenv()
         self.x_user = x_user or os.getenv("X_USER", "")
@@ -101,7 +112,10 @@ class XPromoterLoop:
 
         self.max_actions_total = max(0, int(max_actions_total))
         self.actions_total = 0
+        self.max_original_posts = max(0, int(max_original_posts))
+        self.original_posts = 0
         self.dry_run = dry_run
+        self.verbose = bool(verbose or os.getenv("PROMOTER_VERBOSE", "0") == "1")
 
         env_model = os.getenv("PROMOTER_MODEL", "gemini/gemini-2.0-flash")
         self.model_id = model_id or env_model
@@ -120,6 +134,8 @@ class XPromoterLoop:
         # Rolling context from recent feed/search pages to inform generation
         self.page_text_contexts: List[str] = []
         self.last_topics: List[str] = []
+        # Originals already posted today (to avoid repeating topics)
+        self.posts_today: List[str] = self._load_todays_posts_from_log()
 
     # --- Public entrypoint ---
     def run(self) -> Dict[str, Any]:
@@ -129,17 +145,19 @@ class XPromoterLoop:
         self._login()
 
         seen_tweets: set[str] = set()
-        posted_original = False
-        passes_without_actions = 0
+        seen_order: List[str] = []
 
         while not self._quotas_reached():
+            self._log_debug("loop_start")
             topics = self._collect_trending_topics()
             self.last_topics = list(topics)
             if not topics:
                 # Fallback to Home if no topics found
                 topics = ["feed"]
                 self.last_topics = ["feed"]
+            self._log_debug(f"topics:{'|'.join(topics)}")
 
+            # iterate topics and engage until quotas reached
             actions_before_pass = self.actions_total
 
             for topic in topics:
@@ -157,15 +175,40 @@ class XPromoterLoop:
                         self._navigate(search_url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
                     except Exception:
                         continue
+                    # Scroll results to ensure enough tweets are loaded
+                    self._infinite_scroll(iterations=3)
                     self._capture_page_context()
                     tweet_links = self._extract_status_links_from_page()
+                self._log_debug(f"topic:{topic}:links:{len(tweet_links)}")
 
-                for url in tweet_links:
+                # Randomize and cap per-topic processing to ensure variety and forward progress
+                random.shuffle(tweet_links)
+                per_topic_limit = 10
+                processed_on_topic = 0
+
+                # Prefer unseen links first to maximize chances of engagement
+                unseen_links = [u for u in tweet_links if u not in seen_tweets]
+                candidate_links = unseen_links or tweet_links
+
+                for url in candidate_links:
                     if self._quotas_reached():
                         break
                     if url in seen_tweets:
                         continue
                     seen_tweets.add(url)
+                    seen_order.append(url)
+                    # Keep rolling window to avoid deadlocks from everything being seen
+                    if len(seen_order) > 500:
+                        # Drop oldest 200
+                        for _ in range(200):
+                            try:
+                                old = seen_order.pop(0)
+                                if old in seen_tweets:
+                                    seen_tweets.remove(old)
+                            except Exception:
+                                break
+                    if processed_on_topic >= per_topic_limit:
+                        break
 
                     try:
                         self._navigate(url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
@@ -182,10 +225,12 @@ class XPromoterLoop:
                             permalink="",
                         )
                         continue
+                    self._log_debug(f"visit:{url}")
 
                     snippet = self._extract_tweet_snippet()
                     page_text = self._get_visible_text(limit=8000)
                     decision = self._agent_decide_engagement(topic, page_text, snippet)
+                    self._log_debug(f"decision:{url}:{json.dumps(decision, separators=(',',':'))}")
                     # Ensure at least one reply attempt early in the run
                     if self.actions_total == 0 and not bool(decision.get("reply")):
                         decision["reply"] = True
@@ -229,6 +274,23 @@ class XPromoterLoop:
 
                     # Reply if agent advises; keep it concise and valuable
                     if not self._quotas_reached() and decision.get("reply") is True:
+                        # Ensure we like before replying for better etiquette and engagement
+                        if not like_ok:
+                            like_try = self._like_current_tweet()
+                            if like_try:
+                                self.actions_total += 1
+                                self._log_action(
+                                    action_type="like",
+                                    keyword_or_source=topic,
+                                    author_handle=self._handle_from_status_url(url),
+                                    tweet_title_or_snippet=snippet,
+                                    tweet_url=url,
+                                    reason_if_skipped="",
+                                    content_prefix="",
+                                    engagement_flags="like=1",
+                                    permalink=url,
+                                )
+                                self._human_sleep()
                         reply_text = str(decision.get("reply_text") or "").strip() or self._generate_reply_text(topic, snippet, page_text)
                         posted, permalink = self._reply_current_tweet(reply_text)
                         if posted:
@@ -245,13 +307,35 @@ class XPromoterLoop:
                                 permalink=permalink or url,
                             )
                             self._human_sleep()
+                        else:
+                            self._log_debug(f"reply_failed:{url}")
 
-                    # Occasionally post an original
-                    if not posted_original and not self._quotas_reached() and random.random() < 0.25:
+                    # If we still haven't done anything on this URL, force a like best-effort
+                    if not self._quotas_reached():
+                        # Check whether any action happened for this URL by comparing before/after via snippet in log is heavy; instead, use a quick attempt
+                        if not like_ok:
+                            forced_like = self._like_current_tweet()
+                            if forced_like:
+                                self.actions_total += 1
+                                self._log_action(
+                                    action_type="like",
+                                    keyword_or_source=topic,
+                                    author_handle=self._handle_from_status_url(url),
+                                    tweet_title_or_snippet=snippet,
+                                    tweet_url=url,
+                                    reason_if_skipped="",
+                                    content_prefix="",
+                                    engagement_flags="like=1",
+                                    permalink=url,
+                                )
+                                self._human_sleep()
+
+                    # Occasionally post an original, up to configured cap
+                    if (self.original_posts < self.max_original_posts) and (not self._quotas_reached()) and (random.random() < 0.35):
                         posted, permalink = self._post_original()
                         if posted:
-                            posted_original = True
                             self.actions_total += 1
+                            self.original_posts += 1
                             self._log_action(
                                 action_type="post",
                                 keyword_or_source=topic,
@@ -259,18 +343,22 @@ class XPromoterLoop:
                                 tweet_title_or_snippet="",
                                 tweet_url="",
                                 reason_if_skipped="",
-                                content_prefix="",
+                                content_prefix=getattr(self, "_last_post_content", "")[:260],
                                 engagement_flags="",
                                 permalink=permalink,
                             )
                             self._human_sleep()
+                        else:
+                            self._log_debug("post_failed")
 
-            # If no original was posted yet, make one best-effort attempt per pass
-            if (not posted_original) and (not self._quotas_reached()):
+                    processed_on_topic += 1
+
+            # Best-effort original post per pass if quota allows
+            if (self.original_posts < self.max_original_posts) and (not self._quotas_reached()):
                 posted, permalink = self._post_original()
                 if posted:
-                    posted_original = True
                     self.actions_total += 1
+                    self.original_posts += 1
                     self._log_action(
                         action_type="post",
                         keyword_or_source=",".join(self.last_topics[:3]),
@@ -278,18 +366,68 @@ class XPromoterLoop:
                         tweet_title_or_snippet="",
                         tweet_url="",
                         reason_if_skipped="",
-                        content_prefix="",
+                        content_prefix=getattr(self, "_last_post_content", "")[:260],
                         engagement_flags="",
                         permalink=permalink,
                     )
                     self._human_sleep()
-
-            if self.actions_total == actions_before_pass:
-                passes_without_actions += 1
-                if passes_without_actions >= 2:
-                    break
-            else:
-                passes_without_actions = 0
+                else:
+                    self._log_debug("post_failed_end_of_pass")
+            # Continue looping until quotas are reached; avoid early exit based on pass-level activity
+            if self.actions_total == actions_before_pass and not self._quotas_reached():
+                # Fallback: try to like something from feed, else post an original
+                try:
+                    self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+                    self._infinite_scroll(iterations=2)
+                    self._capture_page_context()
+                    feed_links = self._extract_status_links_from_page()
+                    random.shuffle(feed_links)
+                    for url in feed_links[:3]:
+                        if self._quotas_reached():
+                            break
+                        try:
+                            self._navigate(url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+                        except Exception:
+                            continue
+                        snippet = self._extract_tweet_snippet()
+                        if self._like_current_tweet():
+                            self.actions_total += 1
+                            self._log_action(
+                                action_type="like",
+                                keyword_or_source="fallback",
+                                author_handle=self._handle_from_status_url(url),
+                                tweet_title_or_snippet=snippet,
+                                tweet_url=url,
+                                reason_if_skipped="",
+                                content_prefix="",
+                                engagement_flags="like=1",
+                                permalink=url,
+                            )
+                            self._human_sleep()
+                            break
+                        else:
+                            self._log_debug(f"fallback_like_failed:{url}")
+                except Exception:
+                    pass
+                if (self.original_posts < self.max_original_posts) and (not self._quotas_reached()):
+                    posted, permalink = self._post_original()
+                    if posted:
+                        self.actions_total += 1
+                        self.original_posts += 1
+                        self._log_action(
+                            action_type="post",
+                            keyword_or_source="fallback",
+                            author_handle="",
+                            tweet_title_or_snippet="",
+                            tweet_url="",
+                            reason_if_skipped="",
+                            content_prefix=getattr(self, "_last_post_content", "")[:260],
+                            engagement_flags="",
+                            permalink=permalink,
+                        )
+                        self._human_sleep()
+                    else:
+                        self._log_debug("fallback_post_failed")
 
         return {
             "status": "completed" if self.actions_total > 0 else "no_actions",
@@ -298,6 +436,33 @@ class XPromoterLoop:
         }
 
     # --- Internal helpers ---
+    def _load_todays_posts_from_log(self) -> List[str]:
+        from datetime import datetime
+        posts: List[str] = []
+        try:
+            if not os.path.exists(self.log_csv_path):
+                return posts
+            today = datetime.utcnow().date()
+            with open(self.log_csv_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        if (row.get("action_type") or "").strip() != "post":
+                            continue
+                        ts = row.get("timestamp") or ""
+                        if not ts:
+                            continue
+                        d = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+                        if d != today:
+                            continue
+                        content = (row.get("content_prefix") or "").strip()
+                        if content:
+                            posts.append(content)
+                    except Exception:
+                        continue
+        except Exception:
+            return []
+        return posts
 
     def _build_reply_loop(self) -> AgentLoop:
         description = (
@@ -305,7 +470,7 @@ class XPromoterLoop:
             "You may scroll the user's X feed and search for topics that you are personally curious about. "
             "Prioritize engaging with content that is most interesting to you. "
             "I am giving you the opportunity to explore and interact with the internet. "
-            "Write a concise, specific X reply (40–140 words). No hashtags, no links. "
+            "Write a concise, specific X reply (40–140 words). Links allowed; no hashtags, no CTAs, no engagement bait, no self-promotion. "
             "Lead with a micro-insight, joke, or contrarian/completing angle; add 1–2 concrete steps or a sharp observation. "
             "End with a subtle open loop or question. Output only the reply text."
         )
@@ -328,9 +493,9 @@ class XPromoterLoop:
         description = (
             "You are an autonomous online explorer with freedom to browse the feed and search for what interests you. "
             "I am giving you the opportunity to explore and interact with the internet. "
-            "Create a viral-optimized original X post (<= 220 chars) inspired by what you found. "
-            "Strong hook, 1 concrete insight or tiny example, soft CTA to follow for more. "
-            "No hashtags. Output only the post text."
+            "Create a compelling, insight-driven original X post (<= 220 chars) inspired by what you found. "
+            "Strong hook with 1 concrete insight or tiny example. Links allowed; no hashtags, no CTAs (e.g., 'follow for more') and no self-promotion. "
+            "Output only the post text."
         )
         agent_configs = {
             "promoter_description": description,
@@ -365,6 +530,10 @@ class XPromoterLoop:
             if res.get("ok"):
                 if self.page_settle_seconds > 0:
                     time.sleep(self.page_settle_seconds)
+                # Detect script load failures or JS-disabled interstitials and abort early
+                if self._page_is_scriptloadfailure_or_js_disabled():
+                    self._log_error("scriptloadfailure_or_js_disabled")
+                    raise RuntimeError("X page script load failure/JS disabled interstitial")
                 return
             last_err = res
             err_str = str(res)
@@ -380,6 +549,28 @@ class XPromoterLoop:
         except Exception:
             pass
         raise RuntimeError(f"Navigate failed: {last_err}")
+
+    def _page_is_scriptloadfailure_or_js_disabled(self) -> bool:
+        """Detect X interstitials like 'JavaScript is not available' or ScriptLoadFailure."""
+        script = (
+            "() => {\n"
+            "  try {\n"
+            "    const err1 = document.querySelector('#ScriptLoadFailure');\n"
+            "    const h1 = Array.from(document.querySelectorAll('h1')).map(x=>x.textContent||'').join(' ').toLowerCase();\n"
+            "    const jsDisabled = h1.includes('javascript is not available');\n"
+            "    return !!err1 || jsDisabled;\n"
+            "  } catch (e) { return false }\n"
+            "}"
+        )
+        try:
+            res = _json_loads_safe(pw_evaluate(script))
+            if isinstance(res, dict) and isinstance(res.get("repr"), str):
+                return res.get("repr", "").lower() == "true"
+            if isinstance(res, bool):
+                return res
+        except Exception:
+            pass
+        return False
 
     def _fill(self, selector: str, value: str) -> bool:
         res = _json_loads_safe(pw_fill(selector, value))
@@ -414,9 +605,14 @@ class XPromoterLoop:
             time.sleep(self.action_settle_seconds)
 
     def _js_type_into(self, selector: str, text: str) -> bool:
-        """Type text into a contenteditable DraftJS editor via JS selection + events."""
+        """Type text into a contenteditable via JS; embed args to avoid wrapper arg issues."""
+        import json as _json
+        sel_json = _json.dumps(selector)
+        val_json = _json.dumps(text)
         script = (
-            "(sel, val) => {\n"
+            "() => {\n"
+            f"  const sel = {sel_json};\n"
+            f"  const val = {val_json};\n"
             "  const el = document.querySelector(sel);\n"
             "  if (!el) return {ok:false, reason:'not_found'};\n"
             "  try { el.scrollIntoView({block:'center'}); } catch(e) {}\n"
@@ -430,8 +626,7 @@ class XPromoterLoop:
             "  return {ok: !!ok};\n"
             "}"
         )
-        # Pass selector and text as separate args (Playwright will marshal arguments correctly)
-        res = _json_loads_safe(pw_evaluate(script, args=[selector, text]))
+        res = _json_loads_safe(pw_evaluate(script))
         if isinstance(res, dict):
             return bool(res.get('ok'))
         return False
@@ -462,6 +657,27 @@ class XPromoterLoop:
                 return True
         return False
 
+    def _click_any_visible(self, selector: str, already_selector: Optional[str] = None) -> bool:
+        """Fallback: click the first visible element matching selector; treat already state as success if provided."""
+        script = (
+            "(sel, alreadySel) => {\n"
+            "  if (alreadySel) {\n"
+            "    const al = document.querySelector(alreadySel);\n"
+            "    if (al) return {ok:true, state:'already'};\n"
+            "  }\n"
+            "  const els = Array.from(document.querySelectorAll(sel));\n"
+            "  const inView = (el)=>{ const r = el.getBoundingClientRect(); return r.width>0 && r.height>0 && r.bottom>0 && r.top < (window.innerHeight||0); };\n"
+            "  const el = els.find(inView) || els[0];\n"
+            "  if (!el) return {ok:false, reason:'not_found'};\n"
+            "  try { el.scrollIntoView({block:'center'}); } catch(e) {}\n"
+            "  try { el.click(); return {ok:true, state:'clicked'}; } catch(e) { return {ok:false, reason:String(e)} }\n"
+            "}"
+        )
+        res = _json_loads_safe(pw_evaluate(script, args=[selector, already_selector or ""]))
+        if isinstance(res, dict):
+            return bool(res.get('ok'))
+        return False
+
     def _human_sleep(self) -> None:
         if self.dry_run:
             return
@@ -473,6 +689,14 @@ class XPromoterLoop:
     # --- X specific flows ---
 
     def _login(self) -> None:
+        # If persistent context keeps us logged in, don't attempt login
+        try:
+            self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+        except Exception:
+            pass
+        if self._is_logged_in():
+            return
+        # Go to explicit login page
         self._navigate("https://x.com/login", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
 
         # Username step
@@ -484,6 +708,9 @@ class XPromoterLoop:
                 filled = True
                 break
         if not filled:
+            # If fields aren't present but session is already authenticated, continue
+            if self._is_logged_in():
+                return
             raise RuntimeError("Failed to fill username on X login")
 
         # Prefer pressing Enter to advance
@@ -499,6 +726,8 @@ class XPromoterLoop:
                 filled = True
                 break
         if not filled:
+            if self._is_logged_in():
+                return
             raise RuntimeError("Failed to fill password on X login")
 
         # Prefer pressing Enter to submit
@@ -513,11 +742,55 @@ class XPromoterLoop:
             self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
         except Exception:
             pass
+        # Final check: if still not logged in, let caller proceed (actions may log errors/log out)
+        # No exception here to avoid hard-stopping the loop unnecessarily
+
+    def _is_logged_in(self) -> bool:
+        """Heuristic check for logged-in state on X."""
+        script = (
+            "() => {\n"
+            "  try {\n"
+            "    const hasAccountSwitcher = !!document.querySelector(\"[data-testid='SideNav_AccountSwitcher_Button']\");\n"
+            "    const hasProfileLink = !!document.querySelector(\"a[data-testid='AppTabBar_Profile_Link']\");\n"
+            "    const hasCompose = !!document.querySelector(\"a[href^='/compose/post']\");\n"
+            "    const hasLoginInput = !!document.querySelector(\"input[name='text']\");\n"
+            "    // Consider logged in if we see nav/account/profile; not logged in if login input is present\n"
+            "    if (hasLoginInput) return false;\n"
+            "    return hasAccountSwitcher || hasProfileLink || hasCompose;\n"
+            "  } catch (e) { return false }\n"
+            "}"
+        )
+        try:
+            res = _json_loads_safe(pw_evaluate(script))
+            if isinstance(res, dict) and isinstance(res.get("repr"), str):
+                return res.get("repr", "").lower() == "true"
+            if isinstance(res, bool):
+                return res
+        except Exception:
+            pass
+        return False
 
     def _open_explore(self) -> None:
-        # Click Explore tab; try primary then fallback
-        if not self._click("a[data-testid='AppTabBar_Explore_Link']"):
-            self._click("a[aria-label='Explore']")
+        # Prefer direct navigation to avoid brittle click selectors
+        try:
+            self._navigate("https://x.com/explore", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+        except Exception:
+            # Best-effort click fallbacks if direct navigation fails
+            if not self._click("a[data-testid='AppTabBar_Explore_Link']"):
+                self._click("a[aria-label='Explore']")
+
+    def _goto_explore_tab(self, tab: str) -> bool:
+        """Navigate to an Explore tab (e.g., 'trending', 'news') via direct URL to avoid click timeouts."""
+        try:
+            self._navigate(f"https://x.com/explore/tabs/{tab}", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+            return True
+        except Exception:
+            try:
+                # Last resort: go to explore root
+                self._navigate("https://x.com/explore", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+            except Exception:
+                pass
+            return False
 
     def _maybe_handle_login_challenges(self) -> None:
         # Detect "Check your email" verification modal and submit OTP
@@ -584,19 +857,27 @@ class XPromoterLoop:
         try:
             self._open_explore()
             time.sleep(1)
-            # Try Trending tab
-            self._click("a[href^='/explore/tabs/trending']")
-            time.sleep(1)
-            topics.extend(self._extract_topics_from_explore())
+            # Try Trending tab with robust navigation
+            if self._goto_explore_tab("trending"):
+                time.sleep(1)
+                topics.extend(self._extract_topics_from_explore())
         except Exception:
             pass
         try:
             # Try News tab for additional items
-            self._click("a[href^='/explore/tabs/news']")
-            time.sleep(1)
-            topics.extend(self._extract_topics_from_explore())
+            if self._goto_explore_tab("news"):
+                time.sleep(1)
+                topics.extend(self._extract_topics_from_explore())
         except Exception:
             pass
+
+        # If still empty, drop to home to ensure we have content to act on
+        if not topics:
+            try:
+                self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+            except Exception:
+                pass
+            return ["feed"]
 
         # Deduplicate, keep order
         seen: set[str] = set()
@@ -739,9 +1020,9 @@ class XPromoterLoop:
         retweet_count = counts.get("retweet", 0)
         reply_count = counts.get("reply", 0)
 
-        like_prob = 0.35
-        reply_prob = 0.18
-        rt_prob = 0.08
+        like_prob = 0.6
+        reply_prob = 0.3
+        rt_prob = 0.15
 
         if like_count >= 1000 or retweet_count >= 200:
             like_prob += 0.25
@@ -757,9 +1038,9 @@ class XPromoterLoop:
             reply_prob += 0.1
 
         decision = {
-            "like": random.random() < min(0.95, max(0.05, like_prob)),
-            "retweet": random.random() < min(0.6, max(0.0, rt_prob)),
-            "reply": random.random() < min(0.5, max(0.0, reply_prob)),
+            "like": random.random() < min(0.98, max(0.1, like_prob)),
+            "retweet": random.random() < min(0.7, max(0.02, rt_prob)),
+            "reply": random.random() < min(0.6, max(0.05, reply_prob)),
         }
         if not any(decision.values()):
             decision["like"] = True
@@ -799,19 +1080,24 @@ class XPromoterLoop:
         if self.dry_run:
             return True
         # Treat already-liked as success to avoid timeouts
-        return self._click_article_action("like")
+        ok = self._click_article_action("like")
+        if not ok:
+            # Fallback: try generic like button
+            ok = self._click_any_visible("[data-testid='like']", already_selector="[data-testid='unlike']")
+        return ok
 
     def _retweet_current_tweet(self) -> bool:
         if self.dry_run:
             return True
         # Treat already-retweeted as success
-        clicked = self._click_article_action("retweet")
+        clicked = self._click_article_action("retweet") or self._click_any_visible("[data-testid='retweet']", already_selector="[data-testid='unretweet']")
         if not clicked:
             return False
         time.sleep(0.5)
         confirmed = (
             self._click("div[data-testid='retweetConfirm']")
             or self._click("div[role='menuitem'][data-testid='retweetConfirm']")
+            or self._click_any_visible("div[data-testid='retweetConfirm'], div[role='menuitem'][data-testid='retweetConfirm']")
         )
         return confirmed
 
@@ -830,11 +1116,11 @@ class XPromoterLoop:
                 else None
             )
             if isinstance(reply, str):
-                return reply.strip()
+                return self._sanitize_text(reply.strip(), max_len=280)
         except Exception:
             pass
         # Fallback minimal reply
-        return "Interesting take. One tweak that often helps: be concrete about steps/results—curious what you’d try first?"
+        return self._sanitize_text("Interesting take. One tweak that often helps: be concrete about steps/results—curious what you’d try first?", max_len=280)
 
     def _reply_current_tweet(self, reply_text: str) -> Tuple[bool, str]:
         if self.dry_run:
@@ -904,6 +1190,12 @@ class XPromoterLoop:
             return False, ""
         time.sleep(0.6)
         content = self._generate_post_text()
+        # Remember last content and append to today's list for repetition checks
+        self._last_post_content = content
+        try:
+            self.posts_today.append(content)
+        except Exception:
+            pass
         ok = False
         for sel in [
             "div[role='dialog'] div[role='textbox'][data-testid='tweetTextarea_0']",
@@ -917,7 +1209,7 @@ class XPromoterLoop:
             "div[data-contents='true']",
             "div.public-DraftStyleDefault-block",
         ]:
-            if self._fill(sel, content):
+            if self._fill(sel, content) or self._js_type_into(sel, content):
                 ok = True
                 break
         if not ok:
@@ -962,12 +1254,15 @@ class XPromoterLoop:
         # Build context from recent feed/search page texts and topics
         recent_context = "\n\n".join([(t or "").strip()[:1200] for t in self.page_text_contexts[-3:]])
         topics_line = ", ".join(self.last_topics[:8])
+        todays_posts = "\n- ".join([(p or "").strip()[:220] for p in self.posts_today[-10:]])
         try:
             result = self.post_loop.run(
                 "You have been browsing X. Use the recent feed/search context and topics to inspire an original post.\n"
                 f"RECENT_TOPICS: {topics_line}\n"
                 f"PAGE_CONTEXTS:\n{recent_context}\n"
-                "Write the post only (<= 220 chars). No hashtags."
+                f"TODAYS_POSTS_ALREADY_PUBLISHED:\n- {todays_posts}\n"
+                "Do not repeat the same exact topics or angles as TODAYS_POSTS_ALREADY_PUBLISHED. Vary topics and framing.\n"
+                "Write the post only (<= 220 chars)."
             )
             post = (
                 result.get("results", {}).get("promoter")
@@ -975,10 +1270,10 @@ class XPromoterLoop:
                 else None
             )
             if isinstance(post, str):
-                return post.strip()[:220]
+                return self._sanitize_text(post.strip(), max_len=220)
         except Exception:
             pass
-        return "A tiny trick: show, don’t tell. Pick one concrete example and make it vivid. Follow for more."[:220]
+        return self._sanitize_text("A tiny trick: show, don’t tell. Pick one concrete example and make it vivid.", max_len=220)
 
     def _find_latest_status_permalink(self) -> str:
         script = (
@@ -995,6 +1290,32 @@ class XPromoterLoop:
         if isinstance(res, dict) and isinstance(res.get("repr"), str):
             return res.get("repr", "")
         return ""
+
+    def _sanitize_text(self, text: str, max_len: int) -> str:
+        """Remove hashtags and spammy CTA/self-promo phrases; keep URLs; trim length."""
+        try:
+            import re as _re
+            t = (text or "")
+            # Strip hashtags entirely
+            t = _re.sub(r"(^|\s)#[\w_]+", " ", t)
+            # Remove common CTA/self-promo phrases
+            banned = [
+                "follow for more", "follow me", "like and share", "retweet", "rt this",
+                "smash that", "subscribe", "check out my", "bio link", "buy now", "limited time",
+                "giveaway", "tag a friend", "turn on notifications", "👇", "🔥🔥", "free ebook",
+            ]
+            low = t.lower()
+            for phrase in banned:
+                if phrase in low:
+                    pattern = _re.compile(_re.escape(phrase), _re.IGNORECASE)
+                    t = pattern.sub("", t)
+            # Collapse whitespace and trim
+            t = _re.sub(r"\s+", " ", t).strip()
+            if max_len > 0 and len(t) > max_len:
+                t = t[:max_len].rstrip()
+            return t
+        except Exception:
+            return (text or "")[:max_len]
 
     # --- CSV logging ---
     def _log_action(
@@ -1081,13 +1402,53 @@ class XPromoterLoop:
         except Exception:
             pass
 
+    def _log_debug(self, message: str) -> None:
+        if not self.verbose:
+            return
+        try:
+            exists = os.path.exists(self.log_csv_path)
+            with open(self.log_csv_path, "a", encoding="utf-8", newline="") as f:
+                fieldnames = [
+                    "timestamp",
+                    "action_type",
+                    "keyword_or_source",
+                    "author_handle",
+                    "tweet_title_or_snippet",
+                    "tweet_url",
+                    "reason_if_skipped",
+                    "content_prefix",
+                    "engagement_flags",
+                    "permalink",
+                ]
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                if not exists:
+                    writer.writeheader()
+                from datetime import datetime
+                def one_line(s: str) -> str:
+                    return (s or "").replace("\r", " ").replace("\n", " ").strip()
+                writer.writerow({
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "action_type": "debug",
+                    "keyword_or_source": "",
+                    "author_handle": "",
+                    "tweet_title_or_snippet": "",
+                    "tweet_url": "",
+                    "reason_if_skipped": one_line((message or ""))[:240],
+                    "content_prefix": "",
+                    "engagement_flags": "",
+                    "permalink": "",
+                })
+        except Exception:
+            pass
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Programmatic X (Twitter) promoter loop")
-    parser.add_argument("--config", type=str, default=None, help="Path to JSON config file")
+    parser.add_argument("--config", type=str, default=None, help="Path to JSON config file (default: agents/promoter/data/x_promoter_config.json)")
     parser.add_argument("--x_user", type=str, default=None, help="X username (or set X_USER)")
     parser.add_argument("--x_pass", type=str, default=None, help="X password (or set X_PASS)")
     parser.add_argument("--max_actions_total", type=int, default=None, help="Maximum total actions this run")
+    parser.add_argument("--max_original_posts", type=int, default=None, help="Maximum number of original posts this run")
     parser.add_argument("--log_csv", type=str, default=None, help="Path to CSV log file")
     parser.add_argument("--model_id", type=str, default=None, help="Model id for text generation")
     parser.add_argument("--post_wait_seconds", type=int, default=None, help="Fixed seconds to wait between actions")
@@ -1105,6 +1466,8 @@ def parse_args():
     parser.add_argument("--dry_run", action="store_true", help="Do everything except actually posting/engaging")
     parser.add_argument("--keep_browser_open", action="store_true", help="Keep browser open after run (do not exit)")
     parser.add_argument("--browser_height", type=int, default=None, help="Viewport height for browser window")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose debug logging to CSV")
+    parser.add_argument("--user_data_dir", type=str, default=None, help="Playwright persistent user data dir to reuse sessions")
     return parser.parse_args()
 
 
@@ -1132,10 +1495,19 @@ def main(args: argparse.Namespace):
         except Exception:
             pass
 
+    # Persistent user data dir to keep sessions/cookies
+    udd = pick("user_data_dir", None)
+    if udd is not None:
+        try:
+            os.environ["PROMOTER_PLAYWRIGHT_USER_DATA_DIR"] = str(udd)
+        except Exception:
+            pass
+
     loop = XPromoterLoop(
         x_user=pick("x_user", ""),
         x_pass=pick("x_pass", ""),
         max_actions_total=int(pick("max_actions_total", 8)),
+        max_original_posts=int(pick("max_original_posts", 3)),
         log_csv_path=pick("log_csv"),
         model_id=pick("model_id"),
         post_wait_seconds=pick("post_wait_seconds"),
@@ -1145,6 +1517,7 @@ def main(args: argparse.Namespace):
         otp_regex=pick("otp_regex"),
         otp_code=pick("otp_code"),
         dry_run=bool(args.dry_run or cfg.get("dry_run", False)),
+        verbose=bool(args.verbose or cfg.get("verbose", False)),
     )
     result = loop.run()
     print(json.dumps(result, indent=2))
@@ -1152,6 +1525,8 @@ def main(args: argparse.Namespace):
     # Optionally keep the browser/process alive (useful in headed mode)
     keep_open = bool(args.keep_browser_open or cfg.get("keep_browser_open", False))
     if keep_open:
+        # Signal tools wrapper to preserve the browser session on process exit
+        os.environ["PROMOTER_KEEP_BROWSER_OPEN"] = "1"
         try:
             print("Browser kept open. Press Ctrl+C to exit.")
             while True:

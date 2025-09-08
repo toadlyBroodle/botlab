@@ -55,6 +55,17 @@ def _viewport_size() -> Dict[str, int]:
     return {'width': width, 'height': height}
 
 
+def _user_data_dir() -> Optional[str]:
+    path = os.getenv('PROMOTER_PLAYWRIGHT_USER_DATA_DIR', '').strip()
+    if not path:
+        return None
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        pass
+    return path
+
+
 class _BrowserWorker:
     def __init__(self) -> None:
         self._thread: Optional[threading.Thread] = None
@@ -107,17 +118,35 @@ class _BrowserWorker:
             if not headless_flag:
                 launch_args.extend(["--disable-gpu", "--no-sandbox"])  # friendly flags for WSL/X11
 
-            browser: Browser = pw.chromium.launch(
-                headless=headless_flag,
-                slow_mo=slow_mo_value,
-                devtools=(not headless_flag),
-                args=launch_args or None,
-                proxy=proxy_settings,
-            )
-            context: BrowserContext = browser.new_context(
-                viewport=_viewport_size(),
-                ignore_https_errors=True,
-            )
+            user_data = _user_data_dir()
+            browser: Optional[Browser] = None
+            if user_data:
+                logger.info(f"Launching persistent context with user_data_dir={user_data}")
+                context: BrowserContext = pw.chromium.launch_persistent_context(
+                    user_data_dir=user_data,
+                    headless=headless_flag,
+                    slow_mo=slow_mo_value,
+                    args=launch_args or None,
+                    proxy=proxy_settings,
+                    viewport=_viewport_size(),
+                    ignore_https_errors=True,
+                )
+                try:
+                    browser = context.browser
+                except Exception:
+                    browser = None
+            else:
+                browser = pw.chromium.launch(
+                    headless=headless_flag,
+                    slow_mo=slow_mo_value,
+                    devtools=(not headless_flag),
+                    args=launch_args or None,
+                    proxy=proxy_settings,
+                )
+                context: BrowserContext = browser.new_context(
+                    viewport=_viewport_size(),
+                    ignore_https_errors=True,
+                )
             page: Page = context.new_page()
 
             # Prevent multiple tabs/windows: close any extra pages and force same-tab navigation
@@ -214,6 +243,14 @@ def _shutdown() -> None:
     if worker is None:
         return
     def _teardown(state: Dict[str, Any]):
+        # Respect persistent headed sessions if requested
+        try:
+            keep_open = os.getenv('PROMOTER_KEEP_BROWSER_OPEN', '0').strip() in ('1', 'true', 'yes')
+        except Exception:
+            keep_open = False
+        if keep_open:
+            logger.info("Skipping Playwright teardown due to PROMOTER_KEEP_BROWSER_OPEN=1")
+            return "skipped"
         try:
             if state.get('context') is not None:
                 state['context'].close()
