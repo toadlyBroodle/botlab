@@ -91,6 +91,11 @@ class XPromoterLoop:
         x_pass: str,
         max_actions_total: int = 8,
         max_original_posts: int = 3,
+        max_likes: int = 0,
+        max_replies: int = 0,
+        max_posts: Optional[int] = None,
+        keywords: Optional[List[str]] = None,
+        exclude_authors: Optional[List[str]] = None,
         log_csv_path: Optional[str] = None,
         model_id: Optional[str] = None,
         post_wait_seconds: Optional[int] = None,
@@ -113,6 +118,13 @@ class XPromoterLoop:
         self.max_actions_total = max(0, int(max_actions_total))
         self.actions_total = 0
         self.max_original_posts = max(0, int(max_original_posts))
+        # New per-action quotas
+        self.max_likes = max(0, int(max_likes))
+        self.max_replies = max(0, int(max_replies))
+        # Prefer explicit max_posts, else fallback to legacy max_original_posts
+        self.max_posts = max(0, int(max_posts if (max_posts is not None) else self.max_original_posts))
+        self.likes_total = 0
+        self.replies_total = 0
         self.original_posts = 0
         self.dry_run = dry_run
         self.verbose = bool(verbose or os.getenv("PROMOTER_VERBOSE", "0") == "1")
@@ -126,6 +138,9 @@ class XPromoterLoop:
         self.otp_fetch_cmd = (otp_fetch_cmd or os.getenv("X_OTP_FETCH_CMD", "")).strip()
         self.otp_regex = (otp_regex or os.getenv("X_OTP_REGEX", r"\\b(\\d{6})\\b")).strip()
         self.otp_code = (otp_code or os.getenv("X_OTP_CODE", "")).strip()
+        # Discovery preferences
+        self.keywords: List[str] = [str(x).strip() for x in (keywords or []) if str(x).strip()]
+        self.exclude_authors: set[str] = set([str(x).lstrip('@').strip().lower() for x in (exclude_authors or []) if str(x).strip()])
 
         # Build simple content generation loops
         self.reply_loop = self._build_reply_loop()
@@ -136,6 +151,11 @@ class XPromoterLoop:
         self.last_topics: List[str] = []
         # Originals already posted today (to avoid repeating topics)
         self.posts_today: List[str] = self._load_todays_posts_from_log()
+        # Track visited actions to avoid duplicates
+        self.liked_urls: set[str] = set()
+        self.replied_urls: set[str] = set()
+        self.engaged_authors: set[str] = set()
+        self.seen_urls: set[str] = self._load_seen_set()
 
     # --- Public entrypoint ---
     def run(self) -> Dict[str, Any]:
@@ -144,294 +164,32 @@ class XPromoterLoop:
 
         self._login()
 
-        seen_tweets: set[str] = set()
-        seen_order: List[str] = []
+        # Fulfill likes first with re-scraping per pass to avoid duplicates
+        if self.max_likes > 0 and not self._quotas_reached():
+            self._fulfill_likes_until_quota()
 
-        while not self._quotas_reached():
-            self._log_debug("loop_start")
-            topics = self._collect_trending_topics()
-            self.last_topics = list(topics)
-            if not topics:
-                # Fallback to Home if no topics found
-                topics = ["feed"]
-                self.last_topics = ["feed"]
-            self._log_debug(f"topics:{'|'.join(topics)}")
+        # Then fulfill posts (no need to scrape links)
+        if self.max_posts > 0 and not self._quotas_reached():
+            self._fulfill_posts()
 
-            # iterate topics and engage until quotas reached
-            actions_before_pass = self.actions_total
+        # Finally, fulfill replies with re-scraping per pass to avoid duplicates
+        if self.max_replies > 0 and not self._quotas_reached():
+            self._fulfill_replies_until_quota()
 
-            for topic in topics:
-                if self._quotas_reached():
-                    break
-                if topic == "feed":
-                    self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
-                    # Best-effort infinite scroll to collect a few items
-                    self._infinite_scroll(iterations=4)
-                    self._capture_page_context()
-                    tweet_links = self._extract_status_links_from_page()
-                else:
-                    search_url = self._search_live_url(topic)
-                    try:
-                        self._navigate(search_url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
-                    except Exception:
-                        continue
-                    # Scroll results to ensure enough tweets are loaded
-                    self._infinite_scroll(iterations=3)
-                    self._capture_page_context()
-                    tweet_links = self._extract_status_links_from_page()
-                self._log_debug(f"topic:{topic}:links:{len(tweet_links)}")
-
-                # Randomize and cap per-topic processing to ensure variety and forward progress
-                random.shuffle(tweet_links)
-                per_topic_limit = 10
-                processed_on_topic = 0
-
-                # Prefer unseen links first to maximize chances of engagement
-                unseen_links = [u for u in tweet_links if u not in seen_tweets]
-                candidate_links = unseen_links or tweet_links
-
-                for url in candidate_links:
-                    if self._quotas_reached():
-                        break
-                    if url in seen_tweets:
-                        continue
-                    seen_tweets.add(url)
-                    seen_order.append(url)
-                    # Keep rolling window to avoid deadlocks from everything being seen
-                    if len(seen_order) > 500:
-                        # Drop oldest 200
-                        for _ in range(200):
-                            try:
-                                old = seen_order.pop(0)
-                                if old in seen_tweets:
-                                    seen_tweets.remove(old)
-                            except Exception:
-                                break
-                    if processed_on_topic >= per_topic_limit:
-                        break
-
-                    try:
-                        self._navigate(url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
-                    except Exception:
-                        self._log_action(
-                            action_type="",
-                            keyword_or_source=topic,
-                            author_handle=self._handle_from_status_url(url),
-                            tweet_title_or_snippet="",
-                            tweet_url=url,
-                            reason_if_skipped="navigate_failed",
-                            content_prefix="",
-                            engagement_flags="",
-                            permalink="",
-                        )
-                        continue
-                    self._log_debug(f"visit:{url}")
-
-                    snippet = self._extract_tweet_snippet()
-                    page_text = self._get_visible_text(limit=8000)
-                    decision = self._agent_decide_engagement(topic, page_text, snippet)
-                    self._log_debug(f"decision:{url}:{json.dumps(decision, separators=(',',':'))}")
-                    # Ensure at least one reply attempt early in the run
-                    if self.actions_total == 0 and not bool(decision.get("reply")):
-                        decision["reply"] = True
-
-                    # Like if agent advises
-                    like_ok = False
-                    if decision.get("like") is True:
-                        like_ok = self._like_current_tweet()
-                    if like_ok:
-                        self.actions_total += 1
-                        self._log_action(
-                            action_type="like",
-                            keyword_or_source=topic,
-                            author_handle=self._handle_from_status_url(url),
-                            tweet_title_or_snippet=snippet,
-                            tweet_url=url,
-                            reason_if_skipped="",
-                            content_prefix="",
-                            engagement_flags="like=1",
-                            permalink=url,
-                        )
-                        self._human_sleep()
-
-                    # Retweet if agent advises
-                    if not self._quotas_reached() and decision.get("retweet") is True:
-                        rt_ok = self._retweet_current_tweet()
-                        if rt_ok:
-                            self.actions_total += 1
-                            self._log_action(
-                                action_type="retweet",
-                                keyword_or_source=topic,
-                                author_handle=self._handle_from_status_url(url),
-                                tweet_title_or_snippet=snippet,
-                                tweet_url=url,
-                                reason_if_skipped="",
-                                content_prefix="",
-                                engagement_flags="retweet=1",
-                                permalink=url,
-                            )
-                            self._human_sleep()
-
-                    # Reply if agent advises; keep it concise and valuable
-                    if not self._quotas_reached() and decision.get("reply") is True:
-                        # Ensure we like before replying for better etiquette and engagement
-                        if not like_ok:
-                            like_try = self._like_current_tweet()
-                            if like_try:
-                                self.actions_total += 1
-                                self._log_action(
-                                    action_type="like",
-                                    keyword_or_source=topic,
-                                    author_handle=self._handle_from_status_url(url),
-                                    tweet_title_or_snippet=snippet,
-                                    tweet_url=url,
-                                    reason_if_skipped="",
-                                    content_prefix="",
-                                    engagement_flags="like=1",
-                                    permalink=url,
-                                )
-                                self._human_sleep()
-                        reply_text = str(decision.get("reply_text") or "").strip() or self._generate_reply_text(topic, snippet, page_text)
-                        posted, permalink = self._reply_current_tweet(reply_text)
-                        if posted:
-                            self.actions_total += 1
-                            self._log_action(
-                                action_type="reply",
-                                keyword_or_source=topic,
-                                author_handle=self._handle_from_status_url(url),
-                                tweet_title_or_snippet=snippet,
-                                tweet_url=url,
-                                reason_if_skipped="",
-                                content_prefix=reply_text[:60],
-                                engagement_flags="",
-                                permalink=permalink or url,
-                            )
-                            self._human_sleep()
-                        else:
-                            self._log_debug(f"reply_failed:{url}")
-
-                    # If we still haven't done anything on this URL, force a like best-effort
-                    if not self._quotas_reached():
-                        # Check whether any action happened for this URL by comparing before/after via snippet in log is heavy; instead, use a quick attempt
-                        if not like_ok:
-                            forced_like = self._like_current_tweet()
-                            if forced_like:
-                                self.actions_total += 1
-                                self._log_action(
-                                    action_type="like",
-                                    keyword_or_source=topic,
-                                    author_handle=self._handle_from_status_url(url),
-                                    tweet_title_or_snippet=snippet,
-                                    tweet_url=url,
-                                    reason_if_skipped="",
-                                    content_prefix="",
-                                    engagement_flags="like=1",
-                                    permalink=url,
-                                )
-                                self._human_sleep()
-
-                    # Occasionally post an original, up to configured cap
-                    if (self.original_posts < self.max_original_posts) and (not self._quotas_reached()) and (random.random() < 0.35):
-                        posted, permalink = self._post_original()
-                        if posted:
-                            self.actions_total += 1
-                            self.original_posts += 1
-                            self._log_action(
-                                action_type="post",
-                                keyword_or_source=topic,
-                                author_handle="",
-                                tweet_title_or_snippet="",
-                                tweet_url="",
-                                reason_if_skipped="",
-                                content_prefix=getattr(self, "_last_post_content", "")[:260],
-                                engagement_flags="",
-                                permalink=permalink,
-                            )
-                            self._human_sleep()
-                        else:
-                            self._log_debug("post_failed")
-
-                    processed_on_topic += 1
-
-            # Best-effort original post per pass if quota allows
-            if (self.original_posts < self.max_original_posts) and (not self._quotas_reached()):
-                posted, permalink = self._post_original()
-                if posted:
-                    self.actions_total += 1
-                    self.original_posts += 1
-                    self._log_action(
-                        action_type="post",
-                        keyword_or_source=",".join(self.last_topics[:3]),
-                        author_handle="",
-                        tweet_title_or_snippet="",
-                        tweet_url="",
-                        reason_if_skipped="",
-                        content_prefix=getattr(self, "_last_post_content", "")[:260],
-                        engagement_flags="",
-                        permalink=permalink,
-                    )
-                    self._human_sleep()
-                else:
-                    self._log_debug("post_failed_end_of_pass")
-            # Continue looping until quotas are reached; avoid early exit based on pass-level activity
-            if self.actions_total == actions_before_pass and not self._quotas_reached():
-                # Fallback: try to like something from feed, else post an original
-                try:
-                    self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
-                    self._infinite_scroll(iterations=2)
-                    self._capture_page_context()
-                    feed_links = self._extract_status_links_from_page()
-                    random.shuffle(feed_links)
-                    for url in feed_links[:3]:
-                        if self._quotas_reached():
-                            break
-                        try:
-                            self._navigate(url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
-                        except Exception:
-                            continue
-                        snippet = self._extract_tweet_snippet()
-                        if self._like_current_tweet():
-                            self.actions_total += 1
-                            self._log_action(
-                                action_type="like",
-                                keyword_or_source="fallback",
-                                author_handle=self._handle_from_status_url(url),
-                                tweet_title_or_snippet=snippet,
-                                tweet_url=url,
-                                reason_if_skipped="",
-                                content_prefix="",
-                                engagement_flags="like=1",
-                                permalink=url,
-                            )
-                            self._human_sleep()
-                            break
-                        else:
-                            self._log_debug(f"fallback_like_failed:{url}")
-                except Exception:
-                    pass
-                if (self.original_posts < self.max_original_posts) and (not self._quotas_reached()):
-                    posted, permalink = self._post_original()
-                    if posted:
-                        self.actions_total += 1
-                        self.original_posts += 1
-                        self._log_action(
-                            action_type="post",
-                            keyword_or_source="fallback",
-                            author_handle="",
-                            tweet_title_or_snippet="",
-                            tweet_url="",
-                            reason_if_skipped="",
-                            content_prefix=getattr(self, "_last_post_content", "")[:260],
-                            engagement_flags="",
-                            permalink=permalink,
-                        )
-                        self._human_sleep()
-                    else:
-                        self._log_debug("fallback_post_failed")
+        # Persist seen URLs to avoid repeating across runs
+        try:
+            self.seen_urls.update(self.liked_urls)
+            self.seen_urls.update(self.replied_urls)
+            self._save_seen_set()
+        except Exception:
+            pass
 
         return {
-            "status": "completed" if self.actions_total > 0 else "no_actions",
+            "status": "completed" if self._quotas_reached() or self.actions_total > 0 else "no_actions",
             "actions_total": int(self.actions_total),
+            "likes_total": int(self.likes_total),
+            "replies_total": int(self.replies_total),
+            "posts_total": int(self.original_posts),
             "log_csv": self.log_csv_path,
         }
 
@@ -515,7 +273,18 @@ class XPromoterLoop:
     # Removed unused decision loop to fix syntax issues
 
     def _quotas_reached(self) -> bool:
-        return self.actions_total >= self.max_actions_total
+        # Stop if all targets met
+        all_targets_met = (
+            self.likes_total >= self.max_likes and
+            self.replies_total >= self.max_replies and
+            self.original_posts >= self.max_posts
+        )
+        if all_targets_met:
+            return True
+        # Safety cap if configured (>0)
+        if self.max_actions_total > 0 and self.actions_total >= self.max_actions_total:
+            return True
+        return False
 
     # Basic action wrappers with settle delays
     def _navigate(self, url: str, wait_until: Optional[str] = None, tolerate_http_errors: bool = False, retries: int = 0) -> None:
@@ -655,6 +424,48 @@ class XPromoterLoop:
         if isinstance(res, dict):
             if res.get('ok') and res.get('state') in ('already','clicked'):
                 return True
+        return False
+
+    def _like_current_tweet_with_state(self) -> Tuple[bool, str]:
+        """Attempt to like the visible tweet, returning (ok, state) where state is 'clicked' or 'already'."""
+        script = (
+            "() => {\n"
+            "  const arts = Array.from(document.querySelectorAll(\"article[role='article']\"));\n"
+            "  if (!arts.length) return {ok:false, state:'no_article'};\n"
+            "  const inView = (el)=>{ const r = el.getBoundingClientRect(); return r.bottom>0 && r.top < (window.innerHeight||0); };\n"
+            "  let art = arts.find(inView) || arts[0];\n"
+            "  if (art.querySelector(\"[data-testid='unlike']\")) return {ok:true, state:'already'};\n"
+            "  const btn = art.querySelector(\"[data-testid='like']\");\n"
+            "  if (!btn) return {ok:false, state:'not_found'};\n"
+            "  try { btn.scrollIntoView({block:'center'}); } catch(e) {}\n"
+            "  try { btn.click(); return {ok:true, state:'clicked'}; } catch(e) { return {ok:false, state:'error'} }\n"
+            "}"
+        )
+        res = _json_loads_safe(pw_evaluate(script))
+        if isinstance(res, dict):
+            ok = bool(res.get('ok'))
+            state = str(res.get('state') or '')
+            return ok, state
+        return False, 'error'
+
+    def _is_current_tweet_liked(self) -> bool:
+        script = (
+            "() => {\n"
+            "  const arts = Array.from(document.querySelectorAll(\"article[role='article']\"));\n"
+            "  if (!arts.length) return false;\n"
+            "  const inView = (el)=>{ const r = el.getBoundingClientRect(); return r.bottom>0 && r.top < (window.innerHeight||0); };\n"
+            "  let art = arts.find(inView) || arts[0];\n"
+            "  return !!art.querySelector(\"[data-testid='unlike']\");\n"
+            "}"
+        )
+        try:
+            res = _json_loads_safe(pw_evaluate(script))
+            if isinstance(res, dict) and isinstance(res.get('repr'), str):
+                return res.get('repr', '').lower() == 'true'
+            if isinstance(res, bool):
+                return res
+        except Exception:
+            pass
         return False
 
     def _click_any_visible(self, selector: str, already_selector: Optional[str] = None) -> bool:
@@ -908,6 +719,217 @@ class XPromoterLoop:
                 return []
         return []
 
+    def _discover_candidates(self, exclude: Optional[set[str]] = None) -> List[Tuple[str, str]]:
+        """Collect candidate tweet URLs once across multiple topical sources.
+        Returns list of (topic, url) tuples.
+        """
+        candidates: List[Tuple[str, str]] = []
+        seen: set[str] = set()
+        exclude = exclude or set()
+        topics = self._collect_trending_topics()
+        self.last_topics = list(topics)
+        if not topics:
+            topics = ["feed"]
+            self.last_topics = ["feed"]
+        # Also include configured keywords as additional topical searches
+        extra_keywords = [t for t in self.keywords if t.lower() not in {x.lower() for x in topics}]
+        for t in extra_keywords:
+            topics.append(t)
+        for topic in topics:
+            try:
+                if topic == "feed":
+                    self._navigate("https://x.com/home", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+                    self._infinite_scroll(iterations=4)
+                    self._capture_page_context()
+                else:
+                    url = self._search_live_url(topic)
+                    self._navigate(url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+                    # Scroll deeper to fetch more unique items
+                    self._infinite_scroll(iterations=5)
+                    self._capture_page_context()
+                links = self._extract_status_links_from_page()
+                random.shuffle(links)
+                for u in links:
+                    if u in seen:
+                        continue
+                    if u in exclude or u in self.liked_urls or u in self.replied_urls:
+                        continue
+                    # Skip if we've engaged with this author recently
+                    try:
+                        author = self._handle_from_status_url(u)
+                        if author and (author.lower() in self.exclude_authors or author.lower() in self.engaged_authors):
+                            continue
+                    except Exception:
+                        pass
+                    if u in self.seen_urls:
+                        continue
+                    seen.add(u)
+                    candidates.append((topic, u))
+                # If no links for this topic, try to use the visible tweet directly
+                if not links:
+                    permalink = self._find_latest_status_permalink()
+                    if permalink and permalink not in seen and permalink not in exclude and permalink not in self.liked_urls and permalink not in self.replied_urls and permalink not in self.seen_urls:
+                        seen.add(permalink)
+                        candidates.append((topic, permalink))
+            except Exception:
+                continue
+            if len(candidates) >= 200:
+                break
+        return candidates
+
+    def _load_seen_set(self) -> set[str]:
+        try:
+            profile_dir = os.getenv("PROMOTER_PLAYWRIGHT_USER_DATA_DIR", "") or os.path.join(os.path.dirname(__file__), "data", "x_profile")
+            path = os.path.join(profile_dir, "seen_urls.json")
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return set([str(u) for u in data])
+        except Exception:
+            pass
+        return set()
+
+    def _save_seen_set(self) -> None:
+        try:
+            profile_dir = os.getenv("PROMOTER_PLAYWRIGHT_USER_DATA_DIR", "") or os.path.join(os.path.dirname(__file__), "data", "x_profile")
+            os.makedirs(profile_dir, exist_ok=True)
+            path = os.path.join(profile_dir, "seen_urls.json")
+            data = list(self.seen_urls)
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+    def _fulfill_likes(self, candidates: List[Tuple[str, str]]) -> None:
+        for topic, url in candidates:
+            if self._quotas_reached() or self.likes_total >= self.max_likes:
+                break
+            if url in self.liked_urls:
+                continue
+            try:
+                self._navigate(url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+            except Exception:
+                continue
+            # Skip if author is excluded or already engaged heavily
+            author = self._handle_from_status_url(url).lower()
+            if author and (author in self.exclude_authors or author in self.engaged_authors):
+                continue
+            snippet = self._extract_tweet_snippet()
+            ok, state = self._like_current_tweet_with_state()
+            if ok and state == 'clicked':
+                self.actions_total += 1
+                self.likes_total += 1
+                self.liked_urls.add(url)
+                if author:
+                    self.engaged_authors.add(author)
+                self._log_action(
+                    action_type="like",
+                    keyword_or_source=topic,
+                    author_handle=self._handle_from_status_url(url),
+                    tweet_title_or_snippet=snippet,
+                    tweet_url=url,
+                    reason_if_skipped="",
+                    content_prefix="",
+                    engagement_flags="like=1",
+                    permalink=url,
+                )
+                self._human_sleep()
+            elif ok and state == 'already':
+                # Do not increment counters, but remember URL to avoid reprocessing
+                self.liked_urls.add(url)
+
+    def _fulfill_likes_until_quota(self, max_passes: int = 3) -> None:
+        passes = 0
+        while (self.likes_total < self.max_likes) and (not self._quotas_reached()) and (passes < max_passes):
+            before = self.likes_total
+            exclude = set(self.liked_urls) | set(self.replied_urls)
+            candidates = self._discover_candidates(exclude=exclude)
+            if not candidates:
+                break
+            self._fulfill_likes(candidates)
+            passes += 1
+            if self.likes_total == before:
+                break
+
+    def _fulfill_posts(self) -> None:
+        while (not self._quotas_reached()) and (self.original_posts < self.max_posts):
+            posted, permalink = self._post_original()
+            if posted:
+                self.actions_total += 1
+                self.original_posts += 1
+                self._log_action(
+                    action_type="post",
+                    keyword_or_source=",".join(self.last_topics[:3]),
+                    author_handle="",
+                    tweet_title_or_snippet="",
+                    tweet_url="",
+                    reason_if_skipped="",
+                    content_prefix=getattr(self, "_last_post_content", "")[:260],
+                    engagement_flags="",
+                    permalink=permalink,
+                )
+                self._human_sleep()
+            else:
+                break
+
+    def _fulfill_replies(self, candidates: List[Tuple[str, str]]) -> None:
+        for topic, url in candidates:
+            if self._quotas_reached() or self.replies_total >= self.max_replies:
+                break
+            if url in self.replied_urls:
+                continue
+            try:
+                self._navigate(url, wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+            except Exception:
+                continue
+            # Skip if author is excluded or already engaged heavily
+            author = self._handle_from_status_url(url).lower()
+            if author and (author in self.exclude_authors or author in self.engaged_authors):
+                continue
+            page_text = self._get_visible_text(limit=8000)
+            snippet = self._extract_tweet_snippet()
+            # Best-effort etiquette: like first if still under target
+            if (self.likes_total < self.max_likes) and (url not in self.liked_urls) and (not self._is_current_tweet_liked()):
+                ok, state = self._like_current_tweet_with_state()
+                if ok and state == 'clicked':
+                    self.actions_total += 1
+                    self.likes_total += 1
+                    self.liked_urls.add(url)
+                    if author:
+                        self.engaged_authors.add(author)
+                    self._log_action(
+                        action_type="like",
+                        keyword_or_source=topic,
+                        author_handle=self._handle_from_status_url(url),
+                        tweet_title_or_snippet=snippet,
+                        tweet_url=url,
+                        reason_if_skipped="",
+                        content_prefix="",
+                        engagement_flags="like=1",
+                        permalink=url,
+                    )
+                    self._human_sleep()
+            reply_text = self._generate_reply_text(topic, snippet, page_text)
+            posted, permalink = self._reply_current_tweet(reply_text)
+            if posted:
+                self.actions_total += 1
+                self.replies_total += 1
+                self.replied_urls.add(url)
+                if author:
+                    self.engaged_authors.add(author)
+                self._log_action(
+                    action_type="reply",
+                    keyword_or_source=topic,
+                    author_handle=self._handle_from_status_url(permalink),
+                    tweet_title_or_snippet=snippet,
+                    tweet_url=url,
+                    reason_if_skipped="",
+                    content_prefix=reply_text[:60],
+                    engagement_flags="",
+                    permalink=permalink or url,
+                )
+                self._human_sleep()
     def _search_live_url(self, topic: str) -> str:
         from urllib.parse import quote
         q = quote(topic)
@@ -937,20 +959,32 @@ class XPromoterLoop:
     def _extract_status_links_from_page(self) -> List[str]:
         script = (
             "() => {\n"
-            "  const anchors = Array.from(document.querySelectorAll(\"a[href*='/status/']\"));\n"
-            "  const urls = anchors.map(a => a.href).filter(Boolean);\n"
+            "  const toAbs = (href) => { try { return new URL(href, location.href).href } catch(e) { return '' } };\n"
+            "  const anchors = Array.from(document.querySelectorAll(\"a[href*='/status/'], a[href*='/i/web/status/']\"));\n"
+            "  const urls = anchors.map(a => toAbs(a.getAttribute('href')||a.href||'')).filter(Boolean);\n"
             "  const out = [];\n"
             "  for (const h of urls){\n"
             "    try {\n"
             "      const u = new URL(h, location.href);\n"
-            "      if (u.hostname !== 'x.com') continue;\n"
+            "      const host = (u.hostname||'').toLowerCase();\n"
+            "      if (!(host.endsWith('x.com') || host.endsWith('twitter.com'))) continue;\n"
             "      const parts = u.pathname.split('/').filter(Boolean);\n"
+            "      let id = ''; let handle = '';\n"
             "      const idx = parts.indexOf('status');\n"
-            "      if (idx === -1 || idx + 1 >= parts.length) continue;\n"
-            "      const handle = parts[idx - 1] || '';\n"
-            "      const id = parts[idx + 1];\n"
+            "      if (idx !== -1 && idx + 1 < parts.length) {\n"
+            "        id = parts[idx + 1];\n"
+            "        handle = parts[idx - 1] || '';\n"
+            "      } else {\n"
+            "        // Handle /i/web/status/:id form where handle isn't present\n"
+            "        const iIdx = parts.indexOf('i');\n"
+            "        const webIdx = parts.indexOf('web');\n"
+            "        const stIdx = parts.indexOf('status');\n"
+            "        if (iIdx !== -1 && webIdx !== -1 && stIdx !== -1 && stIdx + 1 < parts.length) {\n"
+            "          id = parts[stIdx + 1];\n"
+            "        }\n"
+            "      }\n"
             "      if (!/^\\d+$/.test(id)) continue;\n"
-            "      const base = `https://x.com/${handle}/status/${id}`;\n"
+            "      const base = handle ? `https://x.com/${handle}/status/${id}` : `https://x.com/i/web/status/${id}`;\n"
             "      if (base && !out.includes(base)) out.push(base);\n"
             "    } catch (e) { /* ignore bad urls */ }\n"
             "  }\n"
@@ -966,6 +1000,72 @@ class XPromoterLoop:
             except Exception:
                 return []
         return []
+
+    def _extract_author_from_current(self) -> str:
+        script = (
+            "() => {\n"
+            "  const arts = Array.from(document.querySelectorAll(\"article[role='article']\"));\n"
+            "  if (!arts.length) return '';\n"
+            "  const inView = (el)=>{ const r = el.getBoundingClientRect(); return r.bottom>0 && r.top < (window.innerHeight||0); };\n"
+            "  let art = arts.find(inView) || arts[0];\n"
+            "  const link = art.querySelector(\"a[href^='/'][role='link']\");\n"
+            "  if (!link) return '';\n"
+            "  try { const u = new URL(link.href, location.href); const p = u.pathname.split('/').filter(Boolean); return p[0]||'' } catch(e) { return '' }\n"
+            "}"
+        )
+        try:
+            res = _json_loads_safe(pw_evaluate(script))
+            if isinstance(res, str):
+                return res
+            if isinstance(res, dict) and isinstance(res.get('repr'), str):
+                return res.get('repr', '')
+        except Exception:
+            pass
+        return ""
+
+    def _engage_visible_tweet_from_feed(self, topic: str) -> bool:
+        """Attempt to like/retweet/reply the currently visible tweet without navigation.
+        Returns True if any action was taken.
+        """
+        page_text = self._get_visible_text(limit=8000)
+        snippet = self._extract_tweet_snippet()
+        decision = self._agent_decide_engagement(topic, page_text, snippet)
+
+        any_action = False
+
+        # Like
+        if decision.get("like") is True and (self.likes_total < self.max_likes) and not self._quotas_reached():
+            if self._like_current_tweet():
+                self.actions_total += 1
+                self.likes_total += 1
+                any_action = True
+                permalink = self._find_latest_status_permalink()
+                self._log_action(
+                    action_type="like",
+                    keyword_or_source=topic,
+                    author_handle=self._handle_from_status_url(permalink),
+                    tweet_title_or_snippet=snippet,
+                    tweet_url=permalink,
+                    reason_if_skipped="",
+                    content_prefix="",
+                    engagement_flags="like=1",
+                    permalink=permalink or "",
+                )
+                self._human_sleep()
+
+    def _fulfill_replies_until_quota(self, max_passes: int = 3) -> None:
+        passes = 0
+        while (self.replies_total < self.max_replies) and (not self._quotas_reached()) and (passes < max_passes):
+            before = self.replies_total
+            exclude = set(self.replied_urls) | set(self.liked_urls)
+            candidates = self._discover_candidates(exclude=exclude)
+            if not candidates:
+                break
+            self._fulfill_replies(candidates)
+            passes += 1
+            if self.replies_total == before:
+                break
+        
 
     def _extract_tweet_snippet(self) -> str:
         text = pw_get_visible_text(limit=8000) or ""
@@ -1042,6 +1142,16 @@ class XPromoterLoop:
             "retweet": random.random() < min(0.7, max(0.02, rt_prob)),
             "reply": random.random() < min(0.6, max(0.05, reply_prob)),
         }
+        # Quota-aware adjustments: prioritize filling deficits, and avoid overshooting
+        if self.likes_total < self.max_likes:
+            decision["like"] = True
+        else:
+            decision["like"] = False
+        if self.replies_total < self.max_replies:
+            # Encourage replies when under target
+            decision["reply"] = True
+        else:
+            decision["reply"] = False
         if not any(decision.values()):
             decision["like"] = True
         return decision
@@ -1448,7 +1558,12 @@ def parse_args():
     parser.add_argument("--x_user", type=str, default=None, help="X username (or set X_USER)")
     parser.add_argument("--x_pass", type=str, default=None, help="X password (or set X_PASS)")
     parser.add_argument("--max_actions_total", type=int, default=None, help="Maximum total actions this run")
-    parser.add_argument("--max_original_posts", type=int, default=None, help="Maximum number of original posts this run")
+    parser.add_argument("--max_original_posts", type=int, default=None, help="Deprecated: use --max_posts instead")
+    parser.add_argument("--max_posts", type=int, default=None, help="Maximum number of posts to create this run")
+    parser.add_argument("--max_likes", type=int, default=None, help="Target number of likes to perform this run")
+    parser.add_argument("--max_replies", type=int, default=None, help="Target number of replies to perform this run")
+    parser.add_argument("--keywords", type=str, nargs='*', default=None, help="Additional search keywords to diversify discovery")
+    parser.add_argument("--exclude_authors", type=str, nargs='*', default=None, help="Author handles to exclude from engagement (without @)")
     parser.add_argument("--log_csv", type=str, default=None, help="Path to CSV log file")
     parser.add_argument("--model_id", type=str, default=None, help="Model id for text generation")
     parser.add_argument("--post_wait_seconds", type=int, default=None, help="Fixed seconds to wait between actions")
@@ -1508,6 +1623,11 @@ def main(args: argparse.Namespace):
         x_pass=pick("x_pass", ""),
         max_actions_total=int(pick("max_actions_total", 8)),
         max_original_posts=int(pick("max_original_posts", 3)),
+        max_likes=int(pick("max_likes", 0)),
+        max_replies=int(pick("max_replies", 0)),
+        max_posts=pick("max_posts", None),
+        keywords=pick("keywords", None),
+        exclude_authors=pick("exclude_authors", None),
         log_csv_path=pick("log_csv"),
         model_id=pick("model_id"),
         post_wait_seconds=pick("post_wait_seconds"),
