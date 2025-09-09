@@ -1674,8 +1674,15 @@ class XPromoterLoop:
             return (text or "")[:max_len]
 
     # --- CSV logging ---
-    def _clean_snippet(self, text: str) -> str:
-        """Strip common X UI header boilerplate and own handle from snippets."""
+    def _clean_snippet(self, text: str, author_handle: str = "", author_display_name: str = "") -> str:
+        """Strip common X UI header boilerplate and author identifiers from snippets.
+
+        Removes:
+        - UI header boilerplate when present at the start
+        - Own handle and brand tokens
+        - The passed author's handle (with and without '@')
+        - The passed author's display name (best-effort exact match)
+        """
         try:
             import re as _re
             t = (text or "")
@@ -1698,6 +1705,26 @@ class XPromoterLoop:
                 for p in patterns:
                     t = _re.sub(p, " ", t)
 
+            # Remove the target author's handle in multiple forms
+            ah = (author_handle or "").lstrip("@")
+            if ah:
+                patterns = [
+                    rf"(?i)(^|[\s\W])@{_re.escape(ah)}(?=$|[\s\W])",
+                    rf"(?i)(^|[\s\W]){_re.escape(ah)}(?=$|[\s\W])",
+                ]
+                for p in patterns:
+                    t = _re.sub(p, " ", t)
+
+            # Remove the target author's display name exactly (best-effort)
+            dn = (author_display_name or "").strip()
+            if dn:
+                # Exact display name as a token sequence, allow punctuation boundaries
+                p = _re.compile(rf"(?i)(^|[\s\W]){_re.escape(dn)}(?=$|[\s\W])")
+                t = p.sub(" ", t)
+                # Also remove a trailing colon variant like "Name:" if present
+                p2 = _re.compile(rf"(?i)(^|[\s\W]){_re.escape(dn)}\s*:(?=$|[\s\W])")
+                t = p2.sub(" ", t)
+
             # Remove brand tokens like 'botlab' anywhere (case-insensitive)
             for brand in ("botlab",):
                 p = _re.compile(rf"(?i)(^|[\s\W]){_re.escape(brand)}(?=$|[\s\W])")
@@ -1710,6 +1737,34 @@ class XPromoterLoop:
             return t
         except Exception:
             return (text or "")
+
+    def _extract_author_display_name(self) -> str:
+        """Best-effort extraction of the visible author's display name from the current tweet article."""
+        script = (
+            "() => {\n"
+            "  try {\n"
+            "    const arts = Array.from(document.querySelectorAll(\"article[role='article']\"));\n"
+            "    if (!arts.length) return '';\n"
+            "    const inView = (el)=>{ const r = el.getBoundingClientRect(); return r.bottom>0 && r.top < (window.innerHeight||0); };\n"
+            "    let art = arts.find(inView) || arts[0];\n"
+            "    const nameBlock = art.querySelector(\"div[data-testid='User-Name']\");\n"
+            "    if (!nameBlock) return '';\n"
+            "    const spans = Array.from(nameBlock.querySelectorAll('span'));\n"
+            "    let display = '';\n"
+            "    for (const s of spans){ const t=(s.textContent||'').trim(); if (!t) continue; if (!t.startsWith('@')) { display = t; break; } }\n"
+            "    return display;\n"
+            "  } catch (e) { return ''; }\n"
+            "}"
+        )
+        try:
+            res = _json_loads_safe(pw_evaluate(script))
+            if isinstance(res, str):
+                return res
+            if isinstance(res, dict) and isinstance(res.get('repr'), str):
+                return res.get('repr', '')
+        except Exception:
+            pass
+        return ""
     def _log_action(
         self,
         action_type: str,
@@ -1743,12 +1798,14 @@ class XPromoterLoop:
             # Sanitize text fields to single-line to avoid breaking CSV rows
             def one_line(s: str) -> str:
                 return (s or "").replace("\r", " ").replace("\n", " ").strip()
+            # Best-effort author display name for more robust stripping
+            author_display_name = self._extract_author_display_name() if (author_handle or "").strip() else ""
             writer.writerow({
                 "timestamp": datetime.utcnow().isoformat(),
                 "action_type": one_line(action_type),
                 "keyword_or_source": one_line(keyword_or_source),
                 "author_handle": one_line(author_handle),
-                "tweet_title_or_snippet": one_line(self._clean_snippet(tweet_title_or_snippet)),
+                "tweet_title_or_snippet": one_line(self._clean_snippet(tweet_title_or_snippet, author_handle=author_handle, author_display_name=author_display_name)),
                 "tweet_url": one_line(tweet_url),
                 "reason_if_skipped": one_line(reason_if_skipped),
                 "content_prefix": one_line(content_prefix),
