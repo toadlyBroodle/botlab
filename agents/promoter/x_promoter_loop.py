@@ -1277,24 +1277,57 @@ class XPromoterLoop:
                 return out[:200]
         except Exception:
             pass
-
-        # Fallback: use visible text with basic boilerplate filtering
-        text = pw_get_visible_text(limit=8000) or ""
-        parts = [s.strip() for s in (text or "").split("\n") if s.strip()]
-        boiler_substrings = [
-            "to view keyboard shortcuts", "view keyboard shortcuts", "see new posts", "your home timeline",
-            "subscribe to premium", "trending now", "what’s happening", "whats happening", "terms of service",
-            "privacy policy", "cookie policy", "accessibility", "ads info", "relevant people", "© 202",
-            "conversation", "post",
-        ]
-        def is_noise(p: str) -> bool:
-            low = p.lower()
-            if any(b in low for b in boiler_substrings):
-                return True
-            # Drop short numeric-only tokens like "10"
-            return len(p) <= 3 and p.isdigit()
-        filtered = [p for p in parts if not is_noise(p)]
-        return (" ".join(filtered)[:200]).strip()
+        # Fallback: extract from the visible tweet article only (never whole-page), with strict boilerplate filtering
+        try:
+            script_fallback = (
+                "() => {\n"
+                "  const arts = Array.from(document.querySelectorAll(\"article[role='article']\"));\n"
+                "  if (!arts.length) return JSON.stringify([]);\n"
+                "  const inView = (el)=>{ const r = el.getBoundingClientRect(); return r.bottom>0 && r.top < (window.innerHeight||0); };\n"
+                "  let art = arts.find(inView) || arts[0];\n"
+                "  const raw = (art.innerText||'').split(/\\n+/).map(t=>t.trim()).filter(Boolean);\n"
+                "  const boiler = [\n"
+                "    'to view keyboard shortcuts','view keyboard shortcuts','see new posts','your home timeline',\n"
+                "    'subscribe to premium','trending now','what’s happening','whats happening','terms of service',\n"
+                "    'privacy policy','cookie policy','use cookies','cookies','accessibility','ads info','relevant people','© 202',\n"
+                "    'login','sign up','try premium','did someone say','safer and faster service'\n"
+                "  ];\n"
+                "  const isNoise = (t) => {\n"
+                "    const low = t.toLowerCase();\n"
+                "    if (boiler.some(b=> low.includes(b))) return true;\n"
+                "    // Drop short numeric-only tokens like '10'\n"
+                "    if (t.length <= 3 && /^\\d+$/.test(t)) return true;\n"
+                "    return false;\n"
+                "  };\n"
+                "  const filtered = raw.filter(t => !isNoise(t));\n"
+                "  return JSON.stringify(filtered.slice(0, 8));\n"
+                "}"
+            );
+            res2 = _json_loads_safe(pw_evaluate(script_fallback))
+            lines2: List[str] = []
+            if isinstance(res2, list):
+                lines2 = [str(x) for x in res2]
+            elif isinstance(res2, dict) and isinstance(res2.get("repr"), str):
+                try:
+                    arr2 = json.loads(res2["repr"]) or []
+                    lines2 = [str(x) for x in arr2]
+                except Exception:
+                    lines2 = []
+            if lines2:
+                return (" ".join(lines2)[:200]).strip()
+        except Exception:
+            pass
+        # If still empty, dump debug info once for this context and return empty
+        try:
+            # As a last resort, try to parse from visible text snapshot heuristically
+            vt = self._get_visible_text(limit=4000)
+            fallback = self._extract_tweet_snippet_from_visible_text(vt)
+            if fallback:
+                return fallback[:200]
+            self._debug_dump_visible_tweet_dom(label="snippet_empty")
+        except Exception:
+            pass
+        return ""
 
     def _get_visible_text(self, limit: int = 12000) -> str:
         """Return current page's visible text up to a limit."""
@@ -1302,6 +1335,186 @@ class XPromoterLoop:
             return pw_get_visible_text(limit=limit) or ""
         except Exception:
             return ""
+
+    def _extract_tweet_snippet_from_visible_text(self, visible_text: str) -> str:
+        """Heuristically extract only the tweet body from full-page visible text.
+
+        Strategy inspired by observed output structure when cookie banners/nav chrome are present:
+        - Often includes: Conversation → DisplayName → @handle → tweet lines → time/Views/counters
+        - We locate an author handle after an optional 'Conversation' marker, then collect
+          subsequent non-noise lines until a boundary (timestamp, Views, counters, reply box, etc.).
+        - We remove duplicates and collapse whitespace.
+        """
+        try:
+            text = (visible_text or "")
+            if not text.strip():
+                return ""
+            lines = [s.strip() for s in text.splitlines() if s.strip()]
+            if not lines:
+                return ""
+
+            noise_exact = {
+                "to view keyboard shortcuts, press question mark",
+                "view keyboard shortcuts",
+                "did someone say … cookies?",
+                "accept all cookies",
+                "refuse non-essential cookies",
+                "home", "explore", "notifications", "messages", "grok", "communities",
+                "premium", "verified orgs", "profile", "more", "post", "see new posts",
+                "conversation", "relevant people",
+                "terms of service", "privacy policy", "cookie policy", "accessibility", "ads info",
+                "post your reply", "reply",
+            }
+            def is_noise(l: str) -> bool:
+                low = l.lower().strip()
+                if low in noise_exact:
+                    return True
+                if "x and its partners use cookies" in low:
+                    return True
+                if low.startswith("© ") or low.startswith("©"):
+                    return True
+                if low.startswith("from ") and "." in low:
+                    # Link card source like "From zerohedge.com"
+                    return True
+                if low in {"·", "|"}:
+                    return True
+                # Pure counters or short numerics
+                if low.replace(",", "").replace(".", "").isdigit() and len(low) <= 6:
+                    return True
+                if low in {"views", "view"}:
+                    return True
+                if low in {"login", "sign up", "try premium"}:
+                    return True
+                return False
+
+            # Find starting point: prefer after 'Conversation', else from top
+            start = 0
+            try:
+                idx_conv = next(i for i, l in enumerate(lines) if l.strip().lower() == "conversation")
+                start = max(0, idx_conv + 1)
+            except StopIteration:
+                start = 0
+
+            # Find author handle '@...' after start
+            handle_idx = -1
+            for i in range(start, len(lines)):
+                if lines[i].startswith("@") and len(lines[i]) > 1 and lines[i][1].isalnum():
+                    handle_idx = i
+                    break
+            if handle_idx == -1:
+                # Fallback: just find any plausible content block not noise
+                content_lines: list[str] = []
+                for l in lines[start:]:
+                    if is_noise(l):
+                        continue
+                    # Boundary heuristics: stop at timestamp/Views/counters section
+                    if re.search(r"\b(AM|PM)\b", l) and "·" in l:
+                        break
+                    if l.lower() in {"views", "reply", "post your reply", "relevant people"}:
+                        break
+                    content_lines.append(l)
+                    if len(" ".join(content_lines)) > 200:
+                        break
+                dedup: list[str] = []
+                for l in content_lines:
+                    if not dedup or dedup[-1] != l:
+                        dedup.append(l)
+                return " ".join(dedup)[:200].strip()
+
+            # Collect content lines after handle until boundary
+            content: list[str] = []
+            for j in range(handle_idx + 1, len(lines)):
+                l = lines[j]
+                low = l.lower()
+                # boundaries
+                if (re.search(r"\b(AM|PM)\b", l) and "·" in l) or low in {"views", "reply", "post your reply", "relevant people"}:
+                    break
+                if is_noise(l):
+                    continue
+                # Skip handles and display names repeated
+                if l.startswith("@"):
+                    continue
+                # Skip single-word likely names directly after handle
+                if j == handle_idx + 1 and len(l.split()) <= 3 and l[0].isupper():
+                    # Probably display name
+                    continue
+                content.append(l)
+                if len(" ".join(content)) > 220:
+                    break
+            # Deduplicate adjacent duplicates
+            result_lines: list[str] = []
+            for l in content:
+                if not result_lines or result_lines[-1] != l:
+                    result_lines.append(l)
+            return " ".join(result_lines)[:200].strip()
+        except Exception:
+            return ""
+
+    def _debug_dump_visible_tweet_dom(self, label: str = "") -> None:
+        """Print diagnostics for the currently visible tweet article to console for debugging extraction issues."""
+        # Only emit when verbose is enabled
+        if not self.verbose:
+            return
+        try:
+            url = (self._current_url() or "").strip()
+        except Exception:
+            url = ""
+        try:
+            script = (
+                "() => {\n"
+                "  try {\n"
+                "    const arts = Array.from(document.querySelectorAll(\"article[role='article']\"));\n"
+                "    const inView = (el)=>{ const r = el.getBoundingClientRect(); return r.bottom>0 && r.top < (window.innerHeight||0); };\n"
+                "    const art = arts.find(inView) || arts[0] || null;\n"
+                "    const nodes = art ? Array.from(art.querySelectorAll(\"[data-testid='tweetText'], div[lang]\")) : [];\n"
+                "    const data = {\n"
+                "      articlesCount: arts.length,\n"
+                "      inViewFound: !!art,\n"
+                "      nodeCount: nodes.length,\n"
+                "      nodeDataTestIds: nodes.map(n => n.getAttribute('data-testid')||''),\n"
+                "      nodeTexts: nodes.map(n => (n.innerText||'').trim()).filter(Boolean),\n"
+                "      artOuterHTML: art ? art.outerHTML : ''\n"
+                "    };\n"
+                "    return JSON.stringify(data);\n"
+                "  } catch (e) { return JSON.stringify({error:String(e)}); }\n"
+                "}"
+            )
+            res = _json_loads_safe(pw_evaluate(script))
+            data: Dict[str, Any] = {}
+            if isinstance(res, dict) and isinstance(res.get("repr"), str):
+                try:
+                    data = json.loads(res["repr"]) or {}
+                except Exception:
+                    data = {"repr": res.get("repr")}
+            elif isinstance(res, dict):
+                data = res
+            else:
+                data = {"raw": str(res)}
+        except Exception:
+            data = {"error": "pw_evaluate_failed"}
+        # Also capture a slice of visible text to aid debugging
+        try:
+            visible_text = self._get_visible_text(limit=2000)
+        except Exception:
+            visible_text = ""
+        try:
+            print(f"X DEBUG [{label}] url={url}")
+            summary = {
+                "articlesCount": data.get("articlesCount"),
+                "inViewFound": data.get("inViewFound"),
+                "nodeCount": data.get("nodeCount"),
+                "nodeDataTestIds": data.get("nodeDataTestIds"),
+            }
+            print("X DEBUG article_summary:", json.dumps(summary, ensure_ascii=False))
+            art_html = (data.get("artOuterHTML") or "")
+            print("X DEBUG art_outer_html:")
+            print(art_html)
+            if visible_text:
+                print("X DEBUG visible_text_snippet:")
+                print(visible_text)
+        except Exception:
+            # Avoid crashing the loop due to debugging prints
+            pass
 
     def _capture_page_context(self) -> None:
         """Capture current page text into rolling context buffer for later generation."""

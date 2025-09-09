@@ -132,26 +132,61 @@ class _BrowserWorker:
                 "--no-sandbox",
             ]
 
+            # Harden headless on servers with no X/Wayland by forcing Chromium's headless Ozone
+            # and software rendering paths to avoid EGL/XCB initialization.
+            try:
+                if headless_flag:
+                    launch_args.extend([
+                        "--headless=new",
+                        "--ozone-platform=headless",
+                        "--use-gl=swiftshader",
+                        "--use-angle=swiftshader",
+                        "--disable-dev-shm-usage",
+                        "--no-zygote",
+                        "--single-process",
+                        "--disable-software-rasterizer=false",
+                        "--disable-features=VizDisplayCompositor",
+                    ])
+            except Exception:
+                pass
+
             user_data = _user_data_dir()
             browser: Optional[Browser] = None
             if user_data:
-                logger.info(f"Launching persistent context with user_data_dir={user_data}")
-                context: BrowserContext = pw.chromium.launch_persistent_context(
-                    user_data_dir=user_data,
-                    headless=headless_flag,
-                    slow_mo=slow_mo_value,
-                    args=launch_args or None,
-                    proxy=proxy_settings,
-                    viewport=_viewport_size(),
-                    user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                    locale="en-US",
-                    timezone_id="UTC",
-                    ignore_https_errors=True,
-                )
+                logger.info(f"Launching persistent context with user_data_dir={user_data} | args={launch_args}")
                 try:
-                    browser = context.browser
-                except Exception:
-                    browser = None
+                    context: BrowserContext = pw.chromium.launch_persistent_context(
+                        user_data_dir=user_data,
+                        headless=headless_flag,
+                        slow_mo=slow_mo_value,
+                        args=launch_args or None,
+                        proxy=proxy_settings,
+                        viewport=_viewport_size(),
+                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        locale="en-US",
+                        timezone_id="UTC",
+                        ignore_https_errors=True,
+                    )
+                    try:
+                        browser = context.browser
+                    except Exception:
+                        browser = None
+                except Exception as e:
+                    logger.warning(f"Persistent context failed (will fallback to non-persistent): {e}")
+                    browser = pw.chromium.launch(
+                        headless=headless_flag,
+                        slow_mo=slow_mo_value,
+                        devtools=(not headless_flag),
+                        args=launch_args or None,
+                        proxy=proxy_settings,
+                    )
+                    context: BrowserContext = browser.new_context(
+                        viewport=_viewport_size(),
+                        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        locale="en-US",
+                        timezone_id="UTC",
+                        ignore_https_errors=True,
+                    )
             else:
                 browser = pw.chromium.launch(
                     headless=headless_flag,
