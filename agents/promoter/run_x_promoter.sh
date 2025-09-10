@@ -21,8 +21,8 @@ SLEEP_FOR=$(( RANDOM % MAX_WAIT_SECONDS ))
 printf "%s random-sleep=%s s\n" "$(date -Is)" "$SLEEP_FOR" >> agents/promoter/data/x_promoter_cron.log
 sleep "$SLEEP_FOR"
 
-# Optionally run via Tor (default enabled). Ensure Tor is installed on the VPS.
-USE_TOR="${USE_TOR:-1}"
+# Optionally run via Tor (default disabled). Ensure Tor is installed on the VPS.
+USE_TOR="${USE_TOR:-0}"
 if [[ "$USE_TOR" == "1" ]]; then
   printf "%s tor:start_if_needed\n" "$(date -Is)" >> agents/promoter/data/x_promoter_cron.log
   python - <<'PY' >> agents/promoter/data/x_promoter_cron.log 2>&1

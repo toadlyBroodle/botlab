@@ -2174,14 +2174,37 @@ def main(args: argparse.Namespace):
         except Exception:
             pass
 
+    # Randomize per-run targets within [max-3, max] (clamped at 0)
+    def randomized_target(max_n: int) -> int:
+        try:
+            n = int(max_n)
+        except Exception:
+            return 0
+        if n <= 0:
+            return 0
+        lower = max(0, n - 3)
+        return random.randint(lower, n)
+
+    likes_target_base = int(pick("max_likes", 0) or 0)
+    replies_target_base = int(pick("max_replies", 0) or 0)
+    posts_base = pick("max_posts", None)
+    if posts_base is None:
+        posts_base = int(pick("max_original_posts", 3) or 0)
+    else:
+        posts_base = int(posts_base or 0)
+
+    likes_target = randomized_target(likes_target_base)
+    replies_target = randomized_target(replies_target_base)
+    posts_target = randomized_target(posts_base)
+
     loop = XPromoterLoop(
         x_user=pick("x_user", ""),
         x_pass=pick("x_pass", ""),
         max_actions_total=int(pick("max_actions_total", 8)),
-        max_original_posts=int(pick("max_original_posts", 3)),
-        max_likes=int(pick("max_likes", 0)),
-        max_replies=int(pick("max_replies", 0)),
-        max_posts=pick("max_posts", None),
+        max_original_posts=posts_target,
+        max_likes=likes_target,
+        max_replies=replies_target,
+        max_posts=posts_target,
         keywords=pick("keywords", None),
         exclude_authors=pick("exclude_authors", None),
         excluded_keywords=pick("excluded_keywords", None),
