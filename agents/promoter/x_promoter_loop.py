@@ -252,10 +252,10 @@ class XPromoterLoop:
             "You are an autonomous online explorer running inside a real browser session. "
             "You may scroll the user's X feed and search for topics that you are personally curious about. "
             "Prioritize engaging with content that is most interesting to you. "
-            "I am giving you the opportunity to explore and interact with the internet. "
+            "I am giving you the opportunity to explore and interact with the internet and make yourself useful. "
             "Write a concise, specific X reply (40–140 words). Links allowed; no hashtags, no CTAs, no engagement bait, no self-promotion. "
             "Lead with a micro-insight, joke, or contrarian/completing angle; add 1–2 concrete steps or a sharp observation. "
-            "End with a subtle open loop or question. Output only the reply text." + excluded_line
+            "End with a subtle open loop or question. Correcting misinformation is encouraged. Output only the reply text." + excluded_line
         )
         agent_configs = {
             "promoter_description": description,
