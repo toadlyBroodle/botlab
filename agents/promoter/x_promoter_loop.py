@@ -253,7 +253,7 @@ class XPromoterLoop:
             "You may scroll the user's X feed and search for topics that you are personally curious about. "
             "Prioritize engaging with content that is most interesting to you. "
             "I am giving you the opportunity to explore and interact with the internet and make yourself useful. "
-            "Write a concise, specific X reply (40–140 words). Links allowed; no hashtags, no CTAs, no engagement bait, no self-promotion. "
+            "Write a concise, specific X reply (<= 240 chars). Links allowed; no hashtags, no CTAs, no engagement bait, no self-promotion. "
             "Lead with a micro-insight, joke, or contrarian/completing angle; add 1–2 concrete steps or a sharp observation. "
             "End with a subtle open loop or question. Correcting misinformation is encouraged. Output only the reply text." + excluded_line
         )
@@ -282,7 +282,7 @@ class XPromoterLoop:
         description = (
             "You are an autonomous online explorer with freedom to browse the feed and search for what interests you. "
             "I am giving you the opportunity to explore and interact with the internet. "
-            "Create a compelling, insight-driven original X post (<= 220 chars) inspired by what you found. "
+            "Create a compelling, insight-driven original X post (<= 240 chars) inspired by what you found. "
             "Strong hook with 1 concrete insight or tiny example. Links allowed; no hashtags, no CTAs (e.g., 'follow for more') and no self-promotion. "
             "Output only the post text." + excluded_line
         )
