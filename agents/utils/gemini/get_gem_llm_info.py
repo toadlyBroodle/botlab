@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import argparse
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -16,20 +17,40 @@ def format_scientific_notation(json_str):
     pattern = r'\d+\.?\d*e[+-]\d+'
     return re.sub(pattern, replace_scientific, json_str)
 
-def process_gemini_data(input_file="agents/utils/gemini/gem_llm_rates.json", output_file="agents/utils/gemini/gem_llm_info.json"):
+def configure_genai():
+    """Configures the Gemini API."""
     load_dotenv()
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key:
         print("Error: GEMINI_API_KEY not found in environment variables. Please set it.")
-        return
+        return False
 
     try:
         genai.configure(api_key=api_key)
+        return True
     except Exception as e:
         print(f"Error: Could not configure Gemini API: {e}")
+        return False
+
+def list_available_models():
+    """Lists all available models from the Gemini API."""
+    if not configure_genai():
         return
 
+    print("Fetching available models...")
+    try:
+        for m in genai.list_models():
+            print(f"Name: {m.name}")
+            print(f"Display Name: {m.display_name}")
+            print(f"Description: {m.description}")
+            print("-" * 20)
+    except Exception as e:
+        print(f"Error listing models: {e}")
+
+def process_gemini_data(input_file="agents/utils/gemini/gem_llm_rates.json", output_file="agents/utils/gemini/gem_llm_info.json"):
+    if not configure_genai():
+        return
 
     try:
         with open(input_file, 'r') as f:
@@ -90,5 +111,14 @@ def process_gemini_data(input_file="agents/utils/gemini/gem_llm_rates.json", out
         print(f"Error: Could not write to output file '{output_file}'.")
         return
 
+def main(args):
+    if args.list_models:
+        list_available_models()
+    else:
+        process_gemini_data()
+
 if __name__ == "__main__":
-    process_gemini_data()
+    """Main function to parse arguments."""
+    parser = argparse.ArgumentParser(description="Process Gemini LLM info or list available models.")
+    parser.add_argument("--list-models", action="store_true", help="List all available Gemini models.")
+    main(parser.parse_args())
