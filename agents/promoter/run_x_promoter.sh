@@ -54,6 +54,7 @@ fi
 # Run the promoter loop (adjust flags/config as needed)
 python -m agents.promoter.x_promoter_loop \
   --config agents/promoter/data/x_promoter_config.json \
+  --reply_all_notifications \
   ${TOR_FLAG} \
   >> agents/promoter/data/x_promoter_cron.log 2>&1
 

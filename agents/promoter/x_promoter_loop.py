@@ -106,6 +106,8 @@ class XPromoterLoop:
         otp_fetch_cmd: Optional[str] = None,
         otp_regex: Optional[str] = None,
         otp_code: Optional[str] = None,
+        only_replies: bool = False,
+        reply_all_notifications: bool = False,
         dry_run: bool = False,
         verbose: bool = False,
     ) -> None:
@@ -128,6 +130,8 @@ class XPromoterLoop:
         self.likes_total = 0
         self.replies_total = 0
         self.original_posts = 0
+        self.only_replies = bool(only_replies)
+        self.reply_all_notifications = bool(reply_all_notifications)
         self.dry_run = dry_run
         self.verbose = bool(verbose or os.getenv("PROMOTER_VERBOSE", "0") == "1")
 
@@ -161,6 +165,10 @@ class XPromoterLoop:
         self.seen_urls: set[str] = self._load_seen_set()
         # One-shot attempt to bypass Cloudflare verify-human checkbox if shown
         self._cf_checkbox_attempted: bool = False
+        # Own handle, discovered lazily from profile link
+        self.own_handle: str = ""
+        # Persistent history of replied permalinks loaded from CSV log
+        self.replied_permalinks_history: set[str] = self._load_replies_from_log()
 
     # --- Public entrypoint ---
     def run(self) -> Dict[str, Any]:
@@ -174,22 +182,32 @@ class XPromoterLoop:
         self._log_debug("login:completed")
 
         # Fulfill likes first with re-scraping per pass to avoid duplicates
-        if self.max_likes > 0 and not self._quotas_reached():
+        if (not self.only_replies) and self.max_likes > 0 and not self._quotas_reached():
             self._log_debug("likes:fulfill:start")
             self._fulfill_likes_until_quota()
             self._log_debug(f"likes:fulfill:end likes_total={self.likes_total}")
 
         # Then fulfill posts (no need to scrape links)
-        if self.max_posts > 0 and not self._quotas_reached():
+        if (not self.only_replies) and self.max_posts > 0 and not self._quotas_reached():
             self._log_debug("posts:fulfill:start")
             self._fulfill_posts()
             self._log_debug(f"posts:fulfill:end posts_total={self.original_posts}")
 
-        # Finally, fulfill replies with re-scraping per pass to avoid duplicates
-        if self.max_replies > 0 and not self._quotas_reached():
-            self._log_debug("replies:fulfill:start")
-            self._fulfill_replies_until_quota()
-            self._log_debug(f"replies:fulfill:end replies_total={self.replies_total}")
+        # Finally, handle replies phases
+        # 1) If reply-all notifications is requested, always run it regardless of quotas/targets
+        if self.reply_all_notifications:
+            self._log_debug("replies:notifications_all:start")
+            try:
+                self._fulfill_reply_notifications_until_quota()
+            except Exception:
+                pass
+            self._log_debug("replies:notifications_all:end")
+        # 2) Normal replies (discovery) obey quotas and are skipped in only-replies mode after notifications
+        if (self.max_replies > 0) and (not self._quotas_reached()):
+            if not self.only_replies:
+                self._log_debug("replies:fulfill:start")
+                self._fulfill_replies_until_quota()
+                self._log_debug(f"replies:fulfill:end replies_total={self.replies_total}")
 
         # Persist seen URLs to avoid repeating across runs
         try:
@@ -383,6 +401,40 @@ class XPromoterLoop:
         except Exception:
             pass
         return ""
+
+    def _get_own_handle(self) -> str:
+        """Determine the logged-in account handle from the UI, cached for reuse."""
+        if self.own_handle:
+            return self.own_handle
+        try:
+            script = (
+                "() => {\n"
+                "  try {\n"
+                "    const a = document.querySelector(\"a[data-testid='AppTabBar_Profile_Link']\");\n"
+                "    if (!a) return '';\n"
+                "    const u = new URL(a.href, location.href);\n"
+                "    const p = (u.pathname||'').split('/').filter(Boolean);\n"
+                "    return p[0]||'';\n"
+                "  } catch(e) { return '' }\n"
+                "}"
+            )
+            res = _json_loads_safe(pw_evaluate(script))
+            if isinstance(res, str) and res:
+                self.own_handle = res.lstrip('@').strip()
+            elif isinstance(res, dict) and isinstance(res.get('repr'), str) and res.get('repr'):
+                self.own_handle = res.get('repr', '').lstrip('@').strip()
+        except Exception:
+            pass
+        if not self.own_handle:
+            # Fallback to provided credential (may be email/phone; best effort)
+            try:
+                guess = (self.x_user or '').lstrip('@')
+                # Heuristic: treat values with '@' as emails; ignore
+                if '@' not in guess:
+                    self.own_handle = guess.strip()
+            except Exception:
+                pass
+        return self.own_handle
 
     def _abort_if_account_access_block(self) -> None:
         """Abort the run if redirected to X account access/captcha page."""
@@ -1058,8 +1110,8 @@ class XPromoterLoop:
             snippet = self._extract_tweet_snippet()
             if self._text_contains_excluded(snippet) or self._text_contains_excluded(page_text):
                 continue
-            # Best-effort etiquette: like first if still under target
-            if (self.likes_total < self.max_likes) and (url not in self.liked_urls) and (not self._is_current_tweet_liked()):
+            # Best-effort etiquette: like first if still under target (skip in only_replies mode)
+            if (not self.only_replies) and (self.likes_total < self.max_likes) and (url not in self.liked_urls) and (not self._is_current_tweet_liked()):
                 ok, state = self._like_current_tweet_with_state()
                 if ok and state == 'clicked':
                     self.actions_total += 1
@@ -1254,7 +1306,7 @@ class XPromoterLoop:
             "  }\n"
             "  const boiler = [\n"
             "    'to view keyboard shortcuts', 'view keyboard shortcuts', 'see new posts', 'your home timeline',\n"
-            "    'subscribe to premium', 'trending now', 'what’s happening', 'whats happening', 'terms of service',\n"
+            "    'subscribe to premium', 'trending now', 'what's happening', 'whats happening', 'terms of service',\n"
             "    'privacy policy', 'cookie policy', 'accessibility', 'ads info', 'relevant people', '© 202'\n"
             "  ];\n"
             "  const filtered = texts.filter(t => !boiler.some(b => t.toLowerCase().includes(b)));\n"
@@ -1288,7 +1340,7 @@ class XPromoterLoop:
                 "  const raw = (art.innerText||'').split(/\\n+/).map(t=>t.trim()).filter(Boolean);\n"
                 "  const boiler = [\n"
                 "    'to view keyboard shortcuts','view keyboard shortcuts','see new posts','your home timeline',\n"
-                "    'subscribe to premium','trending now','what’s happening','whats happening','terms of service',\n"
+                "    'subscribe to premium','trending now','what's happening','whats happening','terms of service',\n"
                 "    'privacy policy','cookie policy','use cookies','cookies','accessibility','ads info','relevant people','© 202',\n"
                 "    'login','sign up','try premium','did someone say','safer and faster service'\n"
                 "  ];\n"
@@ -1685,7 +1737,7 @@ class XPromoterLoop:
         except Exception:
             pass
         # Fallback minimal reply
-        return self._sanitize_text("Interesting take. One tweak that often helps: be concrete about steps/results—curious what you’d try first?", max_len=280)
+        return self._sanitize_text("Interesting take. One tweak that often helps: be concrete about steps/results—curious what you'd try first?", max_len=280)
 
     def _reply_current_tweet(self, reply_text: str) -> Tuple[bool, str]:
         if self.dry_run:
@@ -1842,7 +1894,451 @@ class XPromoterLoop:
                 return post_sanitized
         except Exception:
             pass
-        return self._sanitize_text("A tiny trick: show, don’t tell. Pick one concrete example and make it vivid.", max_len=220)
+        return self._sanitize_text("A tiny trick: show, don't tell. Pick one concrete example and make it vivid.", max_len=220)
+
+    # --- Notifications → reply-to-replies flow ---
+    def _collect_reply_notifications(self, max_items: int = 40) -> List[str]:
+        """Collect permalinks for tweets that are replies to our handle from the Notifications page.
+
+        This will auto-scroll the notifications timeline and stop as soon as we encounter
+        a reply that we've already replied to (based on current-run memory and CSV history).
+        """
+        try:
+            # Prefer Mentions tab for higher signal-to-noise when collecting replies
+            self._navigate("https://x.com/notifications/mentions", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+        except Exception:
+            return []
+        own = self._get_own_handle().lower()
+        if not own:
+            return []
+
+        # Robust in-page extractor for replies directed at our handle
+        script = (
+            "(own, cap) => {\n"
+            "  try {\n"
+            "    // Handle both Mentions and Notifications timelines\n"
+            "    const scope = document.querySelector(\"div[aria-label='Timeline: Mentions']\")\n"
+            "      || document.querySelector(\"section[aria-label='Timeline: Mentions']\")\n"
+            "      || document.querySelector(\"div[aria-label='Timeline: Notifications']\")\n"
+            "      || document.querySelector(\"section[aria-label='Timeline: Notifications']\")\n"
+            "      || document;\n"
+            "    // Prefer tweet articles, but fall back to role=article as needed\n"
+            "    let arts = Array.from(scope.querySelectorAll(\"article[data-testid='tweet']\"));\n"
+            "    if (!arts.length) arts = Array.from(scope.querySelectorAll(\"article[role='article']\"));\n"
+            "    if (!arts.length) arts = Array.from(document.querySelectorAll(\"article[data-testid='tweet'], article[role='article']\"));\n"
+            "    const out = [];\n"
+            "    for (const art of arts) {\n"
+            "      const text = (art.innerText||'').toLowerCase();\n"
+            "      // Look for an explicit 'Replying to' context inside the article\n"
+            "      const replyingEl = Array.from(art.querySelectorAll('div,span,a')).find(el => (el.textContent||'').toLowerCase().includes('replying to'));\n"
+            "      if (!replyingEl && !text.includes('replying to')) continue;\n"
+            "      // Ensure our handle is actually part of the 'Replying to' line (or fallback to any mention in the article when context exists)\n"
+            "      const mentionsOwnIn = (node) => !!Array.from(node.querySelectorAll(\"a[href^='/']\")).find(a=>{\n"
+            "        try { const u=new URL(a.getAttribute('href')||'', location.href); const p=u.pathname.split('/').filter(Boolean); return (p[0]||'').toLowerCase()===own; } catch(e) { return false }\n"
+            "      });\n"
+            "      let mentionsOwn = replyingEl ? mentionsOwnIn(replyingEl) : false;\n"
+            "      if (!mentionsOwn && text.includes('replying to')) { mentionsOwn = mentionsOwnIn(art); }\n"
+            "      if (!mentionsOwn && !replyingEl) { mentionsOwn = mentionsOwnIn(art); }\n"
+            "      if (!mentionsOwn) continue;\n"
+            "      // Get canonical status permalink (prefer time-anchor, then any status link)\n"
+            "      let href = '';\n"
+            "      const timeA = art.querySelector(\"time\")?.closest('a[href*=/status/]');\n"
+            "      if (timeA) href = timeA.getAttribute('href') || timeA.href || '';\n"
+            "      if (!href){ const any = art.querySelector(\"a[href*='/status/']\"); if (any) href = any.getAttribute('href') || any.href || ''; }\n"
+            "      if (!href){ const any2 = scope.querySelector(\"a[href*='/status/']\"); if (any2) href = any2.getAttribute('href') || any2.href || ''; }\n"
+            "      if (!href) continue;\n"
+            "      try { const u = new URL(href, location.href); const m = u.pathname.match(/\\/status\\/(\\d+)/); if (!m) continue; href = 'https://x.com' + u.pathname.replace(/\\/+$/,''); } catch(e) { continue }\n"
+            "      if (!out.includes(href)) out.push(href);\n"
+            "      if (out.length >= cap) break;\n"
+            "    }\n"
+            "    return JSON.stringify(out);\n"
+            "  } catch(e) { return JSON.stringify([]) }\n"
+            "}"
+        )
+
+        urls: List[str] = []
+        seen_history = set(getattr(self, 'replied_permalinks_history', set())) | set(self.replied_urls)
+        stop = False
+        stagnant_rounds = 0
+
+        # Progressive scroll until we reach a previously replied reply, or cap/limits
+        for i in range(30):  # hard cap to avoid infinite loops
+            try:
+                self._human_sleep()
+            except Exception:
+                pass
+            try:
+                res = _json_loads_safe(pw_evaluate(script, args=[own, int(max_items * 2)]))
+            except Exception:
+                res = []
+            batch: List[str] = []
+            if isinstance(res, list):
+                batch = [str(x) for x in res]
+            elif isinstance(res, dict) and isinstance(res.get('repr'), str):
+                try:
+                    arr = json.loads(res['repr']) or []
+                    batch = [str(x) for x in arr]
+                except Exception:
+                    batch = []
+
+            # New in-order items from this extraction
+            new_items = [u for u in batch if u not in urls]
+
+            # If any of the newly seen items have been replied to historically/this-run, stop before the first
+            cutoff_idx = -1
+            for idx, u in enumerate(new_items):
+                if u in seen_history:
+                    cutoff_idx = idx
+                    break
+            if cutoff_idx >= 0:
+                new_items = new_items[:cutoff_idx]
+                stop = True
+
+            prev_len = len(urls)
+            if new_items:
+                urls.extend(new_items)
+                try:
+                    self._log_debug(f"notifications:accumulated:{len(urls)}")
+                except Exception:
+                    pass
+            # Stagnation detection: break if no growth for 2 consecutive rounds
+            stagnant_rounds = stagnant_rounds + 1 if len(urls) == prev_len else 0
+            if stagnant_rounds >= 2:
+                try:
+                    self._log_debug("notifications:stagnant:break")
+                except Exception:
+                    pass
+                break
+
+            if stop or len(urls) >= max_items:
+                break
+
+            # Scroll a bit more and loop
+            try:
+                self._infinite_scroll(iterations=1)
+            except Exception:
+                # Fallback to a small JS scroll
+                try:
+                    pw_evaluate("() => { window.scrollBy(0, Math.floor(window.innerHeight*0.9)); }")
+                except Exception:
+                    pass
+
+            # Bottom-of-page detection: if already at bottom and no new items, break
+            try:
+                at_bottom = _json_loads_safe(pw_evaluate(
+                    "() => { const de=document.documentElement; return (window.scrollY + window.innerHeight) >= (de.scrollHeight - 100); }"
+                ))
+                if bool(at_bottom) and stagnant_rounds >= 1:
+                    try:
+                        self._log_debug("notifications:bottom:break")
+                    except Exception:
+                        pass
+                    break
+            except Exception:
+                pass
+
+        # Return only unreplied URLs up to max_items; if empty but page shows content, try one last light scroll+extract
+        urls = [u for u in urls if u not in seen_history][: max_items]
+        if not urls:
+            try:
+                self._infinite_scroll(iterations=1)
+                self._human_sleep()
+                res = _json_loads_safe(pw_evaluate(script, args=[own, int(max_items * 2)]))
+                batch = []
+                if isinstance(res, list):
+                    batch = [str(x) for x in res]
+                elif isinstance(res, dict) and isinstance(res.get('repr'), str):
+                    arr = json.loads(res['repr']) or []
+                    batch = [str(x) for x in arr]
+                urls = [u for u in batch if u not in seen_history][: max_items]
+            except Exception:
+                pass
+        return urls
+
+    def _fulfill_reply_notifications_until_quota(self, max_items: int = 30) -> None:
+        def quota_ok():
+            if self.reply_all_notifications:
+                return not self._quotas_reached()
+            return (self.replies_total < self.max_replies) and not self._quotas_reached()
+
+        try:
+            self._navigate("https://x.com/notifications/mentions", wait_until="domcontentloaded", tolerate_http_errors=True, retries=1)
+        except Exception:
+            return
+
+        seen_this_run = set()
+        max_outer_loops = 50
+        outer_loops = 0
+        no_progress_loops = 0
+        max_no_progress = 2  # Break if no found for this many consecutive outer loops
+
+        while quota_ok() and outer_loops < max_outer_loops and no_progress_loops < max_no_progress:
+            outer_loops += 1
+            self._log_debug(f"notifications:outer_loop:{outer_loops}")
+            found = False
+            attempts = 0
+            max_attempts = 15
+
+            while attempts < max_attempts and quota_ok():
+                attempts += 1
+                self._log_debug(f"notifications:attempt:{attempts}")
+                own = self._get_own_handle().lower()
+                script_get_info = """(own) => {
+                    const arts = Array.from(document.querySelectorAll("article[data-testid='tweet']"));
+                    if (!arts.length) return {ok: false, reason: 'no_arts'};
+                    const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= (window.innerHeight || document.documentElement.clientHeight) && r.width > 0 && r.height > 0; };
+                    const visible = arts.filter(inView);
+                    if (!visible.length) return {ok: false, reason: 'no_visible'};
+                    const first = visible[0];
+                    const text = (first.innerText||'').toLowerCase();
+                    // Loosened: no longer require 'replying to' - accept any mention of own on mentions page
+                    const mentionsOwnIn = (node) => !!Array.from(node.querySelectorAll("a[href^='/']")).find(a=>{
+                      try { const u=new URL(a.getAttribute('href')||'', location.href); const p=u.pathname.split('/').filter(Boolean); return (p[0]||'').toLowerCase()===own; } catch(e) { return false }
+                    });
+                    const mentionsOwn = mentionsOwnIn(first);
+                    if (!mentionsOwn) return {ok: false, reason: 'no_mention_own'};
+                    let href = '';
+                    const timeA = first.querySelector("time")?.closest('a[href*="/status/"]');
+                    if (timeA) href = timeA.getAttribute('href') || timeA.href || '';
+                    if (!href) { const any = first.querySelector("a[href*='/status/']"); if (any) href = any.getAttribute('href') || any.href || ''; }
+                    if (!href) return {ok: false, reason: 'no_href'};
+                    try {
+                      const u = new URL(href, location.href);
+                      const parts = u.pathname.split('/').filter(Boolean);
+                      const idx = parts.indexOf('status');
+                      if (idx === -1 || idx + 1 >= parts.length) return {ok: false, reason: 'bad_path'};
+                      const id = parts[idx + 1];
+                      if (!/\\d+/.test(id)) return {ok: false, reason: 'bad_id'};
+                      const handle = parts[idx - 1] || 'i/web';
+                      href = `https://x.com/${handle}/status/${id}`;
+                    } catch(e) { return {ok: false, reason: 'url_error'}; }
+                    const textEl = first.querySelector("[data-testid='tweetText']") || first;
+                    const snippet = (textEl.innerText || textEl.textContent || '').trim();
+                    let author = '';
+                    const a = first.querySelector("a[href^='/'][role='link']");
+                    if (a) { try { const u = new URL(a.href, location.href); const p = u.pathname.split('/').filter(Boolean); author = p[0] || ''; } catch(e) {} }
+                    const isLiked = !!first.querySelector("[data-testid='unlike']");
+                    return {ok: true, permalink: href, snippet: snippet, author: author, isLiked: isLiked};
+                  }"""
+                res = _json_loads_safe(pw_evaluate(script_get_info, args=[own]))
+                if not res.get('ok'):
+                    self._log_debug(f"notifications:no_ok_reason:{res.get('reason', 'unknown')}")
+                    at_bottom = _json_loads_safe(pw_evaluate("() => (window.scrollY + window.innerHeight) >= (document.documentElement.scrollHeight - 100)"))
+                    if bool(at_bottom) or (isinstance(at_bottom, dict) and at_bottom.get('repr') == 'true'):
+                        self._log_debug("notifications:at_bottom_early")
+                        no_progress_loops += 1
+                        break
+                    pw_evaluate("() => window.scrollBy(0, window.innerHeight * 0.5)")
+                    time.sleep(random.uniform(0.3, 0.8))  # Small random sleep
+                    continue
+                permalink = res.get('permalink', '')
+                snippet = res.get('snippet', '')
+                author = (res.get('author', '') or '').lstrip('@').lower()
+                is_liked = bool(res.get('isLiked', False))
+                self._log_debug(f"notifications:found_candidate:{permalink}")
+                if not permalink:
+                    pw_evaluate("() => window.scrollBy(0, window.innerHeight * 0.5)")
+                    time.sleep(0.5)
+                    continue
+                if permalink in self.replied_urls or permalink in self.replied_permalinks_history or permalink in seen_this_run:
+                    self._log_debug(f"notifications:skip_already_replied:{permalink}")
+                    pw_evaluate("() => window.scrollBy(0, window.innerHeight * 0.5)")
+                    time.sleep(0.5)
+                    continue
+                if author and (author in self.exclude_authors or author in self.engaged_authors):
+                    self._log_debug(f"notifications:skip_excluded_author:{author}")
+                    pw_evaluate("() => window.scrollBy(0, window.innerHeight * 0.5)")
+                    time.sleep(0.5)
+                    continue
+                if self._text_contains_excluded(snippet):
+                    self._log_debug(f"notifications:skip_excluded_text")
+                    pw_evaluate("() => window.scrollBy(0, window.innerHeight * 0.5)")
+                    time.sleep(0.5)
+                    continue
+                # Like if needed
+                liked = False
+                if not is_liked and (self.likes_total < self.max_likes) and not self._quotas_reached():
+                    script_like = """() => {
+                      const arts = Array.from(document.querySelectorAll("article[data-testid='tweet']"));
+                      const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= (window.innerHeight || document.documentElement.clientHeight) && r.width > 0 && r.height > 0; };
+                      const visible = arts.filter(inView);
+                      if (!visible.length) return false;
+                      const first = visible[0];
+                      const btn = first.querySelector("[data-testid='like']");
+                      if (!btn) return false;
+                      btn.click();
+                      return true;
+                    }"""
+                    like_res = _json_loads_safe(pw_evaluate(script_like))
+                    if isinstance(like_res, bool) and like_res:
+                        liked = True
+                    elif isinstance(like_res, dict) and like_res.get('repr') == 'true':
+                        liked = True
+                    if liked:
+                        self.actions_total += 1
+                        self.likes_total += 1
+                        self.liked_urls.add(permalink)
+                        if author:
+                            self.engaged_authors.add(author)
+                        self._log_action(
+                            action_type="like",
+                            keyword_or_source="notifications",
+                            author_handle=author,
+                            tweet_title_or_snippet=snippet,
+                            tweet_url=permalink,
+                            reason_if_skipped="",
+                            content_prefix="",
+                            engagement_flags="like=1",
+                            permalink=permalink,
+                        )
+                        self._log_debug("notifications:liked")
+                        time.sleep(0.5)
+                # Click reply
+                script_click_reply = """() => {
+                  const arts = Array.from(document.querySelectorAll("article[data-testid='tweet']"));
+                  const inView = (el) => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= (window.innerHeight || document.documentElement.clientHeight) && r.width > 0 && r.height > 0; };
+                  const visible = arts.filter(inView);
+                  if (!visible.length) return false;
+                  const first = visible[0];
+                  const btn = first.querySelector("[data-testid='reply']");
+                  if (!btn) return false;
+                  btn.click();
+                  return true;
+                }"""
+                click_res = _json_loads_safe(pw_evaluate(script_click_reply))
+                clicked = False
+                if isinstance(click_res, bool) and click_res:
+                    clicked = True
+                elif isinstance(click_res, dict) and click_res.get('repr') == 'true':
+                    clicked = True
+                if not clicked:
+                    self._log_debug("notifications:click_reply_failed")
+                    continue
+                self._log_debug("notifications:clicked_reply")
+                # Wait for dialog
+                deadline = time.time() + 10.0
+                dialog_visible = False
+                while time.time() < deadline:
+                    exists_res = _json_loads_safe(pw_evaluate('''() => !!document.querySelector("div[role='dialog'] div[data-testid='tweetTextarea_0']")'''))
+                    if isinstance(exists_res, bool) and exists_res:
+                        dialog_visible = True
+                        break
+                    elif isinstance(exists_res, dict) and exists_res.get('repr') == 'true':
+                        dialog_visible = True
+                        break
+                    time.sleep(0.3)
+                if not dialog_visible:
+                    self._log_debug("notifications:dialog_timeout")
+                    continue
+                self._log_debug("notifications:dialog_visible")
+                # Generate reply
+                page_text = self._get_visible_text(limit=8000)
+                reply_text = self._generate_reply_text("notifications", snippet, page_text)
+                if self._text_contains_excluded(reply_text):
+                    self._log_debug("notifications:excluded_reply_text")
+                    self._press_key("Escape")
+                    time.sleep(0.5)
+                    pw_evaluate("() => window.scrollBy(0, window.innerHeight * 0.5)")
+                    time.sleep(0.5)
+                    continue
+                # Type
+                typed = False
+                for sel in [
+                    "div[role='dialog'] div[data-testid='tweetTextarea_0']",
+                    "div[role='dialog'] [contenteditable='true']",
+                    "[data-testid='tweetTextarea_0']",
+                ]:
+                    if self._js_type_into(sel, reply_text) or self._fill(sel, reply_text):
+                        typed = True
+                        break
+                if not typed:
+                    self._log_debug("notifications:type_failed")
+                    self._press_key("Escape")
+                    time.sleep(0.5)
+                    continue
+                self._log_debug("notifications:typed")
+                time.sleep(0.5)
+                # Post
+                posted = False
+                for sel in [
+                    "div[role='dialog'] div[data-testid='tweetButtonInline']",
+                    "div[role='dialog'] [data-testid='tweetButtonInline']",
+                ]:
+                    if self._click(sel):
+                        posted = True
+                        break
+                if not posted:
+                    self._log_debug("notifications:post_click_failed")
+                    self._press_key("Escape")
+                    time.sleep(0.5)
+                    continue
+                self._log_debug("notifications:posted")
+                time.sleep(2.0)
+                # Mark as replied
+                seen_this_run.add(permalink)
+                self.replied_urls.add(permalink)
+                self.replied_permalinks_history.add(permalink)
+                self.actions_total += 1
+                self.replies_total += 1
+                if author:
+                    self.engaged_authors.add(author)
+                self._log_action(
+                    action_type="reply",
+                    keyword_or_source="notifications",
+                    author_handle=author,
+                    tweet_title_or_snippet=snippet,
+                    tweet_url=permalink,
+                    reason_if_skipped="",
+                    content_prefix=reply_text[:60],
+                    engagement_flags="",
+                    permalink=permalink,
+                )
+                self._log_debug("notifications:logged")
+                self._human_sleep()
+                found = True
+                no_progress_loops = 0  # Reset on success
+            if not found:
+                no_progress_loops += 1
+                self._log_debug(f"notifications:no_found progress_streak:{no_progress_loops}")
+                # Check if at bottom before big scroll
+                at_bottom = _json_loads_safe(pw_evaluate("() => (window.scrollY + window.innerHeight) >= (document.documentElement.scrollHeight - 100)"))
+                if bool(at_bottom) or (isinstance(at_bottom, dict) and at_bottom.get('repr') == 'true'):
+                    self._log_debug("notifications:at_bottom_big_scroll_skip")
+                else:
+                    self._infinite_scroll(iterations=2)
+                    time.sleep(1.0)
+            else:
+                # After success, small scroll
+                pw_evaluate("() => window.scrollBy(0, window.innerHeight * 0.5)")
+                time.sleep(0.5)
+        if no_progress_loops >= max_no_progress:
+            self._log_debug("notifications:stagnation_break")
+        # End of function
+
+    # --- Log helpers ---
+    def _load_replies_from_log(self) -> set[str]:
+        """Load historical replied permalinks from the CSV log for cross-run de-duplication."""
+        urls: set[str] = set()
+        try:
+            if not os.path.exists(self.log_csv_path):
+                return urls
+            with open(self.log_csv_path, "r", encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    try:
+                        if (row.get("action_type") or "").strip() != "reply":
+                            continue
+                        p = (row.get("permalink") or "").strip()
+                        tu = (row.get("tweet_url") or "").strip()
+                        if p:
+                            urls.add(p)
+                        if tu:
+                            urls.add(tu)
+                    except Exception:
+                        continue
+        except Exception:
+            return set()
+        return urls
 
     def _find_latest_status_permalink(self) -> str:
         script = (
@@ -2133,6 +2629,8 @@ def parse_args():
     parser.set_defaults(use_tor=None)
     parser.add_argument("--headed", action="store_true", help="Run Playwright with visible browser (overrides default headless)")
     parser.add_argument("--dry_run", action="store_true", help="Do everything except actually posting/engaging")
+    parser.add_argument("--only_replies", action="store_true", help="Only perform replies; skip likes and posts")
+    parser.add_argument("--reply_all_notifications", action="store_true", help="Reply to all unreplied replies in Notifications (ignores reply quota)")
     parser.add_argument("--keep_browser_open", action="store_true", help="Keep browser open after run (do not exit)")
     parser.add_argument("--browser_height", type=int, default=None, help="Viewport height for browser window")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose debug logging to CSV")
@@ -2197,6 +2695,15 @@ def main(args: argparse.Namespace):
     replies_target = randomized_target(replies_target_base)
     posts_target = randomized_target(posts_base)
 
+    # If only_replies is requested, force likes/posts to zero and ensure replies target > 0
+    only_replies_flag = bool(args.only_replies or cfg.get("only_replies", False))
+    if only_replies_flag:
+        likes_target = 0
+        posts_target = 0
+        if replies_target <= 0:
+            # Default to a modest number of replies when not specified
+            replies_target = 3
+
     loop = XPromoterLoop(
         x_user=pick("x_user", ""),
         x_pass=pick("x_pass", ""),
@@ -2216,6 +2723,8 @@ def main(args: argparse.Namespace):
         otp_fetch_cmd=pick("otp_fetch_cmd"),
         otp_regex=pick("otp_regex"),
         otp_code=pick("otp_code"),
+        only_replies=only_replies_flag,
+        reply_all_notifications=bool(args.reply_all_notifications or cfg.get("reply_all_notifications", False)),
         dry_run=bool(args.dry_run or cfg.get("dry_run", False)),
         verbose=bool(args.verbose or cfg.get("verbose", False)),
     )
