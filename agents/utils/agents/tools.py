@@ -213,6 +213,25 @@ def _check_gemini_search_limit():
     # Check if we've exceeded the limit
     return _gemini_search_count >= _gemini_search_limit, _gemini_search_count, _gemini_search_limit
 
+def _resolve_redirect_url(url: str, timeout: float = 5.0) -> str:
+    """Resolve a redirect URL to its final destination.
+
+    Gemini's grounding API returns vertexaisearch.cloud.google.com redirect URLs
+    instead of actual destination URLs. This follows the redirect chain to get the real URL.
+    """
+    if "vertexaisearch.cloud.google.com/grounding-api-redirect" not in url:
+        return url
+    try:
+        resp = requests.head(url, allow_redirects=True, timeout=timeout,
+                             headers={"User-Agent": "Mozilla/5.0"})
+        if resp.url and resp.url != url:
+            logger.debug(f"Resolved redirect: {url[:80]}... -> {resp.url}")
+            return resp.url
+    except Exception as e:
+        logger.debug(f"Failed to resolve redirect URL: {e}")
+    return url
+
+
 def _perform_gemini_search(query: str, max_results: int = 10) -> str:
     """Perform a search using Gemini's search grounding capability.
     
@@ -275,7 +294,8 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
                     for chunk in grounding_chunks:
                         if hasattr(chunk, 'web') and chunk.web:
                             title = chunk.web.title if chunk.web.title else "No title"
-                            url = chunk.web.uri if chunk.web.uri else "No URL"
+                            raw_url = chunk.web.uri if chunk.web.uri else "No URL"
+                            url = _resolve_redirect_url(raw_url) if raw_url != "No URL" else raw_url
                             results.append(f"**{title}**\n{url}\n")
             
             # Format the result

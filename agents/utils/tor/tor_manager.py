@@ -15,7 +15,11 @@ TOR_PROXY = {
     'https': 'socks5://127.0.0.1:9050'
 }
 
-HTTPBIN_IP_URL = "https://httpbin.org/ip"
+IP_CHECK_SERVICES = [
+    {"url": "https://api.ipify.org?format=json", "key": "ip"},
+    {"url": "https://httpbin.org/ip", "key": "origin"},
+    {"url": "https://ifconfig.me/all.json", "key": "ip_addr"},
+]
 
 # Global variable to track Tor process if we started it
 tor_process = None
@@ -45,20 +49,23 @@ def check_tor_connection() -> bool:
 
 def get_tor_ip() -> Optional[str]:
     """Get current IP address through Tor to verify connection."""
-    try:
-        response = requests.get(
-            HTTPBIN_IP_URL,
-            proxies=TOR_PROXY,
-            timeout=15  # Reduced timeout for better responsiveness
-        )
-        if response.status_code == 200:
-            return response.json().get('origin')
-    except requests.exceptions.Timeout:
-        logging.debug("Timeout getting Tor IP (this is normal with slow Tor connections)")
-    except requests.exceptions.ConnectionError as e:
-        logging.debug(f"Connection error getting Tor IP: {e}")
-    except Exception as e:
-        logging.debug(f"Failed to get Tor IP: {e}")
+    for service in IP_CHECK_SERVICES:
+        try:
+            response = requests.get(
+                service['url'],
+                proxies=TOR_PROXY,
+                timeout=15  # Reduced timeout for better responsiveness
+            )
+            if response.status_code == 200:
+                ip = response.json().get(service['key'])
+                if ip:
+                    return ip
+        except requests.exceptions.Timeout:
+            logging.debug(f"Timeout getting Tor IP from {service['url']}")
+        except requests.exceptions.ConnectionError as e:
+            logging.debug(f"Connection error getting Tor IP from {service['url']}: {e}")
+        except Exception as e:
+            logging.debug(f"Failed to get Tor IP from {service['url']}: {e}")
     return None
 
 
@@ -79,26 +86,28 @@ def get_worker_tor_proxy(worker_id: int) -> Dict[str, str]:
 
 def get_tor_ip_for_worker(session: requests.Session, worker_id: Optional[int] = None) -> Optional[str]:
     """Get current IP address through Tor for a specific worker session."""
-    try:
-        response = session.get(HTTPBIN_IP_URL, timeout=60)
-        if response.status_code == 200:
-            ip = response.json().get('origin')
-            return ip
-    except requests.exceptions.Timeout:
-        if worker_id is not None:
-            logging.debug(f"Worker {worker_id}: Timeout getting Tor IP (this is normal with slow Tor connections)")
-        else:
-            logging.debug("Timeout getting Tor IP (this is normal with slow Tor connections)")
-    except requests.exceptions.ConnectionError as e:
-        if worker_id is not None:
-            logging.debug(f"Worker {worker_id}: Connection error getting Tor IP: {e}")
-        else:
-            logging.debug(f"Connection error getting Tor IP: {e}")
-    except Exception as e:
-        if worker_id is not None:
-            logging.debug(f"Worker {worker_id}: Failed to get Tor IP: {e}")
-        else:
-            logging.debug(f"Failed to get Tor IP: {e}")
+    for service in IP_CHECK_SERVICES:
+        try:
+            response = session.get(service['url'], timeout=60)
+            if response.status_code == 200:
+                ip = response.json().get(service['key'])
+                if ip:
+                    return ip
+        except requests.exceptions.Timeout:
+            if worker_id is not None:
+                logging.debug(f"Worker {worker_id}: Timeout getting Tor IP from {service['url']}")
+            else:
+                logging.debug(f"Timeout getting Tor IP from {service['url']}")
+        except requests.exceptions.ConnectionError as e:
+            if worker_id is not None:
+                logging.debug(f"Worker {worker_id}: Connection error getting Tor IP from {service['url']}: {e}")
+            else:
+                logging.debug(f"Connection error getting Tor IP from {service['url']}: {e}")
+        except Exception as e:
+            if worker_id is not None:
+                logging.debug(f"Worker {worker_id}: Failed to get Tor IP from {service['url']}: {e}")
+            else:
+                logging.debug(f"Failed to get Tor IP from {service['url']}: {e}")
     return None
 
 
@@ -404,17 +413,21 @@ def _basic_session_init(session: requests.Session, use_tor: bool, max_retries: i
         # Basic test to verify session is working
         timeout = 60 if use_tor else 30
         
-        # Simple test request
-        test_response = session.get(
-            "https://httpbin.org/ip",
-            timeout=timeout
-        )
+        # Simple test request using multiple services
+        for service in IP_CHECK_SERVICES:
+            try:
+                test_response = session.get(
+                    service['url'],
+                    timeout=timeout
+                )
+                
+                if test_response.status_code == 200:
+                    return True
+            except Exception:
+                continue
         
-        if test_response.status_code == 200:
-            return True
-        else:
-            logging.warning(f"Basic session initialization returned status {test_response.status_code}")
-            return False
+        logging.warning("Basic session initialization failed: Could not reach any IP check service")
+        return False
             
     except Exception as e:
         logging.warning(f"Basic session initialization failed: {e}")
