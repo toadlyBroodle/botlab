@@ -59,7 +59,7 @@ _using_gemini_fallback = False
 _gemini_fallback_until = 0  # Timestamp until which to use Gemini fallback
 _gemini_fallback_duration = 300  # Duration to use Gemini fallback in seconds (5 minutes)
 _gemini_search_count = 0  # Count of Gemini searches performed today
-_gemini_search_limit = 500  # Daily limit for Gemini searches
+_gemini_search_limit = 0  # 0 = unlimited (no daily cap on Gemini searches)
 _gemini_search_reset_time = 0  # Time when the search count was last reset
 _gemini_client = None  # Lazy-loaded Gemini client
 
@@ -210,7 +210,9 @@ def _check_gemini_search_limit():
         _gemini_search_reset_time = tomorrow.timestamp()
         logger.info(f"Reset Gemini search counter. Next reset at {datetime.fromtimestamp(_gemini_search_reset_time)}")
     
-    # Check if we've exceeded the limit
+    # Check if we've exceeded the limit (0 = unlimited)
+    if _gemini_search_limit == 0:
+        return False, _gemini_search_count, _gemini_search_limit
     return _gemini_search_count >= _gemini_search_limit, _gemini_search_count, _gemini_search_limit
 
 def _resolve_redirect_url(url: str, timeout: float = 5.0) -> str:

@@ -64,6 +64,7 @@ class BaseAgent(ABC):
         agent_name: Optional[str] = None,
         enable_daily_quota_fallback: bool = True,
         use_rate_limiting: bool = True,
+        save_results_to_daily_master: bool = True,
         **kwargs
     ):
         """Initialize the base agent with common functionality.
@@ -95,6 +96,7 @@ class BaseAgent(ABC):
         self.agent_kwargs = kwargs
         self.enable_daily_quota_fallback = enable_daily_quota_fallback
         self.use_rate_limiting = use_rate_limiting
+        self.save_results_to_daily_master = save_results_to_daily_master
         
         # Extract cost_callback from kwargs if present
         cost_callback = kwargs.get('cost_callback', None)
@@ -447,13 +449,14 @@ class BaseAgent(ABC):
                 print(f"\nExecution time: {execution_time:.2f} seconds")
                 
                 # Save the final answer using the shared tool with daily master files
-                save_final_answer(
-                    agent=self.agent,
-                    result=result,
-                    query_or_prompt=query,
-                    agent_type=self.get_agent_type_name(),
-                    use_daily_master=True
-                )
+                if self.save_results_to_daily_master:
+                    save_final_answer(
+                        agent=self.agent,
+                        result=result,
+                        query_or_prompt=query,
+                        agent_type=self.get_agent_type_name(),
+                        use_daily_master=True
+                    )
                 
                 return result
                 

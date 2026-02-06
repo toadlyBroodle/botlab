@@ -274,6 +274,9 @@ class AgentLoop:
                         # Extract web search control flags
                         disable_default_web_search = agent_context.get('disable_default_web_search', False)
                         web_search_disabled = agent_context.get('web_search_disabled', False)
+
+                        # Extract daily master saving flag
+                        save_results_to_daily_master = agent_context.get('save_results_to_daily_master', True)
                         
                         # Pass None as model if use_rate_limiting is False to let the agent create its own SimpleLiteLLMModel
                         model_to_use = None if not use_rate_limiting else self.shared_model
@@ -291,7 +294,8 @@ class AgentLoop:
                             model_id=self.model_id,
                             model_info_path=self.model_info_path,
                             disable_default_web_search=disable_default_web_search,
-                            web_search_disabled=web_search_disabled
+                            web_search_disabled=web_search_disabled,
+                            save_results_to_daily_master=save_results_to_daily_master
                         )
                         self.agents[agent_type] = agent_instance
                         
