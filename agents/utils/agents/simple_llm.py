@@ -189,18 +189,21 @@ class SimpleLiteLLMModel(LiteLLMModel):
                 return response
                 
             except Exception as e:
-                # Check if this is a "model is overloaded" error
+                # Check if this is a transient/retryable error
                 error_message = str(e).lower()
                 is_overloaded_error = (
                     "model is overloaded" in error_message or
                     "overloaded" in error_message or
                     ("code\": 503" in str(e) and "unavailable" in error_message)
                 )
-                
-                if is_overloaded_error and attempt < max_retries:
+                # Empty response from Gemini (IndexError on choices[0]) is transient
+                is_empty_response = isinstance(e, IndexError)
+
+                if (is_overloaded_error or is_empty_response) and attempt < max_retries:
                     # Exponential backoff: 1s, 2s, 4s, 8s
                     retry_delay = base_delay * (2 ** attempt)
-                    logger.warning(f"Model overloaded error detected (attempt {attempt + 1}/{max_retries + 1}). "
+                    reason = "empty response" if is_empty_response else "model overloaded"
+                    logger.warning(f"Retryable error ({reason}) on attempt {attempt + 1}/{max_retries + 1}. "
                                   f"Waiting {retry_delay} seconds before retry...")
                     time.sleep(retry_delay)
                     continue
