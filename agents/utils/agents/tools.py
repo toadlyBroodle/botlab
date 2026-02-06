@@ -389,18 +389,38 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
         error_msg = "Both Google search (quota exhausted) and DuckDuckGo (disabled by configuration) are unavailable. No search options."
         raise AllDailySearchRateLimsExhausted(error_msg)
 
-    # If DuckDuckGo is disabled, use Gemini search directly
+    # If DuckDuckGo is disabled, use Gemini search directly with retry logic
     if disable_duckduckgo:
         logger.info("DuckDuckGo search disabled, using Gemini search directly")
-        result = _perform_gemini_search(query, max_results)
-        
-        # If Gemini search also fails, raise an error instead of falling back to DuckDuckGo
-        if "Google Search API daily quota exceeded" in result:
-            error_msg = "Google Search API daily quota exceeded and DuckDuckGo is disabled. No search options available."
-            logger.error(error_msg)
-            raise AllDailySearchRateLimsExhausted(error_msg)
-        else:
+
+        gemini_max_retries = 3
+        gemini_base_delay = 2.0  # Start with 2 second delay
+
+        for attempt in range(gemini_max_retries + 1):
+            result = _perform_gemini_search(query, max_results)
+
+            # Check for daily quota exhaustion - don't retry this
+            if "Google Search API daily quota exceeded" in result:
+                error_msg = "Google Search API daily quota exceeded and DuckDuckGo is disabled. No search options available."
+                logger.error(error_msg)
+                raise AllDailySearchRateLimsExhausted(error_msg)
+
+            # Check for 429/rate limit errors - retry with backoff
+            if "429" in result or "RESOURCE_EXHAUSTED" in result or "rate limit" in result.lower():
+                if attempt < gemini_max_retries:
+                    delay = gemini_base_delay * (2 ** attempt) + random.uniform(0, 1)
+                    logger.warning(f"Gemini search rate limited (attempt {attempt + 1}/{gemini_max_retries + 1}), waiting {delay:.1f}s before retry")
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"Gemini search rate limited after {gemini_max_retries + 1} attempts")
+                    return result  # Return the error after all retries exhausted
+
+            # Success or non-rate-limit error - return immediately
             return result
+
+        # Should not reach here, but return last result if we do
+        return result
 
     # Check if we should use Gemini fallback (only if Google search is not disabled)
     current_time = time.time()

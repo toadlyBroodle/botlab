@@ -704,7 +704,10 @@ class AgentLoop:
                         self.state["results"][agent_type] = result
                         
                         print(f"Agent {agent_type} completed in {end_time - start_time:.2f} seconds")
-                        print(f"Result length: {len(result)} characters")
+                        if result is not None:
+                            print(f"Result length: {len(result)} characters")
+                        else:
+                            print("Result: None (no output from agent)")
                         
                         # Update state
                         self.state["current_agent"] = agent_index + 1
