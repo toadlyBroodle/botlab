@@ -63,6 +63,14 @@ _gemini_search_limit = 0  # 0 = unlimited (no daily cap on Gemini searches)
 _gemini_search_reset_time = 0  # Time when the search count was last reset
 _gemini_client = None  # Lazy-loaded Gemini client
 
+# Google free tier daily counter (for hybrid Google free tier -> Brave routing)
+# Gemini Developer API allows 500 RPD for grounding with Google Search.
+# After this limit we switch to Brave Search API.
+_FREE_DAILY_GOOGLE_SEARCHES = 500
+_google_free_tier_count = 0  # Successful Google searches today
+_google_free_tier_reset_time = 0  # Next midnight reset timestamp
+_google_free_tier_exhausted = False  # Flag set on quota error
+
 # Constants for user feedback tools
 DEFAULT_MAILBOX_PATH = "/home/fb_agent/var/mail"  # Corrected Maildir path
 COMMAND_PATTERNS = {
@@ -195,20 +203,14 @@ def _check_gemini_search_limit():
     """
     global _gemini_search_count, _gemini_search_limit, _gemini_search_reset_time
     
-    # Check if we need to reset the counter (daily)
+    # Check if we need to reset the counter (daily at midnight Pacific Time)
     current_time = time.time()
     if _gemini_search_reset_time == 0:
-        # Initialize reset time to next midnight
-        now = datetime.now()
-        tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        _gemini_search_reset_time = tomorrow.timestamp()
+        _gemini_search_reset_time = _next_midnight_pacific()
     elif current_time > _gemini_search_reset_time:
-        # Reset counter and set new reset time
         _gemini_search_count = 0
-        now = datetime.now()
-        tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        _gemini_search_reset_time = tomorrow.timestamp()
-        logger.info(f"Reset Gemini search counter. Next reset at {datetime.fromtimestamp(_gemini_search_reset_time)}")
+        _gemini_search_reset_time = _next_midnight_pacific()
+        logger.info(f"Reset Gemini search counter at midnight PT. Next reset at {datetime.fromtimestamp(_gemini_search_reset_time)}")
     
     # Check if we've exceeded the limit (0 = unlimited)
     if _gemini_search_limit == 0:
@@ -232,6 +234,104 @@ def _resolve_redirect_url(url: str, timeout: float = 5.0) -> str:
     except Exception as e:
         logger.debug(f"Failed to resolve redirect URL: {e}")
     return url
+
+
+def _next_midnight_pacific() -> float:
+    """Return the Unix timestamp of the next midnight Pacific Time."""
+    pacific = pytz.timezone("US/Pacific")
+    now_pacific = datetime.now(pacific)
+    tomorrow_midnight = (now_pacific + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return tomorrow_midnight.timestamp()
+
+
+def _reset_google_free_tier_if_needed():
+    """Reset the Google free tier counter at midnight Pacific Time."""
+    global _google_free_tier_count, _google_free_tier_reset_time, _google_free_tier_exhausted
+
+    current_time = time.time()
+    if _google_free_tier_reset_time == 0:
+        _google_free_tier_reset_time = _next_midnight_pacific()
+    elif current_time > _google_free_tier_reset_time:
+        _google_free_tier_count = 0
+        _google_free_tier_exhausted = False
+        _google_free_tier_reset_time = _next_midnight_pacific()
+        logger.info(f"Reset Google free tier counter at midnight PT. Next reset at {datetime.fromtimestamp(_google_free_tier_reset_time)}")
+
+
+def _is_google_free_tier_exhausted() -> bool:
+    """Check if the Google free tier daily quota is exhausted.
+
+    Also returns True when DISABLE_GOOGLE_SEARCH=true is set in the
+    environment, which forces all searches through Brave instead.
+    """
+    if os.environ.get("DISABLE_GOOGLE_SEARCH", "").lower() in ("1", "true", "yes"):
+        return True
+    _reset_google_free_tier_if_needed()
+    return _google_free_tier_exhausted or _google_free_tier_count >= _FREE_DAILY_GOOGLE_SEARCHES
+
+
+def _increment_google_search_count():
+    """Increment the Google free tier search counter."""
+    global _google_free_tier_count
+    _google_free_tier_count += 1
+    logger.info(f"Google free tier search count: {_google_free_tier_count}/{_FREE_DAILY_GOOGLE_SEARCHES}")
+
+
+def _perform_brave_search(query: str, max_results: int = 10) -> str:
+    """Perform a search using the Brave Search API.
+
+    Requires the BRAVE_SEARCH_API_KEY environment variable.
+
+    Args:
+        query: The search query
+        max_results: Maximum number of results to return
+
+    Returns:
+        Formatted search results as a markdown string, or an error string on failure
+    """
+    api_key = os.environ.get("BRAVE_SEARCH_API_KEY")
+    if not api_key:
+        return "Error: BRAVE_SEARCH_API_KEY environment variable is not set."
+
+    try:
+        headers = {
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": api_key,
+        }
+        params = {
+            "q": query,
+            "count": min(max_results, 20),  # Brave API max is 20
+        }
+        resp = requests.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            headers=headers,
+            params=params,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        results = []
+        web_results = data.get("web", {}).get("results", [])
+        for item in web_results[:max_results]:
+            title = item.get("title", "No title")
+            url = item.get("url", "No URL")
+            description = item.get("description", "")
+            results.append(f"**{title}**\n{url}\n{description}\n")
+
+        if results:
+            formatted = "\n---\n".join(results)
+            return f"Search results for '{query}':\n\n{formatted}"
+        else:
+            return f"No search results found for '{query}'"
+
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"Brave search HTTP error: {e}")
+        return f"Error performing Brave search: {e}"
+    except Exception as e:
+        logger.error(f"Brave search error: {e}")
+        return f"Error performing Brave search: {e}"
 
 
 def _perform_gemini_search(query: str, max_results: int = 10) -> str:
@@ -282,6 +382,7 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
         
         # Increment search count
         _gemini_search_count += 1
+        _increment_google_search_count()
         logger.info(f"Gemini search completed. Count: {_gemini_search_count}")
         
         # Extract the text content
@@ -315,14 +416,16 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
         
         # Check if this is a daily quota error for Google Search API
         if DAILY_QUOTA_ID in error_str:
+            global _google_free_tier_exhausted
+            _google_free_tier_exhausted = True
             logger.error(f"Google Search API daily quota error detected: {error_str[:300]}...")
-            
+
             # Import the search quota handling functions
             from .rate_lim_llm import handle_google_search_quota_error
-            
+
             # Handle the Google search quota error (this will disable Google search for 24 hours)
             handle_google_search_quota_error(error_str)
-            
+
             # Return a message indicating Google search is disabled, but don't use "DAILY_QUOTA_ERROR:" prefix
             # that would confuse the BaseAgent into thinking this is a model quota error
             return f"Google Search API daily quota exceeded. Google search has been disabled for 24 hours. Please use DuckDuckGo search instead."
@@ -330,18 +433,70 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
         # For other errors, return error message as before
         return f"Error performing Gemini search: {str(e)}"
 
+def _try_gemini_with_retries(query: str, max_results: int = 10) -> str:
+    """Try Gemini search with retry logic for rate limits.
+
+    Returns the result string.  On quota exhaustion the result will contain
+    "Google Search API daily quota exceeded".
+    """
+    gemini_max_retries = 3
+    gemini_base_delay = 2.0
+    result = ""
+    for attempt in range(gemini_max_retries + 1):
+        result = _perform_gemini_search(query, max_results)
+
+        # Quota exhaustion — don't retry
+        if "Google Search API daily quota exceeded" in result:
+            return result
+
+        # Rate-limit errors — retry with backoff
+        if "429" in result or "RESOURCE_EXHAUSTED" in result or "rate limit" in result.lower():
+            if attempt < gemini_max_retries:
+                delay = gemini_base_delay * (2 ** attempt) + random.uniform(0, 1)
+                logger.warning(f"Gemini search rate limited (attempt {attempt + 1}/{gemini_max_retries + 1}), waiting {delay:.1f}s before retry")
+                time.sleep(delay)
+                continue
+            else:
+                logger.error(f"Gemini search rate limited after {gemini_max_retries + 1} attempts")
+                return result
+
+        # Success or non-rate-limit error
+        return result
+    return result
+
+
+def _try_brave_with_retries(query: str, max_results: int = 10) -> str:
+    """Try Brave search with simple retry logic.
+
+    Returns the result string.  On success the string will contain search
+    results; on failure it will start with "Error".
+    """
+    brave_max_retries = 2
+    brave_base_delay = 1.0
+    result = ""
+    for attempt in range(brave_max_retries + 1):
+        result = _perform_brave_search(query, max_results)
+        if not result.startswith("Error"):
+            return result
+        if attempt < brave_max_retries:
+            delay = brave_base_delay * (2 ** attempt) + random.uniform(0, 0.5)
+            logger.warning(f"Brave search failed (attempt {attempt + 1}/{brave_max_retries + 1}), retrying in {delay:.1f}s")
+            time.sleep(delay)
+    return result
+
+
 @tool
 def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.0, max_retries: int = 3, disable_duckduckgo: bool = False) -> str:
     """Performs a web search with intelligent rate limiting and fallback mechanisms.
-    
-    This tool uses DuckDuckGo as the default search engine and falls back to Gemini Search
-    after exactly 3 failures. This provides a robust search capability that can handle
-    rate limiting gracefully.
-    
-    When Google Search API hits daily quota limits, it automatically disables Google search
-    for 24 hours and uses DuckDuckGo exclusively. This prevents confusion with model quota errors.
-    In this case, DuckDuckGo retry attempts are automatically doubled since it becomes the only option.
-    
+
+    Search provider priority:
+    - disable_duckduckgo=True:  Google free tier → Brave → error
+    - disable_duckduckgo=False: DuckDuckGo → Google free tier → Brave → error
+
+    Google's free daily quota (~500 searches) is used first, then Brave Search
+    API takes over for the rest of the day. All searches are billed at the Brave
+    rate ($0.003/query) for simplicity.
+
     DuckDuckGo search operators:
     - Use quotes for exact phrases: "climate change solutions"
     - Use '-' to exclude terms: climate -politics
@@ -352,192 +507,166 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     - Use 'intitle:' to search in page titles: intitle:climate
     - Use 'inurl:' to search in URLs: inurl:research
     - Use '~' for related terms: ~"artificial intelligence"
-    
+
     Args:
         query: The search query to perform. Can include special operators like site: or filetype:
         max_results: Maximum number of results to return (default: 10)
         rate_limit_seconds: Minimum seconds to wait between searches (default: 5.0)
         max_retries: Maximum number of retry attempts when rate limited (default: 3, max allowed: 5)
-        disable_duckduckgo: If True, skip DuckDuckGo entirely and use Gemini search (default: False)
-        
+        disable_duckduckgo: If True, skip DuckDuckGo entirely (default: False)
+
     Returns:
         Formatted search results as a markdown string with titles, URLs, and snippets
     """
     global _last_search_time, _base_wait_time, _max_backoff_time
     global _using_gemini_fallback, _gemini_fallback_until, _gemini_fallback_duration
 
-    # Debug logging to diagnose the issue
     logger.info(f"web_search called with query: '{query}', disable_duckduckgo: {disable_duckduckgo}")
-    logger.info(f"Fallback state: _using_gemini_fallback={_using_gemini_fallback}, _gemini_fallback_until={_gemini_fallback_until}, current_time={time.time()}")
 
-    # Check if Google search is disabled due to daily quota exhaustion
+    # Check if Google search is disabled due to daily quota exhaustion (24h flag from rate_lim_llm)
     from .rate_lim_llm import is_google_search_disabled
-    
     google_search_disabled = is_google_search_disabled()
-    
-    if google_search_disabled and not disable_duckduckgo:
-        logger.info("Google search is disabled due to daily quota exhaustion. Using DuckDuckGo only.")
-        # Force use of DuckDuckGo only when Google is disabled AND DuckDuckGo is not disabled
-        disable_duckduckgo = False
-        _using_gemini_fallback = False
-        
-        # Double the retry attempts when Google search is disabled since DuckDuckGo is the only option
-        original_max_retries = max_retries
-        max_retries = max_retries * 2
-        logger.info(f"Google search disabled: Doubling DuckDuckGo retries from {original_max_retries} to {max_retries}")
-    elif google_search_disabled and disable_duckduckgo:
-        # Both Google and DuckDuckGo are disabled - this is an error condition
-        logger.error("Both Google search and DuckDuckGo are disabled. No search options available.")
-        error_msg = "Both Google search (quota exhausted) and DuckDuckGo (disabled by configuration) are unavailable. No search options."
+
+    # Also check our own free-tier counter
+    google_free_exhausted = google_search_disabled or _is_google_free_tier_exhausted()
+
+    logger.info(f"Search state: google_search_disabled={google_search_disabled}, google_free_exhausted={google_free_exhausted}, google_free_count={_google_free_tier_count}/{_FREE_DAILY_GOOGLE_SEARCHES}")
+
+    # ── Path A: DuckDuckGo disabled → Google free tier → Brave → error ──
+    if disable_duckduckgo:
+        # Step 1: Try Google free tier if still available
+        if not google_free_exhausted:
+            logger.info("DuckDuckGo disabled — trying Google free tier first")
+            result = _try_gemini_with_retries(query, max_results)
+
+            if "Google Search API daily quota exceeded" in result:
+                logger.warning("Google quota hit during search, falling through to Brave")
+            elif not result.startswith("Error"):
+                return result
+            else:
+                logger.warning(f"Google search returned error, falling through to Brave: {result[:200]}")
+        else:
+            logger.info("Google free tier exhausted — skipping to Brave")
+
+        # Step 2: Fall back to Brave
+        logger.info("Trying Brave search as fallback")
+        result = _try_brave_with_retries(query, max_results)
+        if not result.startswith("Error"):
+            return result
+
+        # Both failed
+        error_msg = "Google free tier exhausted and Brave search failed. No search options available."
+        logger.error(error_msg)
         raise AllDailySearchRateLimsExhausted(error_msg)
 
-    # If DuckDuckGo is disabled, use Gemini search directly with retry logic
-    if disable_duckduckgo:
-        logger.info("DuckDuckGo search disabled, using Gemini search directly")
+    # ── Path B: DuckDuckGo enabled → DDG → Google free tier → Brave → error ──
 
-        gemini_max_retries = 3
-        gemini_base_delay = 2.0  # Start with 2 second delay
+    # Ensure minimum rate limit and cap max retries
+    if rate_limit_seconds < 5.0:
+        rate_limit_seconds = 5.0
+    if max_retries > 10:
+        max_retries = 10
 
-        for attempt in range(gemini_max_retries + 1):
-            result = _perform_gemini_search(query, max_results)
-
-            # Check for daily quota exhaustion - don't retry this
-            if "Google Search API daily quota exceeded" in result:
-                error_msg = "Google Search API daily quota exceeded and DuckDuckGo is disabled. No search options available."
-                logger.error(error_msg)
-                raise AllDailySearchRateLimsExhausted(error_msg)
-
-            # Check for 429/rate limit errors - retry with backoff
-            if "429" in result or "RESOURCE_EXHAUSTED" in result or "rate limit" in result.lower():
-                if attempt < gemini_max_retries:
-                    delay = gemini_base_delay * (2 ** attempt) + random.uniform(0, 1)
-                    logger.warning(f"Gemini search rate limited (attempt {attempt + 1}/{gemini_max_retries + 1}), waiting {delay:.1f}s before retry")
-                    time.sleep(delay)
-                    continue
-                else:
-                    logger.error(f"Gemini search rate limited after {gemini_max_retries + 1} attempts")
-                    return result  # Return the error after all retries exhausted
-
-            # Success or non-rate-limit error - return immediately
-            return result
-
-        # Should not reach here, but return last result if we do
-        return result
-
-    # Check if we should use Gemini fallback (only if Google search is not disabled)
+    # Check if we should use Gemini fallback (DuckDuckGo cooling-off period)
     current_time = time.time()
-    if not google_search_disabled and _using_gemini_fallback and current_time < _gemini_fallback_until:
-        # We're in fallback mode, use Gemini search
+    if not google_free_exhausted and _using_gemini_fallback and current_time < _gemini_fallback_until:
         time_left = int(_gemini_fallback_until - current_time)
         logger.info(f"Using Gemini search fallback (DuckDuckGo cooling off for {time_left} more seconds)")
-        result = _perform_gemini_search(query, max_results)
-        
-        # Check if Google search was disabled due to quota exhaustion
+        result = _try_gemini_with_retries(query, max_results)
+
         if "Google Search API daily quota exceeded" in result:
-            logger.warning("Google search quota exceeded during fallback, switching to DuckDuckGo")
-            # Switch to DuckDuckGo
+            logger.warning("Google search quota exceeded during fallback, trying Brave")
             _using_gemini_fallback = False
-            # Continue with DuckDuckGo search below
-        else:
+        elif not result.startswith("Error"):
             return result
+        else:
+            logger.warning("Gemini fallback returned error, falling through to Brave")
+            _using_gemini_fallback = False
+
+        # Try Brave before giving up
+        result = _try_brave_with_retries(query, max_results)
+        if not result.startswith("Error"):
+            return result
+        error_msg = "All search providers failed (DDG cooling off, Google quota exceeded, Brave failed)."
+        logger.error(error_msg)
+        raise AllDailySearchRateLimsExhausted(error_msg)
 
     # If fallback period has expired, reset the fallback flag
     if _using_gemini_fallback and current_time >= _gemini_fallback_until:
         _using_gemini_fallback = False
         logger.info("Fallback period expired, switching back to DuckDuckGo search")
 
-    # Ensure minimum rate limit and cap max retries
-    if rate_limit_seconds < 5.0:
-        rate_limit_seconds = 5.0
-    if max_retries > 10:  # Increased max cap since we may double retries
-        max_retries = 10
-
+    # Step 1: Try DuckDuckGo
     logger.info("Proceeding with DuckDuckGo search")
 
     # Apply basic rate limiting
     current_time = time.time()
     time_since_last_search = current_time - _last_search_time
-    
     if time_since_last_search < rate_limit_seconds:
         sleep_time = rate_limit_seconds - time_since_last_search
         logger.info(f"Waiting {sleep_time:.2f} seconds to respect DDGS rate limits")
         time.sleep(sleep_time)
-    
-    # Create a DuckDuckGoSearchTool instance
+
     logger.info("Creating DuckDuckGoSearchTool instance")
     search_tool = DuckDuckGoSearchTool(max_results=max_results)
-    
-    # Try DuckDuckGo search with retries (exactly 3 attempts by default, 6 when Google is disabled)
-    for attempt in range(max_retries + 1):  # 0, 1, 2, 3 (4 total attempts for max_retries=3)
+
+    for attempt in range(max_retries + 1):
         try:
             logger.info(f"DuckDuckGo search attempt {attempt + 1}/{max_retries + 1}")
             result = search_tool.forward(query)
-            
-            # Check if the result is valid
+
             if result and "Error" not in result and result.strip():
-                # Success - update last search time and return result
                 _last_search_time = time.time()
                 logger.info("DuckDuckGo search successful")
                 return result
             else:
-                # Empty or error result
                 logger.warning(f"DuckDuckGo attempt {attempt + 1} returned empty/error result: {result}")
-                
+
         except Exception as e:
             error_message = str(e)
             logger.warning(f"DuckDuckGo attempt {attempt + 1} failed with exception: {error_message}")
-            
-            # Check if it's a non-rate-limit error that we shouldn't retry
-            if not any(term in error_message.lower() for term in 
+
+            if not any(term in error_message.lower() for term in
                       ["ratelimit", "rate limit", "429", "too many requests", "202", "blocked", "forbidden", "403"]):
-                # Non-rate-limit error, just return the error immediately
                 logger.error(f"Non-rate-limit error in DuckDuckGo search: {error_message}")
                 return f"Error performing search: {error_message}"
-        
-        # Update last search time after each attempt
+
         _last_search_time = time.time()
-        
-        # If this wasn't the last attempt, wait before retrying
+
         if attempt < max_retries:
-            # Calculate backoff time (exponential backoff: 5s, 15s, 45s)
             backoff_time = rate_limit_seconds * (3 ** attempt)
-            # Add jitter (±30%)
             backoff_time = backoff_time * (0.7 + 0.6 * random.random())
-            # Cap the backoff time
             backoff_time = min(backoff_time, _max_backoff_time)
-            
             logger.info(f"DuckDuckGo attempt {attempt + 1} failed. Retrying in {backoff_time:.2f} seconds...")
             time.sleep(backoff_time)
-    
+
     # All DuckDuckGo attempts failed
-    # If Google search is not disabled, try switching to Gemini search fallback
-    if not google_search_disabled:
-        logger.warning(f"DuckDuckGo search failed after {max_retries + 1} attempts. Trying Gemini search fallback.")
-        result = _perform_gemini_search(query, max_results)
-        
-        # Check if Google search was disabled due to quota exhaustion
+    # Step 2: Try Google free tier
+    if not google_free_exhausted:
+        logger.warning(f"DuckDuckGo failed after {max_retries + 1} attempts. Trying Google free tier.")
+        result = _try_gemini_with_retries(query, max_results)
+
         if "Google Search API daily quota exceeded" in result:
-            logger.error("Both DuckDuckGo and Google search have failed. No search options available.")
-            error_msg = f"Both DuckDuckGo and Google search are unavailable. DuckDuckGo failed after {max_retries + 1} attempts, and Google search daily quota is exhausted."
-            # Return a special error message that can be detected by the city_researcher
-            special_error_msg = f"SEARCH_EXHAUSTION_CRITICAL_ERROR: {error_msg}"
-            logger.error(f"Returning critical search exhaustion error: {special_error_msg}")
-            # Also raise the exception to try to terminate the agent
-            raise AllDailySearchRateLimsExhausted(error_msg)
-        else:
-            # Google search succeeded, set fallback mode
+            logger.warning("Google quota also exhausted, trying Brave")
+        elif not result.startswith("Error"):
             _using_gemini_fallback = True
             _gemini_fallback_until = time.time() + _gemini_fallback_duration
             return result
+        else:
+            logger.warning("Google search also failed, trying Brave")
     else:
-        # Google search is disabled, so we can't fall back to it
-        logger.error(f"DuckDuckGo search failed after {max_retries + 1} attempts and Google search is disabled due to quota exhaustion.")
-        error_msg = f"DuckDuckGo search failed after {max_retries + 1} attempts and Google search is disabled due to daily quota exhaustion. Search unavailable."
-        # Return a special error message that can be detected by the city_researcher
-        special_error_msg = f"SEARCH_EXHAUSTION_CRITICAL_ERROR: {error_msg}"
-        logger.error(f"Returning critical search exhaustion error: {special_error_msg}")
-        # Also raise the exception to try to terminate the agent
-        raise AllDailySearchRateLimsExhausted(error_msg)
+        logger.info("Google free tier already exhausted, skipping to Brave")
+
+    # Step 3: Try Brave
+    logger.info("Trying Brave search as final fallback")
+    result = _try_brave_with_retries(query, max_results)
+    if not result.startswith("Error"):
+        return result
+
+    # All three providers failed
+    error_msg = f"All search providers failed. DuckDuckGo failed after {max_retries + 1} attempts, Google free tier {'exhausted' if google_free_exhausted else 'failed'}, Brave search failed."
+    logger.error(f"SEARCH_EXHAUSTION_CRITICAL_ERROR: {error_msg}")
+    raise AllDailySearchRateLimsExhausted(error_msg)
 
 @tool
 def visit_webpage(url: str) -> str:
