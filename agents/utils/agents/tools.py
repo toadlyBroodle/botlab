@@ -1,7 +1,7 @@
 import os
 import yaml
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import random
 import logging
 from typing import Dict, Any, Tuple, Optional, Union
@@ -111,7 +111,7 @@ def get_timestamp() -> str:
     Returns:
         A string with the current date and time in YYYY-MM-DD_HH-MM format.
     """
-    return datetime.now().strftime("%Y-%m-%d_%H-%M")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M")
 
 def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     """Load and apply custom agent templates based on the agent type.
@@ -163,7 +163,7 @@ def apply_custom_agent_prompts(agent, custom_system_prompt: str = None) -> None:
     agent.prompt_templates["system_prompt"] = agent.initialize_system_prompt()
 
     # Append today's date and time
-    agent.prompt_templates["system_prompt"] += f"\n\nToday's date and time is {datetime.now().strftime('%Y-%m-%d %H:%M')}."
+    agent.prompt_templates["system_prompt"] += f"\n\nToday's date and time is {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')} UTC."
 
     # Append custom system prompt if provided (ensure it is preserved)
     if custom_system_prompt:
@@ -1052,7 +1052,7 @@ def generate_image(prompt: str) -> str:
             raise Exception(error_msg)
         
         # Create a unique filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         prompt_hash = hashlib.md5(prompt.encode()).hexdigest()[:8]
         filename = f"gemini_{timestamp}_{prompt_hash}.png"
         
@@ -1094,14 +1094,8 @@ def send_mail(subject: str, body: str) -> str:
         # Append command template to the body
         full_body = f"{body}\n\n{EMAIL_COMMAND_TEMPLATE}"
             
-        # Format the current time for the Date header
-        timestamp = datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
-        if not timestamp.endswith(("+0000", "-0000")) and len(timestamp.split()) == 5:
-             offset_seconds = time.timezone if (time.localtime().tm_isdst == 0) else time.altzone
-             offset_hours = abs(offset_seconds) // 3600
-             offset_minutes = (abs(offset_seconds) % 3600) // 60
-             offset_sign = "-" if offset_seconds > 0 else "+"
-             timestamp += f" {offset_sign}{offset_hours:02d}{offset_minutes:02d}" 
+        # Format the current time for the Date header (RFC 2822, UTC)
+        timestamp = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
 
         # Construct the email message with RFC 5322 headers
         email_content_lines = [

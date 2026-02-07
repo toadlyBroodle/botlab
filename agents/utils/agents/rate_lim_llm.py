@@ -3,7 +3,7 @@ import random
 import json
 import os
 from collections import deque
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from smolagents import LiteLLMModel
 from litellm.exceptions import RateLimitError, ServiceUnavailableError
 from typing import List, Dict, Optional, Any, Tuple, Union, Callable
@@ -582,7 +582,7 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
             bool: True if the switch was successful, False otherwise.
         """
         logger.warning(f"Attempting to switch from {self.model_id} to fallback {new_fallback_candidate} due to: {reason}")
-        self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, self.model_id, f"attempt_switch_to_{new_fallback_candidate}_reason_{reason}"))
+        self.fallback_history.append((datetime.now(timezone.utc).isoformat(), self.original_model_id, self.model_id, f"attempt_switch_to_{new_fallback_candidate}_reason_{reason}"))
         
         previous_model_id_before_switch = self.model_id
         previous_rpm_limit, previous_tpm_limit, previous_rpd_limit, previous_input_token_limit = self.rpm_limit, self.tpm_limit, self.rpd_limit, self.input_token_limit
@@ -967,7 +967,7 @@ class RateLimitedLiteLLMModel(LiteLLMModel):
                         logger.warning(f"Cost callback failed: {callback_error}")
                 
                 if self.model_id != self.original_model_id: # Log if success was on a fallback
-                    self.fallback_history.append((datetime.now().isoformat(), self.original_model_id, self.model_id, "success_on_fallback"))
+                    self.fallback_history.append((datetime.now(timezone.utc).isoformat(), self.original_model_id, self.model_id, "success_on_fallback"))
                 
                 self.api_call_count += 1
                 if self.api_call_count % 3 == 0: self.print_rate_limit_status(use_logger=True)
