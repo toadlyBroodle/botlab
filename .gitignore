@@ -12,3 +12,5 @@ vps/
 
 node_modules/
 package-lock.json
+
+data/
