@@ -1,6 +1,7 @@
 import os
 import yaml
 import time
+import fcntl
 from datetime import datetime, timedelta, timezone
 import random
 import logging
@@ -66,10 +67,10 @@ _gemini_client = None  # Lazy-loaded Gemini client
 # Google free tier daily counter (for hybrid Google free tier -> Brave routing)
 # Gemini Developer API allows 500 RPD for grounding with Google Search.
 # After this limit we switch to Brave Search API.
+# Counter is FILE-BASED so all concurrent job processes share a single count.
 _FREE_DAILY_GOOGLE_SEARCHES = 500
-_google_free_tier_count = 0  # Successful Google searches today
-_google_free_tier_reset_time = 0  # Next midnight reset timestamp
-_google_free_tier_exhausted = False  # Flag set on quota error
+_GOOGLE_SEARCH_COUNTER_FILE = os.path.join(BOTLAB_ROOT, "data", "google_search_counter.json")
+_google_free_tier_exhausted = False  # Flag set on quota error (per-process cache)
 
 # Constants for user feedback tools
 DEFAULT_MAILBOX_PATH = "/home/fb_agent/var/mail"  # Corrected Maildir path
@@ -244,37 +245,94 @@ def _next_midnight_pacific() -> float:
     return tomorrow_midnight.timestamp()
 
 
-def _reset_google_free_tier_if_needed():
-    """Reset the Google free tier counter at midnight Pacific Time."""
-    global _google_free_tier_count, _google_free_tier_reset_time, _google_free_tier_exhausted
+def _read_google_search_counter() -> dict:
+    """Read the shared Google search counter file with file locking.
 
-    current_time = time.time()
-    if _google_free_tier_reset_time == 0:
-        _google_free_tier_reset_time = _next_midnight_pacific()
-    elif current_time > _google_free_tier_reset_time:
-        _google_free_tier_count = 0
-        _google_free_tier_exhausted = False
-        _google_free_tier_reset_time = _next_midnight_pacific()
-        logger.info(f"Reset Google free tier counter at midnight PT. Next reset at {datetime.fromtimestamp(_google_free_tier_reset_time)}")
+    Returns dict with 'count' and 'date' (YYYY-MM-DD in Pacific time).
+    Resets automatically when the date changes (new day).
+    """
+    pacific = pytz.timezone("US/Pacific")
+    today_str = datetime.now(pacific).strftime("%Y-%m-%d")
+
+    os.makedirs(os.path.dirname(_GOOGLE_SEARCH_COUNTER_FILE), exist_ok=True)
+
+    try:
+        with open(_GOOGLE_SEARCH_COUNTER_FILE, "r") as f:
+            fcntl.flock(f, fcntl.LOCK_SH)
+            try:
+                data = json.load(f)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
+        if data.get("date") != today_str:
+            return {"count": 0, "date": today_str}
+        return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"count": 0, "date": today_str}
+
+
+def _reserve_google_search_slot() -> tuple:
+    """Atomically check and reserve a Google search slot. Returns (ok, count).
+
+    If the daily limit has NOT been reached, increments the counter and returns
+    (True, new_count).  If the limit IS reached, does NOT increment and returns
+    (False, current_count).  Uses exclusive file locking so concurrent processes
+    can never race past the limit.
+    """
+    pacific = pytz.timezone("US/Pacific")
+    today_str = datetime.now(pacific).strftime("%Y-%m-%d")
+
+    os.makedirs(os.path.dirname(_GOOGLE_SEARCH_COUNTER_FILE), exist_ok=True)
+
+    fd = os.open(_GOOGLE_SEARCH_COUNTER_FILE, os.O_RDWR | os.O_CREAT)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        f = os.fdopen(fd, "r+")
+        try:
+            content = f.read()
+            if content:
+                data = json.loads(content)
+            else:
+                data = {"count": 0, "date": today_str}
+
+            # Reset if new day
+            if data.get("date") != today_str:
+                data = {"count": 0, "date": today_str}
+
+            if data["count"] >= _FREE_DAILY_GOOGLE_SEARCHES:
+                return (False, data["count"])
+
+            data["count"] += 1
+            new_count = data["count"]
+
+            f.seek(0)
+            f.truncate()
+            json.dump(data, f)
+            f.flush()
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+            f.close()
+            fd = -1  # f.close() closed the fd
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+    logger.info(f"Google free tier search slot reserved: {new_count}/{_FREE_DAILY_GOOGLE_SEARCHES}")
+    return (True, new_count)
 
 
 def _is_google_free_tier_exhausted() -> bool:
     """Check if the Google free tier daily quota is exhausted.
 
+    Reads the shared file-based counter so all processes see the same count.
     Also returns True when DISABLE_GOOGLE_SEARCH=true is set in the
     environment, which forces all searches through Brave instead.
     """
     if os.environ.get("DISABLE_GOOGLE_SEARCH", "").lower() in ("1", "true", "yes"):
         return True
-    _reset_google_free_tier_if_needed()
-    return _google_free_tier_exhausted or _google_free_tier_count >= _FREE_DAILY_GOOGLE_SEARCHES
-
-
-def _increment_google_search_count():
-    """Increment the Google free tier search counter."""
-    global _google_free_tier_count
-    _google_free_tier_count += 1
-    logger.info(f"Google free tier search count: {_google_free_tier_count}/{_FREE_DAILY_GOOGLE_SEARCHES}")
+    if _google_free_tier_exhausted:
+        return True
+    counter = _read_google_search_counter()
+    return counter["count"] >= _FREE_DAILY_GOOGLE_SEARCHES
 
 
 def _perform_brave_search(query: str, max_results: int = 10) -> str:
@@ -345,45 +403,52 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
         Formatted search results as a markdown string
     """
     global _gemini_search_count
-    
+
     # Check if we've exceeded the daily search limit
     limit_exceeded, current_count, limit = _check_gemini_search_limit()
     if limit_exceeded:
         return f"Error: Daily Gemini search limit exceeded ({current_count}/{limit}). Try again tomorrow."
-    
+
+    # Atomically reserve a Google free tier slot BEFORE making the API call.
+    # This prevents races where multiple processes read count=499 simultaneously.
+    slot_ok, slot_count = _reserve_google_search_slot()
+    if not slot_ok:
+        global _google_free_tier_exhausted
+        _google_free_tier_exhausted = True
+        logger.warning(f"Google free tier limit reached ({slot_count}/{_FREE_DAILY_GOOGLE_SEARCHES}), refusing search")
+        return "Google Search API daily quota exceeded. Google search has been disabled. Please use Brave search instead."
+
     # Initialize the Gemini client
     client = _initialize_gemini_client()
     if client is None:
         return "Error: Gemini search unavailable. GEMINI_API_KEY may not be set."
-    
+
     try:
         # Create the search tool configuration
-        # The GoogleSearch tool needs to be wrapped in a Tool object with the proper tool_type
         search_tool = GenaiTool(
             google_search=GoogleSearch()
         )
-        
+
         # Configure the request
         config = GenerateContentConfig(
             tools=[search_tool],
             temperature=0.1,
             max_output_tokens=8192,
         )
-        
+
         # Create the search prompt
         prompt = f"Search for information about: {query}"
-        
+
         # Make the search request
         response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt,
             config=config,
         )
-        
-        # Increment search count
+
+        # Increment per-process counter (informational only, limit enforced by file)
         _gemini_search_count += 1
-        _increment_google_search_count()
-        logger.info(f"Gemini search completed. Count: {_gemini_search_count}")
+        logger.info(f"Gemini search completed. Process count: {_gemini_search_count}, Global count: {slot_count}")
         
         # Extract the text content
         if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
@@ -416,7 +481,6 @@ def _perform_gemini_search(query: str, max_results: int = 10) -> str:
         
         # Check if this is a daily quota error for Google Search API
         if DAILY_QUOTA_ID in error_str:
-            global _google_free_tier_exhausted
             _google_free_tier_exhausted = True
             logger.error(f"Google Search API daily quota error detected: {error_str[:300]}...")
 
@@ -530,7 +594,8 @@ def web_search(query: str, max_results: int = 10, rate_limit_seconds: float = 5.
     # Also check our own free-tier counter
     google_free_exhausted = google_search_disabled or _is_google_free_tier_exhausted()
 
-    logger.info(f"Search state: google_search_disabled={google_search_disabled}, google_free_exhausted={google_free_exhausted}, google_free_count={_google_free_tier_count}/{_FREE_DAILY_GOOGLE_SEARCHES}")
+    _counter = _read_google_search_counter()
+    logger.info(f"Search state: google_search_disabled={google_search_disabled}, google_free_exhausted={google_free_exhausted}, google_free_count={_counter['count']}/{_FREE_DAILY_GOOGLE_SEARCHES}")
 
     # ── Path A: DuckDuckGo disabled → Google free tier → Brave → error ──
     if disable_duckduckgo:
